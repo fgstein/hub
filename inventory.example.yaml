@@ -1,0 +1,51 @@
+# Inventaire TrainHub : ressources disponibles (lecture seule).
+# Chemin fourni par TRAINHUB_INVENTORY (défaut ./inventory.yaml), rechargé à chaud.
+
+machines:
+  - id: gpu-01
+    label: GPU 01 (4×A100)
+    host: gpu-01.lab.local      # ou un alias de ~/.ssh/config
+    user: alice                 # optionnel
+    port: 22                    # optionnel
+  - id: gpu-02
+    host: gpu-02
+
+images:
+  - id: torch-2.4
+    image: registry.lab/ml/torch:2.4-cuda12
+  - id: torch-nightly
+    image: registry.lab/ml/torch:nightly
+
+venvs:
+  - id: main
+    path: /opt/venvs/main        # chemin DANS le conteneur
+  - id: exp
+    path: /opt/venvs/exp
+    images: [torch-nightly]      # optionnel : restreint aux images listées
+
+projects:
+  - id: segmentation
+    label: Segmentation
+    command: python train.py --config-name {config}
+    workdir: /workspace/seg      # cd avant la commande, dans le conteneur
+    machines: [gpu-01, gpu-02]   # optionnel : sous-ensemble autorisé (défaut : tout)
+    images: [torch-2.4]
+    venvs: [main, exp]
+    docker:
+      gpus: all                  # --gpus
+      shm_size: 16g
+      volumes:
+        - /data:/data:ro
+        - /home/alice/seg:/workspace/seg
+      env:
+        WANDB_MODE: online
+      extra_args: ["--ipc=host"]
+      # tty: false               # désactive -t (couleurs/barres de progression)
+      # stop_timeout: 30         # délai de docker stop -t
+    configs:
+      # soit une liste statique…
+      static: [baseline, unet_large, ablation_lr]
+      # …soit une découverte sur la machine choisie (chemin côté hôte)
+      discover:
+        path: /home/alice/seg/configs
+        pattern: "*.yaml"        # extension retirée pour obtenir le nom
