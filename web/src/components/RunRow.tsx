@@ -1,19 +1,25 @@
 import { Tooltip } from "@kobalte/core/tooltip"
 import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js"
+import { prettyCommand, shellJoin } from "~/lib/command"
 import { elapsedSeconds, formatDateTime, formatDuration, pausedSeconds } from "~/lib/format"
-import { isActive } from "~/lib/types"
+import { isActive, isFinished, type RunView, shellAvailable } from "~/lib/types"
 import {
   displayStatus,
   fullscreenRun,
+  openShell,
   openTerminals,
+  panelViews,
   setFullscreenRun,
+  setPanelView,
   setTerminalOpen,
   state,
 } from "~/stores/app"
 import { now } from "~/stores/clock"
+import { toast } from "~/stores/toasts"
 import { ActionButton } from "./ActionButton"
-import { IconAgent, IconChevronDown } from "./Icons"
+import { IconAgent, IconChevronDown, IconCopy, IconTerminal } from "./Icons"
 import { LogTerminal } from "./LogTerminal"
+import { ShellTerminal } from "./ShellTerminal"
 import { StatusDot, statusLabel } from "./StatusDot"
 
 const UNSUBSCRIBE_DELAY_MS = 10_000
@@ -100,6 +106,24 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
           </Tip>
         </Show>
       </div>
+      <Show when={run().container_alive && isFinished(run().status)}>
+        <Tip
+          class="shrink-0"
+          content="La commande est terminée mais le conteneur est conservé : shell disponible. « Fermer le conteneur » dans le menu l'arrête."
+        >
+          <button
+            type="button"
+            class="flex h-5 items-center gap-1 rounded bg-surface px-1.5 text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+            onClick={(e) => {
+              e.stopPropagation()
+              openShell(props.id)
+            }}
+            data-testid="run-container-alive"
+          >
+            <IconTerminal size={11} /> conteneur actif
+          </button>
+        </Tip>
+      </Show>
       <Show when={run().source === "mcp"}>
         <Tip class="shrink-0 text-icon" content="Lancé par un agent (MCP)">
           <IconAgent size={14} />
@@ -111,6 +135,70 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
         </Tip>
       </Show>
       <ActionButton run={run()} />
+    </div>
+  )
+}
+
+/** Commande du run : générique résolue, ou commande complète (ssh + docker run). */
+function CommandBar(props: { run: RunView }) {
+  const [full, setFull] = createSignal(false)
+  const fullText = () =>
+    props.run.full_command?.length ? shellJoin(props.run.full_command) : props.run.command
+  const text = () =>
+    full() && props.run.full_command?.length ? prettyCommand(props.run.full_command) : props.run.command
+  const copy = async () => {
+    try {
+      // Copie exacte (une ligne) ; l'affichage multi-ligne n'échappe qu'un niveau.
+      await navigator.clipboard.writeText(full() ? fullText() : props.run.command)
+      toast(full() ? "commande complète copiée" : "commande copiée", "success")
+    } catch {
+      toast("copie impossible", "error")
+    }
+  }
+  const tab = (active: boolean) =>
+    `h-5 rounded px-1.5 ${active ? "bg-surface-active text-fg-strong" : "text-fg-weak hover:text-fg-strong"}`
+  return (
+    <div
+      class="flex min-w-0 items-start gap-2 rounded-md border border-line-weaker bg-bg-strong px-2 py-1 text-xs"
+      data-testid="run-command"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div class="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          class={tab(!full())}
+          onClick={() => setFull(false)}
+          title="Commande générique résolue"
+        >
+          commande
+        </button>
+        <button
+          type="button"
+          class={tab(full())}
+          onClick={() => setFull(true)}
+          title="Commande exacte exécutée par TrainHub (ssh + docker run + script), options Docker du projet comprises (inventaire YAML)"
+          data-testid="run-command-full"
+        >
+          complète
+        </button>
+      </div>
+      <code
+        class="min-w-0 flex-1 select-text py-0.5 font-mono text-fg-strong"
+        classList={{ truncate: !full(), "max-h-60 overflow-y-auto whitespace-pre-wrap break-words": full() }}
+        title={full() ? undefined : props.run.command}
+        data-testid="run-command-text"
+      >
+        {text()}
+      </code>
+      <button
+        type="button"
+        class="flex size-5 shrink-0 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+        title="Copier"
+        aria-label="Copier la commande"
+        onClick={copy}
+      >
+        <IconCopy size={11} />
+      </button>
     </div>
   )
 }
@@ -134,6 +222,17 @@ export function RunRow(props: { id: string }) {
   onCleanup(() => clearTimeout(unmountTimer))
 
   const toggle = () => setOpen((o) => !o)
+  const view = () => panelViews[props.id] ?? "logs"
+  const canShell = () =>
+    shellAvailable({ status: displayStatus(props.id), container_alive: run()?.container_alive ?? false })
+  // Le shell reste monté (session conservée) quand on revient aux logs.
+  const [shellMounted, setShellMounted] = createSignal(false)
+  createEffect(() => {
+    if (view() === "shell" && mounted()) setShellMounted(true)
+    if (!mounted()) setShellMounted(false)
+  })
+  const tabCls = (active: boolean) =>
+    `flex h-6 items-center gap-1 rounded px-2 ${active ? "bg-surface-active text-fg-strong" : "text-fg-weak hover:text-fg-strong"}`
 
   return (
     <Show when={run()}>
@@ -185,11 +284,54 @@ export function RunRow(props: { id: string }) {
                     <RunLine id={props.id} header />
                   </div>
                 </Show>
-                <LogTerminal
-                  runId={props.id}
-                  fullscreen={fullscreen()}
-                  onToggleFullscreen={() => setFullscreenRun(fullscreen() ? null : props.id)}
-                />
+                <div
+                  class="flex shrink-0 flex-col gap-1.5"
+                  classList={{ "mb-1.5": !fullscreen(), "px-4 py-1.5": fullscreen() }}
+                >
+                  <CommandBar run={run()!} />
+                  <div class="flex items-center gap-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      class={tabCls(view() === "logs")}
+                      onClick={() => setPanelView(props.id, "logs")}
+                      data-testid="panel-logs"
+                    >
+                      logs
+                    </button>
+                    <button
+                      type="button"
+                      class={`${tabCls(view() === "shell")} disabled:opacity-40`}
+                      disabled={!canShell() && !shellMounted()}
+                      title={
+                        canShell()
+                          ? "Shell interactif dans le conteneur (docker exec -it), venv activé"
+                          : "Conteneur arrêté (ou en pause) : pas de shell"
+                      }
+                      onClick={() => setPanelView(props.id, "shell")}
+                      data-testid="panel-shell"
+                    >
+                      <IconTerminal size={11} /> shell
+                    </button>
+                  </div>
+                </div>
+                <div classList={{ hidden: view() !== "logs", contents: view() === "logs" }}>
+                  <LogTerminal
+                    runId={props.id}
+                    fullscreen={fullscreen()}
+                    onToggleFullscreen={() => setFullscreenRun(fullscreen() ? null : props.id)}
+                  />
+                </div>
+                <Show when={shellMounted()}>
+                  <div classList={{ hidden: view() !== "shell", contents: view() === "shell" }}>
+                    <ShellTerminal
+                      runId={props.id}
+                      containerName={run()!.container_name}
+                      active={view() === "shell"}
+                      fullscreen={fullscreen()}
+                      onToggleFullscreen={() => setFullscreenRun(fullscreen() ? null : props.id)}
+                    />
+                  </div>
+                </Show>
               </div>
             </Show>
           </div>

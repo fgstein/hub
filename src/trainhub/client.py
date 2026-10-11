@@ -15,7 +15,7 @@ Exemple ::
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 
@@ -99,6 +99,7 @@ class TrainHub:
         config: str,
         overrides: Sequence[str] = (),
         cuda_visible_devices: str | None = None,
+        params: Mapping[str, str] | None = None,
     ) -> PreviewResult:
         await self.start()
         return await self.service.preview(
@@ -110,6 +111,7 @@ class TrainHub:
                 config=config,
                 overrides=list(overrides),
                 cuda_visible_devices=cuda_visible_devices,
+                params=dict(params or {}),
             )
         )
 
@@ -123,6 +125,7 @@ class TrainHub:
         config: str,
         overrides: Sequence[str] = (),
         cuda_visible_devices: str | None = None,
+        params: Mapping[str, str] | None = None,
         wait: bool | float = True,
     ) -> Run:
         """Lance un run ; attend par défaut la fin du ``docker run -d``."""
@@ -135,6 +138,7 @@ class TrainHub:
             config=config,
             overrides=list(overrides),
             cuda_visible_devices=cuda_visible_devices,
+            params=dict(params or {}),
         )
         return await self.service.launch(sel, source=self._source, wait=wait)
 

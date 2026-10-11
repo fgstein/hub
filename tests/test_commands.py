@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shlex
@@ -69,13 +70,92 @@ def test_example_matches_spec_shape() -> None:
         "--label", "trainhub.config=baseline",
         "--gpus", "all", "--shm-size", "16g",
         "-v", "/data:/data:ro", "-v", "/home/alice/seg:/workspace/seg",
-        "-w", "/workspace/seg", "-e", "WANDB_MODE=online", "--ipc=host",
+        "-w", "/workspace/seg", "-e", "WANDB_MODE=online",
+        "--health-cmd", c.HEALTH_CMD, "--health-interval", "3s", "--health-retries", "1",
+        "--health-timeout", "5s",
+        "--ipc=host",
         "registry.lab/ml/torch:2.4-cuda12",
-        "bash", "-lc",
-        "source /opt/venvs/main/bin/activate && cd /workspace/seg"
-        " && exec python train.py --config-name baseline",
+        "bash", "-lc", c.inner_script(spec_for(inv)),
     ]  # fmt: skip
     assert "--rm" not in remote
+    assert "python train.py --config-name baseline & pid=$!" in remote[-1]
+
+
+def test_keep_alive_can_be_disabled(inventory: Inventory) -> None:
+    proj = inventory.project("segmentation")
+    proj = proj.model_copy(update={"docker": proj.docker.model_copy(update={"keep_alive": False})})
+    remote = c.docker_run(spec_for(inventory, project=proj))
+    assert "--health-cmd" not in remote
+    assert remote[-1] == (
+        "source /opt/venvs/main/bin/activate && cd /workspace/seg"
+        " && exec python train.py --config-name baseline"
+    )
+
+
+def _keep_alive_script(tmp_path: Path, inventory: Inventory, command: str) -> tuple[str, Path]:
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    (venv / "bin" / "activate").write_text("")
+    proj = inventory.project("segmentation").model_copy(
+        update={"command": command + " {config}", "workdir": str(tmp_path)}
+    )
+    spec = dataclasses.replace(
+        spec_for(inventory, project=proj),
+        venv=inventory.venv("main").model_copy(update={"path": str(venv)}),
+    )
+    exit_file = tmp_path / "exit"
+    return c.inner_script(spec).replace(c.EXIT_FILE, str(exit_file)), exit_file
+
+
+def _wait_output(proc: subprocess.Popen[str], needle: str) -> str:
+    assert proc.stdout is not None
+    seen = ""
+    for line in proc.stdout:
+        seen += line
+        if needle in line:
+            return seen
+    raise AssertionError(f"{needle!r} absent de la sortie : {seen!r}")
+
+
+@pytest.mark.parametrize("code", [0, 3])
+def test_keep_alive_script_keeps_container_and_returns_code(
+    tmp_path: Path, inventory: Inventory, code: int
+) -> None:
+    import signal
+
+    script, exit_file = _keep_alive_script(tmp_path, inventory, f"sh -c 'echo hi; exit {code}' --")
+    proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, text=True)
+    try:
+        out = _wait_output(proc, "[trainhub] commande terminée")
+        assert "hi" in out and f"(code {code})" in out
+        assert exit_file.read_text().strip() == str(code)
+        assert proc.poll() is None  # conteneur conservé
+        proc.send_signal(signal.SIGTERM)  # fermeture : sort avec le code de la commande
+        assert proc.wait(5) == code
+    finally:
+        proc.kill()
+
+
+def test_keep_alive_script_forwards_sigterm(tmp_path: Path, inventory: Inventory) -> None:
+    import signal
+
+    cmd = "sh -c 'trap \"echo got TERM; exit 7\" TERM; echo ready; sleep 30 & wait' --"
+    script, exit_file = _keep_alive_script(tmp_path, inventory, cmd)
+    proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, text=True)
+    try:
+        _wait_output(proc, "ready")
+        proc.send_signal(signal.SIGTERM)  # docker stop pendant la commande
+        assert proc.wait(5) == 7
+        assert not exit_file.exists()
+    finally:
+        proc.kill()
+
+
+def test_shell_argv() -> None:
+    argv = c.docker_exec_shell("th-x-r1", venv_path="/opt/venv/", workdir="/w s")
+    assert argv[:6] == ["docker", "exec", "-it", "-e", "TERM=xterm-256color", "th-x-r1"]
+    assert argv[6:8] == ["sh", "-c"]
+    assert "cd '/w s'" in argv[8] and ". /opt/venv/bin/activate" in argv[8]
 
 
 def test_tty_can_be_disabled(inventory: Inventory) -> None:
@@ -191,8 +271,8 @@ def test_preview_lists_every_part(inventory: Inventory) -> None:
     text = c.preview(spec_for(inventory))
     assert text.splitlines()[0].startswith("ssh -o ControlMaster=auto")
     assert "alice@gpu-01.lab.local --" in text
-    assert "exec python train.py --config-name baseline'" in text
-    assert shlex.split(text.replace("\\\n", " "))[-1].endswith("--config-name baseline")
+    assert "python train.py --config-name baseline & pid=$!" in text
+    assert shlex.split(text.replace("\\\n", " "))[-1] == c.inner_script(spec_for(inventory))
 
 
 @pytest.mark.parametrize("bad", ["", "-rf", "a\nb"])
@@ -254,13 +334,22 @@ def _run_remote(remote_string: str, env: dict[str, str], cwd: Path) -> list[str]
 
 @pytest.mark.parametrize("config", TRICKY)
 @pytest.mark.parametrize("overrides", [(), *OVERRIDES])
+@pytest.mark.parametrize("keep_alive", [False, True])
 def test_escaping_roundtrip(
-    tmp_path: Path, inventory: Inventory, config: str, overrides: tuple[str, ...]
+    tmp_path: Path,
+    inventory: Inventory,
+    config: str,
+    overrides: tuple[str, ...],
+    keep_alive: bool,
 ) -> None:
     env = _make_stubs(tmp_path)
     venv = inventory.venv("main").model_copy(update={"path": str(tmp_path / "venv dir's")})
-    proj = inventory.project("segmentation").model_copy(
-        update={"workdir": str(tmp_path / "work $dir")}
+    proj = inventory.project("segmentation")
+    proj = proj.model_copy(
+        update={
+            "workdir": str(tmp_path / "work $dir"),
+            "docker": proj.docker.model_copy(update={"keep_alive": keep_alive}),
+        }
     )
     spec = RunSpec(
         run_id="r1",
@@ -277,10 +366,16 @@ def test_escaping_roundtrip(
     assert docker_argv == c.docker_run(spec)[1:]
     # Niveau 2 : bash -lc SCRIPT dans le conteneur (bash -c ici pour garder le PATH).
     assert docker_argv[-3:-1] == ["bash", "-lc"]
+    script = docker_argv[-1]
+    if keep_alive:
+        # Le conteneur resterait démarré : on s'arrête juste après la commande.
+        script = script.replace(c.EXIT_FILE, str(tmp_path / "exit"))
+        script = script.split("; trap 'exit $code'")[0]
     out = subprocess.run(
-        ["bash", "-c", docker_argv[-1]], env=env, capture_output=True, text=True, check=True
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=True
     )
-    assert json.loads(out.stdout) == ["train.py", "--config-name", config, *overrides]
+    first = out.stdout.splitlines()[0]
+    assert json.loads(first) == ["train.py", "--config-name", config, *overrides]
     assert not (tmp_path / "pwned").exists()
 
 
@@ -316,3 +411,68 @@ def test_cli_preview(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out.strip()
     assert shlex.split(out)[0] == "ssh"
     assert "th-segmentation-r7f3k2" in out
+
+
+def test_free_params_substitution() -> None:
+    kw = {"config": "base", "run_id": "r1", "machine": "m", "project": "p"}
+    tpl = "python t.py --config-name {config} {options} --my_option {option2}"
+    out = c.resolve_command(tpl, **kw, params={"options": "a=1 'b c' $HOME", "option2": "x;y"})
+    assert out == "python t.py --config-name base a=1 'b c' '$HOME' --my_option 'x;y'"
+    # paramètre vide ou absent : rien n'est inséré
+    assert c.resolve_command(tpl, **kw) == "python t.py --config-name base  --my_option "
+    with pytest.raises(ValueError, match="option2"):
+        c.resolve_command(tpl, **kw, params={"option2": "'oops"})
+
+
+def test_free_params_through_both_shells(tmp_path: Path, inventory: Inventory) -> None:
+    env = _make_stubs(tmp_path)
+    proj = inventory.project("segmentation").model_copy(
+        update={
+            "command": "python train.py --config-name {config} {options} --my_option {option2}",
+            "workdir": str(tmp_path),
+        }
+    )
+    params = {"options": "+a=1 'model.name=\"x y\"' $(touch pwned)", "option2": '"it\'s"'}
+    spec = dataclasses.replace(
+        spec_for(inventory, project=proj),
+        venv=inventory.venv("main").model_copy(update={"path": str(tmp_path / "venv dir's")}),
+        params=params,
+    )
+    docker_argv = _run_remote(c.build_run(spec)[-1], env, tmp_path)
+    script = docker_argv[-1].replace(c.EXIT_FILE, str(tmp_path / "exit"))
+    script = script.split("; trap 'exit $code'")[0]
+    out = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True, check=True
+    )
+    assert json.loads(out.stdout.splitlines()[0]) == [
+        "train.py", "--config-name", "baseline",
+        "+a=1", 'model.name="x y"', "$(touch", "pwned)",
+        "--my_option", "it's",
+    ]  # fmt: skip
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_system_venv_has_no_activation(inventory: Inventory) -> None:
+    spec = dataclasses.replace(spec_for(inventory), venv=inventory.venv("system"))
+    script = c.inner_script(spec)
+    assert "source" not in script and "activate" not in script
+    assert script.startswith("rm -f /tmp/.trainhub-exit; cd /workspace/seg || exit 1; python")
+
+
+def test_make_spec_params(inventory: Inventory) -> None:
+    from trainhub.core.selection import SelectionError, make_spec
+
+    base = {
+        "run_id": "r1",
+        "project": "segmentation",
+        "machine": "gpu-01",
+        "image": "torch-2.4",
+        "venv": "system",
+        "config": "baseline",
+    }
+    cmd = "python t.py {config} {options}"
+    spec = make_spec(inventory, **base, command=cmd, params={"options": "a=1"})
+    assert spec.params == {"options": "a=1"} and spec.venv.is_system
+    assert make_spec(inventory, **base, command=cmd).params == {"options": ""}
+    with pytest.raises(SelectionError, match="nope"):
+        make_spec(inventory, **base, command=cmd, params={"nope": "1"})

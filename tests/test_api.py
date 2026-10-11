@@ -62,7 +62,8 @@ def test_inventory_health_openapi(client: TestClient) -> None:
     assert [p["id"] for p in inv["projects"]] == ["segmentation", "detection"]
     assert inv["executor"] == "fake"
     seg = inv["projects"][0]
-    assert seg["venv_images"] == {"main": None, "exp": ["torch-nightly"]}
+    assert seg["venv_images"] == {"main": None, "exp": ["torch-nightly"], "system": None}
+    assert seg["params"] == []
     health = client.get("/api/health").json()
     assert health["ok"] and health["executor"] == "fake"
     schema = client.get("/openapi.json").json()
@@ -189,3 +190,29 @@ def test_token_auth(tmp_path: Path) -> None:
             ws.receive_json()
         with c.websocket_connect("/ws?token=s3cret") as ws:
             assert ws.receive_json()["type"] == "snapshot"
+
+
+def test_shell_websocket(client: TestClient) -> None:
+    rid = client.post("/api/runs", json=SEL.model_dump()).json()["id"]
+    wait_status(client, rid, "running")
+    with client.websocket_connect(f"/ws/shell/{rid}?cols=100&rows=30") as ws:
+        assert b"simul" in ws.receive_bytes()
+        ws.send_bytes(b"echo bonjour\r")
+        out = b""
+        while b"bonjour\r\n" not in out:
+            out += ws.receive_bytes()
+        ws.send_text('{"type": "resize", "cols": 80, "rows": 20}')
+        ws.send_bytes(b"exit\r")
+        msgs = []
+        while True:
+            msg = ws.receive()
+            if msg.get("text"):
+                msgs.append(msg["text"])
+                break
+        assert '"exit"' in msgs[0]
+
+
+def test_shell_websocket_refused_for_unknown_run(client: TestClient) -> None:
+    with client.websocket_connect("/ws/shell/nope") as ws:
+        msg = ws.receive_json()
+        assert msg["type"] == "error" and "introuvable" in msg["message"]

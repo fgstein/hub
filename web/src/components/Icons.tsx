@@ -147,6 +147,11 @@ export const IconTerminal = (p: P) => (
     <path d="M3 4.5l3 3-3 3M8 11h5" />
   </Svg>
 )
+export const IconPower = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 2.5v5.5M4.8 4.6a4.5 4.5 0 1 0 6.4 0" />
+  </Svg>
+)
 export const IconSpinner = (p: P) => (
   <Svg {...p} class={`animate-spin ${p.class ?? ""}`}>
     <path d="M8 2a6 6 0 1 0 6 6" />

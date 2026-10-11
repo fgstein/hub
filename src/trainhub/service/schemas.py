@@ -25,6 +25,11 @@ class Selection(BaseModel):
     cuda_visible_devices: str | None = Field(
         default=None, description="Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')"
     )
+    params: dict[str, str] = Field(
+        default_factory=dict,
+        description="Valeurs des paramètres libres de la commande ({nom} non réservés) ; "
+        "chaque valeur est découpée comme par un shell, vide = rien d'inséré",
+    )
 
 
 class LastSelection(BaseModel):
@@ -33,6 +38,7 @@ class LastSelection(BaseModel):
     venv: str | None = None
     config: str | None = None
     cuda_visible_devices: str | None = None
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 class UiState(BaseModel):
@@ -111,6 +117,10 @@ class ProjectView(BaseModel):
     command: str = Field(description="Commande générique effective (surcharge ou YAML)")
     yaml_command: str
     command_overridden: bool
+    params: list[str] = Field(
+        default_factory=list,
+        description="Paramètres libres de la commande effective, à renseigner au lancement",
+    )
     workdir: str | None
     machines: list[str]
     images: list[str]

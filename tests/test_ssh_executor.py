@@ -86,3 +86,30 @@ async def test_localhost_skips_ssh(fake_ssh: Path) -> None:
     ex = SshExecutor()
     res = await ex.exec(Machine(id="local", host="localhost"), ["echo", "hi"])
     assert res.out == "hi\n" and not fake_ssh.exists()
+
+
+async def test_interactive_shell_through_pty(fake_ssh: Path) -> None:
+    import asyncio
+
+    ex = SshExecutor()
+    script = "stty size; read x; echo got:$x; stty size"
+    shell = await ex.open_shell(Machine(id="m", host="gpu.lab"), ["sh", "-c", script])
+    out = b""
+
+    async def read_until(needle: bytes) -> None:
+        nonlocal out
+        while needle not in out:
+            chunk = await asyncio.wait_for(shell.read(), 5)
+            assert chunk, out
+            out += chunk
+
+    try:
+        await read_until(b"32 120")  # taille initiale du PTY (lignes colonnes)
+        shell.resize(100, 40)
+        shell.write(b"hello\r")
+        await read_until(b"got:hello")
+        await read_until(b"40 100")
+        assert "-tt" in fake_ssh.read_text().splitlines()
+        assert await asyncio.wait_for(shell.read(), 5) in (b"", b"\r\n")
+    finally:
+        await shell.close()

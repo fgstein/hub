@@ -11,6 +11,7 @@ from .commands import LABEL_ROOT
 from .models import Run, RunStatus
 
 _EXIT_RE = re.compile(r"Exited \((-?\d+)\)")
+_HEALTH_RE = re.compile(r"\((healthy|unhealthy|health: starting)\)")
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,18 @@ class ContainerState:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime | None = None
+    health: str | None = None
+    """``starting``, ``healthy`` ou ``unhealthy`` (healthcheck de fin de commande)."""
+
+    @property
+    def alive(self) -> bool:
+        """Conteneur démarré (y compris en pause)."""
+        return self.state in ("running", "paused", "restarting")
+
+    @property
+    def command_done(self) -> bool:
+        """Conteneur conservé dont la commande est terminée (healthcheck ``unhealthy``)."""
+        return self.alive and self.health == "unhealthy"
 
     @property
     def run_id(self) -> str | None:
@@ -89,6 +102,7 @@ def parse_ps(output: str) -> list[ContainerState]:
         if not state:
             state = _state_from_status(status_text)
         m = _EXIT_RE.search(status_text)
+        h = _HEALTH_RE.search(status_text)
         names = str(d.get("Names", "")).split(",")[0].lstrip("/")
         states.append(
             ContainerState(
@@ -100,6 +114,7 @@ def parse_ps(output: str) -> list[ContainerState]:
                 id=str(d.get("ID", "")),
                 status_text=status_text,
                 created_at=parse_docker_time(str(d.get("CreatedAt", ""))),
+                health=h.group(1).removeprefix("health: ") if h else None,
             )
         )
     return states
@@ -141,10 +156,23 @@ def parse_inspect(output: str) -> ContainerState | None:
     else:
         state = str(st.get("Status", "")).lower() or ("running" if st.get("Running") else "exited")
     exit_code = st.get("ExitCode")
+    code: int | None = (
+        int(exit_code) if exit_code is not None and state in ("exited", "dead") else None
+    )
+    health_info = st.get("Health") or {}
+    health = str(health_info.get("Status", "")).lower() or None
+    if health == "unhealthy" and code is None:
+        # Conteneur conservé : le healthcheck affiche le code de sortie de la commande.
+        for entry in reversed(health_info.get("Log") or []):
+            out = str(entry.get("Output", "")).strip()
+            if re.fullmatch(r"-?\d+", out):
+                code = int(out)
+                break
     return ContainerState(
         name=str(data.get("Name", "")).lstrip("/"),
         state=state,
-        exit_code=int(exit_code) if exit_code is not None and state in ("exited", "dead") else None,
+        exit_code=code,
+        health=health,
         labels={str(k): str(v) for k, v in (cfg.get("Labels") or {}).items()},
         image=str(cfg.get("Image", "")),
         id=str(data.get("Id", "")),
@@ -156,6 +184,10 @@ def parse_inspect(output: str) -> ContainerState | None:
 
 def status_from_container(c: ContainerState, *, stop_requested: bool) -> RunStatus:
     """Statut TrainHub correspondant à l'état Docker d'un conteneur."""
+    if c.command_done:
+        if stop_requested:
+            return RunStatus.STOPPED
+        return RunStatus.SUCCEEDED if c.exit_code == 0 else RunStatus.FAILED
     if c.state == "running" or c.state == "restarting":
         return RunStatus.STOPPING if stop_requested else RunStatus.RUNNING
     if c.state == "paused":

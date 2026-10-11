@@ -27,7 +27,14 @@ def create_service(settings: Settings, *, version: str = "0.1.0") -> RunService:
     inv = InventoryManager(settings.inventory)
     executor = create_executor(settings.executor, inv.inventory)
     store = Store(Path(settings.db_path))
-    return RunService(inv, executor, store, poll_interval=settings.poll_interval_s, version=version)
+    return RunService(
+        inv,
+        executor,
+        store,
+        poll_interval=settings.poll_interval_s,
+        log_dir=settings.data_dir / "logs",
+        version=version,
+    )
 
 
 __all__ = [

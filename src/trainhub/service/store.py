@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS runs (
     source TEXT NOT NULL,
     overrides TEXT NOT NULL DEFAULT '[]',
     cuda_visible_devices TEXT,
-    stop_requested INTEGER NOT NULL DEFAULT 0
+    stop_requested INTEGER NOT NULL DEFAULT 0,
+    container_alive INTEGER NOT NULL DEFAULT 0,
+    params TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS runs_project ON runs(project_id);
 CREATE INDEX IF NOT EXISTS runs_machine ON runs(machine_id);
@@ -70,8 +72,16 @@ _COLUMNS = [
     "overrides",
     "cuda_visible_devices",
     "stop_requested",
+    "container_alive",
+    "params",
 ]
-_JSON_COLS = {"full_command", "overrides"}
+#: Colonnes ajoutées après la première version (migration à l'ouverture).
+_ADDED_COLUMNS = {
+    "container_alive": "INTEGER NOT NULL DEFAULT 0",
+    "params": "TEXT NOT NULL DEFAULT '{}'",
+}
+_BOOL_COLS = {"stop_requested", "container_alive"}
+_JSON_COLS = {"full_command", "overrides", "params"}
 _DT_COLS = {"created_at", "started_at", "finished_at", "paused_at"}
 
 
@@ -84,7 +94,7 @@ def _to_row(run: Run) -> list[Any]:
             v = json.dumps(v)
         elif col in _DT_COLS:
             v = v.isoformat() if isinstance(v, datetime) else None
-        elif col == "stop_requested":
+        elif col in _BOOL_COLS:
             v = int(bool(v))
         elif col in ("status", "source"):
             v = str(v)
@@ -97,8 +107,8 @@ def _from_row(row: aiosqlite.Row) -> Run:
     for col in _COLUMNS:
         v = row[col]
         if col in _JSON_COLS:
-            v = json.loads(v) if v else []
-        elif col == "stop_requested":
+            v = json.loads(v) if v else ({} if col == "params" else [])
+        elif col in _BOOL_COLS:
             v = bool(v)
         d[col] = v
     return Run.model_validate(d)
@@ -118,6 +128,11 @@ class Store:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_SCHEMA)
+        async with self._db.execute("PRAGMA table_info(runs)") as cur:
+            existing = {row[1] for row in await cur.fetchall()}
+        for col, decl in _ADDED_COLUMNS.items():
+            if col not in existing:
+                await self._db.execute(f"ALTER TABLE runs ADD COLUMN {col} {decl}")
         await self._db.commit()
 
     async def close(self) -> None:

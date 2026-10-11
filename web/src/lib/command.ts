@@ -1,11 +1,12 @@
 /** Outils pour la commande générique d'un projet. */
 
+/** Placeholders remplis par TrainHub ; tout autre ``{nom}`` est un paramètre saisi au lancement. */
 export const PLACEHOLDERS = ["config", "config_name", "run_id", "machine", "project"] as const
 const PLACEHOLDER_RE = /(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}/g
 
 export interface Segment {
   text: string
-  kind: "text" | "placeholder" | "unknown"
+  kind: "text" | "placeholder" | "param"
 }
 
 /** Découpe la commande en segments pour la coloration des placeholders. */
@@ -18,7 +19,7 @@ export function segments(command: string): Segment[] {
     const name = m[1] ?? ""
     out.push({
       text: m[0],
-      kind: (PLACEHOLDERS as readonly string[]).includes(name) ? "placeholder" : "unknown",
+      kind: (PLACEHOLDERS as readonly string[]).includes(name) ? "placeholder" : "param",
     })
     last = i + m[0].length
   }
@@ -30,8 +31,100 @@ export function segments(command: string): Segment[] {
 export function validateCommand(command: string): string | null {
   if (!command.trim()) return "la commande est vide"
   const names = [...command.matchAll(PLACEHOLDER_RE)].map((m) => m[1] ?? "")
-  const unknown = names.filter((n) => !(PLACEHOLDERS as readonly string[]).includes(n))
-  if (unknown.length) return `placeholder inconnu : ${unknown.map((u) => `{${u}}`).join(", ")}`
   if (!names.includes("config")) return "la commande doit contenir {config}"
   return null
+}
+
+/** Paramètres libres de la commande (placeholders non réservés), dans l'ordre d'apparition. */
+export function commandParams(command: string): string[] {
+  const names = [...command.matchAll(PLACEHOLDER_RE)].map((m) => m[1] ?? "")
+  return [...new Set(names.filter((n) => !(PLACEHOLDERS as readonly string[]).includes(n)))]
+}
+
+const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./{}$-]+$/
+
+/** Échappe un argument comme ``shlex.quote`` (Python). */
+export function shellQuote(arg: string): string {
+  if (arg === "") return "''"
+  if (SAFE_WORD.test(arg) && !arg.includes("${")) return arg
+  return `'${arg.replaceAll("'", `'"'"'`)}'`
+}
+
+/** Joint un argv en une ligne copiable dans un terminal (comme ``shlex.join``). */
+export function shellJoin(argv: readonly string[]): string {
+  return argv.map(shellQuote).join(" ")
+}
+
+/**
+ * Découpe une ligne d'arguments comme un shell POSIX (guillemets simples et doubles,
+ * antislash). Renvoie une erreur lisible si un guillemet n'est pas fermé.
+ */
+export function splitArgs(text: string): { args: string[]; error: string | null } {
+  const args: string[] = []
+  let cur = ""
+  let inWord = false
+  let quote: "'" | '"' | null = null
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] as string
+    if (quote === "'") {
+      if (ch === "'") quote = null
+      else cur += ch
+    } else if (quote === '"') {
+      if (ch === '"') quote = null
+      else if (ch === "\\" && i + 1 < text.length && '"\\$`'.includes(text[i + 1] as string)) {
+        cur += text[++i]
+      } else cur += ch
+    } else if (ch === "'" || ch === '"') {
+      quote = ch
+      inWord = true
+    } else if (ch === "\\" && i + 1 < text.length) {
+      cur += text[++i]
+      inWord = true
+    } else if (/\s/.test(ch)) {
+      if (inWord) args.push(cur)
+      cur = ""
+      inWord = false
+    } else {
+      cur += ch
+      inWord = true
+    }
+  }
+  if (quote) return { args: [], error: `guillemet ${quote} non fermé` }
+  if (inWord) args.push(cur)
+  return { args, error: null }
+}
+
+/**
+ * Commande complète d'un run, lisible sur plusieurs lignes : la partie ssh, puis la commande
+ * distante (``docker run …``) avec un seul niveau d'échappement, une option par ligne.
+ */
+export function prettyCommand(argv: readonly string[]): string {
+  if (!argv.length) return ""
+  const lines: string[] = []
+  let remote = [...argv]
+  let indent = ""
+  const sep = argv.indexOf("--")
+  if (argv[0] === "ssh" && sep > 0 && sep === argv.length - 2) {
+    lines.push(shellJoin(argv.slice(0, sep - 1)), `  ${shellJoin(argv.slice(sep - 1, sep + 1))}`)
+    const parsed = splitArgs(argv[sep + 1] ?? "")
+    remote = parsed.error ? [argv[sep + 1] ?? ""] : parsed.args
+    indent = "    "
+  }
+  const n = remote.length
+  const tail = n >= 4 && remote[n - 3] === "bash" && remote[n - 2] === "-lc" ? n - 4 : n
+  let cur: string[] = []
+  const flush = () => {
+    if (cur.length) lines.push(indent + shellJoin(cur))
+    cur = []
+  }
+  remote.slice(0, tail).forEach((tok, i) => {
+    if (i > 0 && tok.startsWith("-") && i >= 2 && !["-d", "-t", "--init"].includes(tok)) flush()
+    cur.push(tok)
+  })
+  flush()
+  if (tail < n) {
+    lines.push(indent + shellQuote(remote[tail] ?? ""))
+    lines.push(`${indent}bash -lc ${shellQuote(remote[n - 1] ?? "")}`)
+  }
+  return lines.join(" \\\n")
 }

@@ -7,12 +7,35 @@ Chaque run est construit à partir de 4 choix (**machine**, **image Docker**, **
 et exécute la chaîne :
 
 ```
-ssh machine → docker run -d (conteneur conservé) → source venv → cd workdir → python train.py --config-name XXX
+ssh machine → docker run -d → source venv → cd workdir → python train.py --config-name XXX
 ```
 
-- Projets en onglets, chacun avec sa commande générique éditable (`{config}`, `{config_name}`, `{run_id}`, `{machine}`, `{project}`).
+Quand la commande se termine, le conteneur **reste démarré** (statut du run : réussi ou échoué
+selon le code de sortie) : on peut y ouvrir un shell depuis l'interface, puis le fermer soi-même
+(« Fermer le conteneur »). Désactivable par projet avec `docker.keep_alive: false`.
+
+- Projets en onglets, chacun avec sa commande générique éditable. Placeholders remplis par
+  TrainHub : `{config}`, `{config_name}`, `{run_id}` (identifiant généré au lancement, ex.
+  `rn3ceg`), `{machine}`, `{project}`. **Tout autre `{nom}` est un paramètre du run** : le
+  brouillon affiche un champ par paramètre (ex. `python train.py --config-name {config} {options}
+  --my_option {option2}`). La valeur est découpée comme par un shell (`a=1 b=2` = deux arguments,
+  `"a b"` = un seul), chaque mot est échappé, un champ vide n'insère rien ; les dernières valeurs
+  sont mémorisées par projet.
+- Venv au choix parmi ceux de l'inventaire, plus **`system`**, toujours proposé : aucun venv
+  activé (Python de l'image, ou `uv run …` dans la commande).
 - Suivi en direct : statut, temps écoulé, logs en streaming dans un terminal xterm.js (couleurs ANSI, barres tqdm).
-- Contrôle : pause, reprise, arrêt, redémarrage, relance, suppression.
+- Logs de **tous** les runs sauvegardés au fil de l'eau dans `$TRAINHUB_DATA_DIR/logs/<run>.log` :
+  toujours affichés et téléchargeables après la fermeture ou la suppression du conteneur, une
+  coupure de la machine ou un redémarrage de TrainHub.
+- Commande de chaque run visible dans son panneau : générique résolue, ou complète (ssh +
+  `docker run` + script, options Docker du projet comprises).
+- Shell interactif dans le conteneur d'un run (`docker exec -it`, venv activé, dans le workdir),
+  onglet « shell » du panneau.
+- Overrides Hydra en fin de commande via l'API, le MCP et la CLI (`trainhub launch … trainer.max_epochs=5`).
+  Dans l'interface, on utilise un paramètre (`… {options}`) ; le champ « overrides » n'apparaît
+  que pour relancer un run qui en avait.
+- Contrôle : pause, reprise, arrêt, redémarrage, relance (ouvre un brouillon pré-rempli),
+  fermeture du conteneur conservé, suppression.
 - Les mêmes actions pour un agent via MCP (Streamable HTTP sur `/mcp`, ou stdio avec `trainhub mcp`).
 - Développement et tests sans GPU grâce aux modes `fake` (simulation en mémoire) et `local` (Docker local).
 
@@ -102,6 +125,17 @@ Les dossiers et fichiers cachés (`.hydra`, `.git`…) sont ignorés.
 L'état modifiable depuis l'interface (commande surchargée d'un projet, onglets ouverts, dernières
 sélections, runs) vit dans une base SQLite (`$TRAINHUB_DATA_DIR/trainhub.sqlite`).
 
+**Conteneur conservé et logs.** Avec `keep_alive` (défaut), le script lancé dans le conteneur
+exécute la commande en arrière-plan, relaie `SIGTERM` (« Arrêter » = `docker stop`, comme
+avant), puis, quand la commande se termine, écrit son code dans `/tmp/.trainhub-exit` et garde
+le conteneur démarré. Un healthcheck (`--health-cmd`, toutes les 3 s) passe alors à
+`unhealthy` : c'est ainsi que TrainHub détecte la fin et lit le code de sortie, sans commande
+supplémentaire. Fermer le conteneur le fait sortir avec le code de la commande. Les logs sont
+suivis en permanence pour chaque run actif et écrits dans `$TRAINHUB_DATA_DIR/logs/<run>.log`
+(`<run>.done` quand la sauvegarde est complète) ; si les logs Docker repartent plus courts que la
+sauvegarde (rotation), l'ancienne version est gardée en `<run>.prev.log`. Supprimer un run
+conserve sa sauvegarde.
+
 ---
 
 ## Déploiement (Docker)
@@ -161,7 +195,7 @@ connecter via la page `/login` qui pose un cookie (navigateur, WebSocket).
 
 Les outils (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
 `list_runs`, `get_run`, `get_logs`, `pause_run`, `resume_run`, `stop_run`, `restart_run`,
-`relaunch_run`, `delete_run`, `set_project_command`) appellent la même couche service que
+`relaunch_run`, `close_container`, `delete_run`, `set_project_command`) appellent la même couche service que
 l'interface : un run lancé par un agent apparaît immédiatement dans l'interface, avec une icône
 « agent ». `get_logs` renvoie du texte nettoyé (sans ANSI, barres de progression réduites à leur
 dernier état, tronqué avec mention).

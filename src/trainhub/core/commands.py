@@ -19,10 +19,18 @@ from __future__ import annotations
 
 import re
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from .models import PLACEHOLDER_RE, ConfigDiscover, Image, Machine, Project, Venv
+from .models import (
+    ALLOWED_PLACEHOLDERS,
+    PLACEHOLDER_RE,
+    ConfigDiscover,
+    Image,
+    Machine,
+    Project,
+    Venv,
+)
 
 SSH_CONTROL_OPTIONS: tuple[str, ...] = (
     "-o",
@@ -45,6 +53,12 @@ LABEL_CONFIG = "trainhub.config"
 
 PS_FORMAT = "{{json .}}"
 
+#: Fichier (dans le conteneur) où le script écrit le code de sortie de la commande.
+EXIT_FILE = "/tmp/.trainhub-exit"
+#: Healthcheck : ``unhealthy`` (et affiche le code) quand la commande est terminée.
+HEALTH_CMD = f"test ! -e {EXIT_FILE} || {{ cat {EXIT_FILE}; exit 1; }}"
+HEALTH_INTERVAL = "3s"
+
 _CUDA_RE = re.compile(r"^[0-9]+(,[0-9]+)*$|^(all|none|void|)$")
 
 
@@ -63,6 +77,8 @@ class RunSpec:
     overrides: tuple[str, ...] = ()
     """Overrides Hydra ajoutés à la fin de la commande, chacun échappé."""
     cuda_visible_devices: str | None = None
+    params: Mapping[str, str] = field(default_factory=dict)
+    """Valeurs des paramètres libres (``{nom}`` non réservés) de la commande."""
 
     @property
     def template(self) -> str:
@@ -99,12 +115,33 @@ def container_name(project_id: str, run_id: str) -> str:
     return f"th-{project_id}-{run_id}"
 
 
-def resolve_command(template: str, *, config: str, run_id: str, machine: str, project: str) -> str:
+def param_words(name: str, value: str) -> list[str]:
+    """Valeur d'un paramètre libre découpée comme par un shell (``a=1 'b c'`` → 2 mots)."""
+    if "\x00" in value:
+        raise ValueError(f"paramètre {{{name}}} : caractère nul interdit")
+    try:
+        return shlex.split(value)
+    except ValueError as exc:
+        raise ValueError(f"paramètre {{{name}}} invalide : {exc}") from exc
+
+
+def resolve_command(
+    template: str,
+    *,
+    config: str,
+    run_id: str,
+    machine: str,
+    project: str,
+    params: Mapping[str, str] | None = None,
+) -> str:
     """Remplace les placeholders par leurs valeurs échappées pour le shell.
 
     ``{config}`` : chemin relatif sans extension (ex. ``exp/unet``) ; ``{config_name}`` :
     basename (``unet``). ``${VAR}`` et les interpolations Hydra ``${…}`` ne sont pas touchés.
+    Tout autre ``{nom}`` est un paramètre libre : sa valeur (``params``) est découpée comme
+    par un shell et chaque mot est échappé ; absente ou vide, rien n'est inséré.
     """
+    free = params or {}
     values = {
         "config": config,
         "config_name": config.rsplit("/", 1)[-1],
@@ -115,8 +152,8 @@ def resolve_command(template: str, *, config: str, run_id: str, machine: str, pr
 
     def repl(m: re.Match[str]) -> str:
         name = m.group(1)
-        if name not in values:
-            raise ValueError(f"placeholder inconnu : {{{name}}}")
+        if name not in ALLOWED_PLACEHOLDERS:
+            return " ".join(shlex.quote(w) for w in param_words(name, free.get(name, "")))
         return shlex.quote(values[name])
 
     return PLACEHOLDER_RE.sub(repl, template)
@@ -130,19 +167,59 @@ def resolved_command(spec: RunSpec) -> str:
         run_id=spec.run_id,
         machine=spec.machine.id,
         project=spec.project.id,
+        params=spec.params,
     )
     if spec.overrides:
         cmd += " " + " ".join(shlex.quote(o) for o in spec.overrides)
     return cmd
 
 
+def _activate_path(venv_path: str) -> str:
+    return venv_path.rstrip("/") + "/bin/activate"
+
+
 def inner_script(spec: RunSpec) -> str:
-    """Script exécuté par ``bash -lc`` dans le conteneur."""
-    parts = [f"source {shlex.quote(spec.venv.path.rstrip('/') + '/bin/activate')}"]
+    """Script exécuté par ``bash -lc`` dans le conteneur.
+
+    Sans ``keep_alive`` : ``source venv && cd workdir && exec CMD``.
+
+    Avec ``keep_alive`` (défaut), la commande tourne en arrière-plan sous ``bash`` :
+
+    - ``SIGTERM`` (``docker stop``) est relayé à la commande, puis le conteneur s'arrête avec
+      son code de sortie ;
+    - quand la commande se termine d'elle-même, son code est écrit dans :data:`EXIT_FILE` (le
+      healthcheck passe alors à ``unhealthy``, ce qui signale la fin à TrainHub) et le
+      conteneur reste démarré pour qu'on puisse y ouvrir un shell ; à sa fermeture, il sort
+      avec le code de la commande.
+    """
+    setup: list[str] = []
+    if spec.venv.path:  # venv « system » : rien à activer
+        setup.append(f"source {shlex.quote(_activate_path(spec.venv.path))}")
     if spec.project.workdir:
-        parts.append(f"cd {shlex.quote(spec.project.workdir)}")
-    parts.append(f"exec {resolved_command(spec)}")
-    return " && ".join(parts)
+        setup.append(f"cd {shlex.quote(spec.project.workdir)}")
+    if not spec.project.docker.keep_alive:
+        return " && ".join([*setup, f"exec {resolved_command(spec)}"])
+    f = EXIT_FILE
+    msg = (
+        r"\n[trainhub] commande terminée (code %s) : conteneur conservé, "
+        r"shell disponible depuis TrainHub\n"
+    )
+    return "; ".join(
+        [
+            f"rm -f {f}",
+            *(f"{s} || exit 1" for s in setup),
+            f"{resolved_command(spec)} & pid=$!",
+            "trap 'stop=1; kill -TERM $pid 2>/dev/null' TERM INT HUP",
+            "wait $pid",
+            "code=$?",
+            "while kill -0 $pid 2>/dev/null; do wait $pid; code=$?; done",
+            'if [ -n "$stop" ]; then exit $code; fi',
+            f"echo $code > {f}",
+            f"printf {shlex.quote(msg)} $code",
+            "trap 'exit $code' TERM INT HUP",
+            "while :; do sleep 3600 & wait $!; done",
+        ]
+    )
 
 
 def _docker_run_groups(spec: RunSpec) -> _Groups:
@@ -185,6 +262,17 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
         opts += ["-e", f"{k}={v}"]
     if spec.cuda_visible_devices is not None:
         opts += ["-e", f"CUDA_VISIBLE_DEVICES={spec.cuda_visible_devices}"]
+    if d.keep_alive:
+        opts += [
+            "--health-cmd",
+            HEALTH_CMD,
+            "--health-interval",
+            HEALTH_INTERVAL,
+            "--health-retries",
+            "1",
+            "--health-timeout",
+            "5s",
+        ]
     opts += list(d.extra_args)
     if opts:
         g.add(*opts)
@@ -209,6 +297,8 @@ def validate_spec(spec: RunSpec) -> None:
             f"CUDA_VISIBLE_DEVICES invalide : {spec.cuda_visible_devices!r} "
             "(attendu : liste d'indices, ex. 0,1)"
         )
+    for name, value in spec.params.items():
+        param_words(name, value)
 
 
 def docker_run(spec: RunSpec) -> list[str]:
@@ -262,6 +352,37 @@ def docker_start(container: str) -> list[str]:
 
 def docker_rm(container: str, *, force: bool = False) -> list[str]:
     return ["docker", "rm", *(["-f"] if force else []), container]
+
+
+def docker_restart(container: str, timeout: int = 30) -> list[str]:
+    return ["docker", "restart", "-t", str(int(timeout)), container]
+
+
+def docker_exec_shell(
+    container: str, *, venv_path: str | None = None, workdir: str | None = None
+) -> list[str]:
+    """argv distant d'un shell interactif dans le conteneur (venv activé, dans le workdir).
+
+    ``bash`` s'il existe, sinon ``sh``.
+    """
+    parts: list[str] = []
+    if workdir:
+        parts.append(f"cd {shlex.quote(workdir)} 2>/dev/null")
+    if venv_path:
+        act = shlex.quote(_activate_path(venv_path))
+        parts.append(f"if [ -f {act} ]; then . {act}; fi")
+    parts.append("if command -v bash >/dev/null 2>&1; then exec bash -i; else exec sh -i; fi")
+    return [
+        "docker",
+        "exec",
+        "-it",
+        "-e",
+        "TERM=xterm-256color",
+        container,
+        "sh",
+        "-c",
+        "; ".join(parts),
+    ]
 
 
 def discover_root(discover: ConfigDiscover) -> str:

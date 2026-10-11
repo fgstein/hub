@@ -155,3 +155,68 @@ config indique combien de runs ont déjà été lancés dessus.
 - Sélecteur : popover avec recherche (filtre sur le chemin, dossiers parents conservés), arbre
   repliable (tout déplié par défaut), navigation clavier (↑/↓, →/← pour déplier/replier ou
   remonter au dossier parent, Entrée), racine affichée en tête, légende en pied.
+
+## Évolution — commande visible, conteneur conservé, logs sauvegardés, relance en brouillon (11/10)
+
+Demandes : voir la commande utilisée ; ne pas fermer le conteneur à la fin et pouvoir s'y
+attacher ; sauvegarder les logs de tous les runs et continuer à les afficher après la fermeture
+du conteneur ; « Relancer » ouvre un brouillon ; champ d'overrides Hydra par run. Les options
+`docker run` restent dans le YAML (pas de menu de réglages, décision du propriétaire).
+
+- **Pourquoi les logs « disparaissaient »** : (1) en mode `fake` (`make dev`, `--reload`) les
+  conteneurs sont en mémoire et disparaissent à chaque rechargement du backend ; (2) un terminal
+  replié plus de 10 s puis rouvert ne recevait plus l'historique : le désabonnement était
+  enregistré par un `onCleanup` placé après un `await`, jamais exécuté (corrigé) ; (3) le client
+  ne recevait que `--tail 2000` ; (4) rien ne survivait à un `docker rm`.
+- **Conteneur conservé** (`docker.keep_alive`, défaut `true`) : la commande tourne sous `bash`
+  en arrière-plan (`CMD & pid=$!`), `SIGTERM` lui est relayé ; à la fin le code est écrit dans
+  `/tmp/.trainhub-exit` puis le conteneur attend (`sleep` en boucle). Fin détectée par un
+  healthcheck `unhealthy` (visible dans `docker ps`, donc sans coût de suivi) ; code de sortie lu
+  dans `State.Health.Log` par `docker inspect`. Limite : une commande composée
+  (`a && b`) reçoit `SIGTERM` sur le sous-shell, pas sur chaque processus. **[à valider]**
+- Champ `container_alive` sur les runs (migration SQLite automatique). Nouvelle action `close`
+  (API `POST /api/runs/{id}/close`, outil MCP `close_container`) ; « Redémarrer » utilise
+  `docker restart` si le conteneur est encore démarré ; « Supprimer » fait `docker rm -f`.
+- **Shell** : WebSocket `/ws/shell/{run_id}` relié à un PTY local qui exécute
+  `ssh -tt … docker exec -it <conteneur> sh -c '<cd workdir; . venv; exec bash -i>'`. La session
+  se ferme avec l'onglet ou la page. Mode fake : shell simulé (aucune commande exécutée).
+  Disponible pour un run en cours ou un conteneur conservé, pas en pause.
+- **Logs** : tous les runs actifs sont suivis en permanence (plus seulement ceux affichés) et
+  écrits sans tampon dans `$TRAINHUB_DATA_DIR/logs/<run>.log` ; `docker logs` complet (plus de
+  `--tail`) à chaque (re)connexion, la session réécrit le fichier via `<run>.log.part` remplacé
+  dès qu'il a rattrapé l'ancien (voir `_LogFile`). `GET /api/runs/{id}/logs` et `get_logs`
+  lisent le fichier en priorité. Les fichiers sont conservés à la suppression d'un run.
+- **Relancer** (interface) ouvre un brouillon pré-rempli (machine, image, venv, config, GPU,
+  overrides) mis en évidence ; rien n'est lancé avant « Lancer ». L'outil MCP `relaunch_run`
+  lance toujours directement.
+- **Overrides Hydra** : champ texte du brouillon, découpé comme par un shell (guillemets, `\`),
+  bordure rouge si un guillemet n'est pas fermé.
+- Panneau d'un run : barre « commande / complète » (complète = multi-ligne, un seul niveau
+  d'échappement ; le bouton copie la ligne exacte), onglets « logs / shell ».
+- **Run en cours comme modèle** : entrée « Nouveau run à partir de celui-ci… » dans le menu
+  des runs actifs (même brouillon pré-rempli que « Relancer… », le run d'origine continue).
+
+## Évolution — venv `system` et paramètres libres dans la commande (11/10)
+
+- **Venv `system`** : toujours proposé (en dernier) pour tous les projets et toutes les images ;
+  aucun `source …/activate` (le shell intégré n'active rien non plus). Un venv déclaré avec l'id
+  `system` dans l'inventaire prend le pas sur le venv implicite.
+- **Paramètres libres** : tout placeholder `{nom}` autre que `config`, `config_name`, `run_id`,
+  `machine`, `project` n'est plus une erreur mais un paramètre du run (`ProjectView.params`). Sa
+  valeur est découpée comme par un shell (`shlex.split`) puis chaque mot est échappé
+  (`shlex.quote`) : `{options}` peut porter plusieurs arguments, `"a b"` en fait un seul, une
+  valeur vide n'insère rien. Un guillemet non fermé est refusé (422, champ en rouge).
+  **[à valider]** : découpage plutôt qu'un argument unique par paramètre.
+- Persistance : `Run.params` (colonne SQLite ajoutée par migration), dernières valeurs par
+  projet dans `last_selection.params` (valeurs par défaut des brouillons), reprises par
+  « Relancer… » / « Nouveau run à partir de celui-ci… » ; la relance MCP ne garde que les
+  paramètres encore présents dans la commande actuelle. Paramètre inconnu de la commande :
+  erreur explicite. API/MCP : `params` (objet nom → valeur) ; CLI : `-P nom=valeur`.
+- Brouillon : seconde ligne avec un champ par paramètre, dans l'ordre de la commande ; les
+  paramètres sont colorés en orange dans l'éditeur de commande.
+- Correctif : une liste déroulante du brouillon fermée par un clic sur un autre champ ne reprend
+  plus le focus.
+- **Champ « overrides Hydra » retiré du brouillon** : les paramètres `{nom}` le remplacent
+  (ajouter `{options}` à la commande du projet). Les overrides restent dans l'API, le MCP et la
+  CLI ; le champ ne réapparaît que dans un brouillon issu d'un run qui en avait (sinon ils
+  seraient perdus sans le voir).

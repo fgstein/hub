@@ -32,5 +32,9 @@ class SshExecutor(SubprocessExecutor):
     def full_argv(self, machine: Machine, remote: Sequence[str]) -> list[str]:
         return transport(machine, remote, extra=self.extra_options)
 
+    def shell_argv(self, machine: Machine, remote: Sequence[str]) -> list[str]:
+        # -tt : terminal distant obligatoire pour ``docker exec -it``.
+        return transport(machine, remote, extra=(*self.extra_options, "-tt"))
+
     def _env(self) -> dict[str, str] | None:
         return dict(os.environ)

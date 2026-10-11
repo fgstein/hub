@@ -16,7 +16,7 @@ export type PreviewResult = S["PreviewResult"]
 export type ConfigList = S["ConfigList"]
 export type Health = S["Health"]
 
-export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch"
+export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close"
 export type MenuAction = RunAction | "delete"
 
 export interface Snapshot {
@@ -58,9 +58,19 @@ export const ALLOWED_FROM: Record<MenuAction, readonly RunStatus[]> = {
   stop: ["running", "paused"],
   restart: FINISHED_STATUSES,
   relaunch: FINISHED_STATUSES,
+  close: FINISHED_STATUSES,
   delete: FINISHED_STATUSES,
 }
 
-export function allowedActions(status: RunStatus): MenuAction[] {
-  return (Object.keys(ALLOWED_FROM) as MenuAction[]).filter((a) => ALLOWED_FROM[a].includes(status))
+/** Actions possibles ; ``close`` exige un conteneur conservé encore démarré. */
+export function allowedActions(status: RunStatus, containerAlive = false): MenuAction[] {
+  return (Object.keys(ALLOWED_FROM) as MenuAction[]).filter(
+    (a) => ALLOWED_FROM[a].includes(status) && (a !== "close" || containerAlive),
+  )
+}
+
+/** Un shell peut-il être ouvert dans le conteneur du run ? */
+export function shellAvailable(run: Pick<RunView, "status" | "container_alive">): boolean {
+  if (run.status === "paused") return false
+  return !!run.container_alive || run.status === "running" || run.status === "stopping"
 }

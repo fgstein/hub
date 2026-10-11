@@ -14,6 +14,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from ..core import commands as cmd
@@ -29,6 +30,7 @@ from ..core.models import (
     RunSource,
     RunStatus,
     UnknownResourceError,
+    command_params,
     validate_command_template,
 )
 from ..core.selection import SelectionError, make_spec
@@ -41,10 +43,11 @@ from ..executors.base import (
     ExecutorError,
     LogStream,
     MachineUnreachableError,
+    ShellSession,
 )
 from .events import EventBus
 from .inventory_watch import InventoryManager
-from .log_hub import LogHub, LogSubscriber
+from .log_hub import LogHub, LogsGoneError, LogSubscriber
 from .schemas import (
     ConfigList,
     Health,
@@ -104,6 +107,7 @@ class RunAction(StrEnum):
     STOP = "stop"
     RESTART = "restart"
     RELAUNCH = "relaunch"
+    CLOSE = "close"
 
 
 #: Statuts de départ autorisés pour chaque action (section 4.2).
@@ -113,6 +117,7 @@ ALLOWED_FROM: dict[str, frozenset[RunStatus]] = {
     RunAction.STOP: frozenset({RunStatus.RUNNING, RunStatus.PAUSED}),
     RunAction.RESTART: FINISHED_STATUSES,
     RunAction.RELAUNCH: FINISHED_STATUSES,
+    RunAction.CLOSE: FINISHED_STATUSES,
     "delete": FINISHED_STATUSES,
 }
 
@@ -122,13 +127,18 @@ _ACTION_LABELS = {
     RunAction.STOP: "arrêter",
     RunAction.RESTART: "redémarrer",
     RunAction.RELAUNCH: "relancer",
+    RunAction.CLOSE: "fermer le conteneur du",
     "delete": "supprimer",
 }
 
 
-def allowed_actions(status: RunStatus) -> list[str]:
-    """Actions possibles pour un statut donné."""
-    return [str(a) for a, statuses in ALLOWED_FROM.items() if status in statuses]
+def allowed_actions(status: RunStatus, *, container_alive: bool = False) -> list[str]:
+    """Actions possibles pour un statut donné (``close`` : conteneur conservé encore démarré)."""
+    return [
+        str(a)
+        for a, statuses in ALLOWED_FROM.items()
+        if status in statuses and (a != RunAction.CLOSE or container_alive)
+    ]
 
 
 # --------------------------------------------------------------------------- service
@@ -146,6 +156,7 @@ class RunService:
         bus: EventBus | None = None,
         poll_interval: float = 3.0,
         log_idle_timeout: float = 30.0,
+        log_dir: Path | None = None,
         version: str = "0.1.0",
     ) -> None:
         self.inv_mgr = inventory
@@ -154,7 +165,13 @@ class RunService:
         self.bus = bus or EventBus()
         self.poll_interval = poll_interval
         self.version = version
-        self.logs = LogHub(self._open_log_stream, self._is_finished, idle_timeout=log_idle_timeout)
+        self.logs = LogHub(
+            self._open_log_stream,
+            self._is_finished,
+            log_dir=log_dir,
+            idle_timeout=log_idle_timeout,
+            finish_grace=min(1.5, log_idle_timeout),
+        )
         self.machine_status: dict[str, MachineStatus] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -243,6 +260,7 @@ class RunService:
             command=override or p.command,
             yaml_command=p.command,
             command_overridden=override is not None and override != p.command,
+            params=command_params(override or p.command),
             workdir=p.workdir,
             machines=[m.id for m in inv.allowed_machines(p)],
             images=[i.id for i in inv.allowed_images(p)],
@@ -383,6 +401,7 @@ class RunService:
             venv=sel.venv,
             config=sel.config,
             cuda_visible_devices=sel.cuda_visible_devices,
+            params={**state.last_selection.get(sel.project, LastSelection()).params, **sel.params},
         )
         await self.store.set_kv(UI_STATE_KEY, state.model_dump(mode="json"))
         self.bus.publish("ui_state.updated", {"ui_state": state.model_dump(mode="json")})
@@ -402,6 +421,7 @@ class RunService:
                 command=self.project_command(sel.project),
                 overrides=sel.overrides,
                 cuda_visible_devices=sel.cuda_visible_devices,
+                params=sel.params,
             )
             cmd.validate_spec(spec)
         except UnknownResourceError as exc:
@@ -469,6 +489,7 @@ class RunService:
             source=source,
             overrides=list(spec.overrides),
             cuda_visible_devices=spec.cuda_visible_devices,
+            params=dict(spec.params),
         )
         lock = self._lock(run_id)
         await lock.acquire()
@@ -507,7 +528,10 @@ class RunService:
                 )
                 return
             now = utcnow()
-            await self._update(run, status=RunStatus.RUNNING, started_at=now, error=None)
+            await self._update(
+                run, status=RunStatus.RUNNING, started_at=now, error=None, container_alive=True
+            )
+            self.logs.follow(run.id)
         finally:
             lock.release()
 
@@ -574,10 +598,10 @@ class RunService:
     def _check_allowed(self, run: Run, action: str) -> None:
         if run.status not in ALLOWED_FROM[action]:
             label = _ACTION_LABELS.get(action, action)
-            possible = ", ".join(allowed_actions(run.status)) or "aucune"
+            possible = ", ".join(allowed_actions(run.status, container_alive=run.container_alive))
             raise ActionNotAllowedError(
                 f"impossible de {label} le run {run.id} : statut '{run.status}' "
-                f"(actions possibles : {possible})"
+                f"(actions possibles : {possible or 'aucune'})"
             )
 
     async def _acquire(self, run: Run) -> asyncio.Lock:
@@ -620,6 +644,8 @@ class RunService:
             return await self.stop(run_id, wait=wait)
         if act is RunAction.RESTART:
             return await self.restart(run_id)
+        if act is RunAction.CLOSE:
+            return await self.close_container(run_id)
         return await self.relaunch(run_id, source=source, wait=wait)
 
     async def pause(self, run_id: str) -> Run:
@@ -700,8 +726,10 @@ class RunService:
                 exit_code=state.exit_code if state else None,
                 finished_at=(state.finished_at if state and state.finished_at else utcnow()),
                 error=None,
+                container_alive=state.alive if state else False,
                 **_close_pause(run),
             )
+            self.logs.finish(run.id)
         finally:
             lock.release()
 
@@ -712,14 +740,20 @@ class RunService:
             return 30
 
     async def restart(self, run_id: str) -> Run:
-        """Relance le même conteneur (``docker start``) : la commande repart du début."""
+        """Relance le même conteneur (``docker start``, ou ``docker restart`` s'il est conservé
+        démarré) : la commande repart du début."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.RESTART)
         lock = await self._acquire(run)
         try:
-            res = await self._exec_action(
-                run, cmd.docker_start(run.container_name), ACTION_TIMEOUT_S
-            )
+            if run.container_alive:
+                res = await self._exec_action(
+                    run, cmd.docker_restart(run.container_name, 10), 10 + ACTION_TIMEOUT_S
+                )
+            else:
+                res = await self._exec_action(
+                    run, cmd.docker_start(run.container_name), ACTION_TIMEOUT_S
+                )
             if not res.ok:
                 raise ServiceError(f"redémarrage impossible : {res.error_message()}")
             run = await self._update(
@@ -732,11 +766,58 @@ class RunService:
                 paused_total_s=0.0,
                 paused_at=None,
                 stop_requested=False,
+                container_alive=True,
             )
             self.logs.restart(run.id)
             return run
         finally:
             lock.release()
+
+    async def close_container(self, run_id: str) -> Run:
+        """Arrête le conteneur conservé d'un run terminé (le statut du run ne change pas)."""
+        run = await self.get_run(run_id)
+        self._check_allowed(run, RunAction.CLOSE)
+        if not run.container_alive:
+            raise ActionNotAllowedError(f"le conteneur du run {run.id} est déjà arrêté")
+        lock = await self._acquire(run)
+        try:
+            res = await self._exec_action(
+                run, cmd.docker_stop(run.container_name, 10), 10 + ACTION_TIMEOUT_S
+            )
+            if not res.ok and "no such container" not in res.err.lower():
+                raise ServiceError(f"fermeture impossible : {res.error_message()}")
+            return await self._update(run, container_alive=False)
+        finally:
+            lock.release()
+
+    async def open_shell(self, run_id: str) -> ShellSession:
+        """Shell interactif dans le conteneur d'un run (venv activé, dans le workdir)."""
+        run = await self.get_run(run_id)
+        if run.status is RunStatus.PAUSED:
+            raise ActionNotAllowedError(f"le run {run.id} est en pause : reprenez-le d'abord")
+        if not (run.container_alive or run.status in (RunStatus.RUNNING, RunStatus.STOPPING)):
+            raise ActionNotAllowedError(
+                f"le conteneur du run {run.id} n'est pas démarré "
+                "(« redémarrer » le relance, commande comprise)"
+            )
+        machine = self._machine(run.machine_id)
+        try:
+            venv = self.inventory.venv(run.venv_id)
+        except UnknownResourceError:
+            venv = None
+        try:
+            workdir = self.inventory.project(run.project_id).workdir
+        except UnknownResourceError:
+            workdir = None
+        remote = cmd.docker_exec_shell(
+            run.container_name, venv_path=venv.path if venv and venv.path else None, workdir=workdir
+        )
+        try:
+            return await self.executor.open_shell(machine, remote)
+        except MachineUnreachableError as exc:
+            raise UnreachableError(str(exc)) from exc
+        except ExecutorError as exc:
+            raise ServiceError(str(exc)) from exc
 
     async def relaunch(
         self, run_id: str, *, source: RunSource = RunSource.UI, wait: bool | float = False
@@ -752,6 +833,12 @@ class RunService:
             config=run.config,
             overrides=run.overrides,
             cuda_visible_devices=run.cuda_visible_devices,
+            # paramètres encore présents dans la commande actuelle du projet
+            params={
+                k: v
+                for k, v in run.params.items()
+                if k in command_params(self.project_command(run.project_id))
+            },
         )
         return await self.launch(sel, source=source, wait=wait)
 
@@ -767,7 +854,9 @@ class RunService:
                 machine = None
             if machine is not None:
                 res = await self._exec_action(
-                    run, cmd.docker_rm(run.container_name), ACTION_TIMEOUT_S
+                    run,
+                    cmd.docker_rm(run.container_name, force=run.container_alive),
+                    ACTION_TIMEOUT_S + 10,
                 )
                 if not res.ok and "no such container" not in res.err.lower():
                     raise ServiceError(f"suppression impossible : {res.error_message()}")
@@ -781,10 +870,16 @@ class RunService:
     # -- logs ---------------------------------------------------------------------------
 
     async def _open_log_stream(self, run_id: str) -> LogStream:
+        """``docker logs`` complet (suivi si le run est actif) ; lève :class:`LogsGoneError`
+        si le conteneur n'existe plus."""
         run = await self.get_run(run_id)
         machine = self._machine(run.machine_id)
+        res = await self.executor.exec(machine, cmd.docker_inspect(run.container_name))
+        if not res.ok and "no such" in (res.err + res.out).lower():
+            raise LogsGoneError(run.container_name)
         return await self.executor.stream(
-            machine, cmd.docker_logs(run.container_name, follow=True, tail=2000)
+            machine,
+            cmd.docker_logs(run.container_name, follow=run.status.is_active, tail=None),
         )
 
     async def _is_finished(self, run_id: str) -> bool:
@@ -814,9 +909,16 @@ class RunService:
         async for chunk in self.logs.stream(run_id, until_end=until_end):
             yield chunk
 
+    def log_path(self, run_id: str) -> Path | None:
+        """Fichier de sauvegarde des logs d'un run (peut ne pas exister)."""
+        return self.logs.log_path(run_id)
+
     async def read_logs(self, run_id: str, tail: int | None = None) -> bytes:
-        """Logs bruts (non suivis) : ``docker logs --tail``, ou le tampon si injoignable."""
+        """Logs bruts : fichier de sauvegarde, sinon ``docker logs --tail``, sinon le tampon."""
         run = await self.get_run(run_id)
+        saved = self.logs.read_file(run_id)
+        if saved:
+            return _tail_lines(saved, tail)
         try:
             res = await self._exec_action(
                 run, cmd.docker_logs(run.container_name, follow=False, tail=tail), 30.0
@@ -918,6 +1020,9 @@ class RunService:
                 continue
             found = by_name.get(run.container_name)
             if found is None:
+                if run.container_alive:
+                    await self._update(run, container_alive=False)
+                    run = await self.get_run(run.id)
                 if run.status.is_active:
                     await self._update(
                         run,
@@ -933,41 +1038,60 @@ class RunService:
     async def _apply_state(self, run: Run, c: ContainerState) -> None:
         new = status_from_container(c, stop_requested=run.stop_requested)
         changes: dict[str, Any] = {}
+        if run.container_alive != c.alive:
+            changes["container_alive"] = c.alive
         if run.status is RunStatus.UNREACHABLE:
             changes["error"] = None
         if new == run.status and not changes:
+            if run.status.is_active:
+                self.logs.follow(run.id)
             return
         if new.is_finished:
             if run.status.is_finished:
-                return  # déjà terminé : rien à faire (évite d'écraser un statut stopped)
+                # déjà terminé (évite d'écraser un statut stopped) : seul l'état du conteneur
+                # peut changer (conteneur conservé fermé en dehors de TrainHub…).
+                if "container_alive" in changes:
+                    await self._update(run, container_alive=c.alive)
+                return
+            st = await self._inspect(run)
+            if st is not None:
+                # docker ps ne donne pas le code d'un conteneur conservé : inspect le donne.
+                new = status_from_container(st, stop_requested=run.stop_requested)
+                changes["container_alive"] = st.alive
+            elif c.command_done:
+                return  # code de sortie inconnu : on attend le prochain tour
+            if new.is_finished:
+                changes.update(
+                    status=new,
+                    exit_code=st.exit_code if st and st.exit_code is not None else c.exit_code,
+                    finished_at=(
+                        st.finished_at if st and st.finished_at and not st.alive else utcnow()
+                    ),
+                    **_close_pause(run),
+                )
+                if new is RunStatus.STOPPED:
+                    changes["error"] = None
+                await self._update(run, **changes)
+                self.logs.finish(run.id)
+                return
+        changes["status"] = new
+        if new is RunStatus.PAUSED and run.paused_at is None:
+            changes["paused_at"] = utcnow()
+        elif new is RunStatus.RUNNING:
+            changes.update(_close_pause(run))
+        if run.status.is_finished:
+            # Redémarré en dehors de TrainHub.
             st = await self._inspect(run)
             changes.update(
-                status=new,
-                exit_code=st.exit_code if st and st.exit_code is not None else c.exit_code,
-                finished_at=(st.finished_at if st and st.finished_at else utcnow()),
-                **_close_pause(run),
+                started_at=st.started_at if st and st.started_at else utcnow(),
+                finished_at=None,
+                exit_code=None,
+                stop_requested=False,
             )
-            if new is RunStatus.STOPPED:
-                changes["error"] = None
-        else:
-            changes["status"] = new
-            if new is RunStatus.PAUSED and run.paused_at is None:
-                changes["paused_at"] = utcnow()
-            elif new is RunStatus.RUNNING:
-                changes.update(_close_pause(run))
-            if run.status.is_finished:
-                # Redémarré en dehors de TrainHub.
-                st = await self._inspect(run)
-                changes.update(
-                    started_at=st.started_at if st and st.started_at else utcnow(),
-                    finished_at=None,
-                    exit_code=None,
-                    stop_requested=False,
-                )
-                self.logs.restart(run.id)
+            self.logs.restart(run.id)
         updated = await self._update(run, **changes)
         if updated.status.is_active:
-            self.logs.ensure_following(run.id)
+            self.logs.follow(run.id)
 
     async def _import_container(self, machine_id: str, c: ContainerState) -> None:
         run_id = c.run_id
@@ -1002,10 +1126,25 @@ class RunService:
             finished_at=(st.finished_at if st else None) if status.is_finished else None,
             paused_at=utcnow() if status is RunStatus.PAUSED else None,
             source=RunSource.IMPORT,
+            container_alive=(st or c).alive,
         )
         await self.store.save_run(run)
         self._publish_run("run.created", run)
         log.info("conteneur importé", extra={"run_id": run_id, "machine": machine_id})
+
+
+def _tail_lines(data: bytes, tail: int | None) -> bytes:
+    """Les ``tail`` dernières lignes de ``data`` (tout si ``None``)."""
+    if tail is None:
+        return data
+    if tail <= 0:
+        return b""
+    idx = len(data) - 1 if data.endswith(b"\n") else len(data)
+    for _ in range(tail):
+        idx = data.rfind(b"\n", 0, idx)
+        if idx < 0:
+            return data
+    return data[idx + 1 :]
 
 
 def _close_pause(run: Run) -> dict[str, Any]:

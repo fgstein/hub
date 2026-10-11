@@ -50,6 +50,7 @@ const run = (id: string, over: Partial<RunView> = {}): RunView =>
     overrides: [],
     cuda_visible_devices: null,
     stop_requested: false,
+    container_alive: false,
     active: true,
     elapsed_s: 0,
     paused_s: 0,
@@ -141,6 +142,28 @@ describe("store principal", async () => {
     expect(app.draftSelection("seg", app.state.drafts.seg![0]!)).toMatchObject({ machine: "m1", image: "i1" })
     app.removeDraft("seg", d.key)
     expect(app.state.drafts.seg).toEqual([])
+  })
+
+  it("relancer ouvre un brouillon pré-rempli sans rien lancer", () => {
+    const done = run("r9", {
+      status: "failed",
+      image_id: "i2",
+      venv_id: "v2",
+      config: "exp/big",
+      overrides: ["trainer.max_epochs=5", "model.name=a b"],
+      cuda_visible_devices: "0,1",
+    })
+    ws.emit({ type: "run.created", seq: 20, run: done })
+    const sent = ws.sent.length
+    app.draftFromRun("r9")
+    const d = app.state.drafts.seg!.at(-1)!
+    expect(d).toMatchObject({ machine: "m1", image: "i2", venv: "v2", config: "exp/big", cuda: "0,1" })
+    expect(d.overrides).toBe("trainer.max_epochs=5 'model.name=a b'")
+    expect(app.draftSelection("seg", d)?.overrides).toEqual(["trainer.max_epochs=5", "model.name=a b"])
+    expect(ws.sent.length).toBe(sent)
+    app.updateDraft("seg", d.key, { overrides: "x='oops" })
+    expect(app.draftSelection("seg", app.state.drafts.seg!.at(-1)!)).toBeNull()
+    app.removeDraft("seg", d.key)
   })
 
   it("abonnements aux logs comptés par référence", () => {

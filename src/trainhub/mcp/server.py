@@ -48,6 +48,14 @@ OverridesArg = Annotated[
     Field(description="Overrides Hydra facultatifs, ex. ['trainer.max_epochs=5', 'seed=2']"),
 ]
 CudaArg = Annotated[str | None, Field(description="CUDA_VISIBLE_DEVICES facultatif, ex. '0,1'")]
+ParamsArg = Annotated[
+    dict[str, str] | None,
+    Field(
+        description="Valeurs des paramètres libres de la commande du projet ({nom} autres que "
+        "config, config_name, run_id, machine, project ; voir list_projects). Chaque valeur est "
+        "découpée comme par un shell ; absente ou vide : rien n'est inséré."
+    ),
+]
 
 
 def run_summary(run: Run) -> dict[str, Any]:
@@ -68,7 +76,8 @@ def run_summary(run: Run) -> dict[str, Any]:
         "created_at": run.created_at.isoformat(),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-        "allowed_actions": allowed_actions(run.status),
+        "container_alive": run.container_alive,
+        "allowed_actions": allowed_actions(run.status, container_alive=run.container_alive),
     }
 
 
@@ -122,6 +131,7 @@ def build_mcp(
                     "label": v.label,
                     "command": v.command,
                     "command_overridden": v.command_overridden,
+                    "params": v.params,
                     "machines": v.machines,
                     "images": v.images,
                     "venvs": v.venvs,
@@ -194,8 +204,11 @@ def build_mcp(
         config: ConfigArg,
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
+        params: ParamsArg = None,
     ) -> dict[str, Any]:
-        sel = _selection(project, machine, image, venv, config, overrides, cuda_visible_devices)
+        sel = _selection(
+            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+        )
         p = await call(svc.preview(sel))
         return {"command": p.command, "full_command": p.text, "exact": p.exact}
 
@@ -273,8 +286,11 @@ def build_mcp(
         config: ConfigArg,
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
+        params: ParamsArg = None,
     ) -> dict[str, Any]:
-        sel = _selection(project, machine, image, venv, config, overrides, cuda_visible_devices)
+        sel = _selection(
+            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+        )
         run = await call(svc.launch(sel, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
         return run_summary(run)
 
@@ -304,8 +320,9 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Redémarre le même conteneur (docker start) : la commande repart du "
-        "début. Statut terminé requis (succeeded, failed, stopped).",
+        description="Redémarre le même conteneur (docker start, ou docker restart s'il est "
+        "conservé démarré) : la commande repart du début. Statut terminé requis "
+        "(succeeded, failed, stopped).",
     )
     async def restart_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.restart(run_id)))
@@ -321,12 +338,20 @@ def build_mcp(
 
     @mcp.tool(
         annotations=DESTRUCTIVE,
-        description="Supprime un run terminé et son conteneur (docker rm) : ses logs sont "
-        "perdus. Statut terminé requis.",
+        description="Supprime un run terminé et son conteneur (docker rm -f) ; le fichier de "
+        "sauvegarde des logs est conservé côté TrainHub. Statut terminé requis.",
     )
     async def delete_run(run_id: RunIdArg) -> dict[str, Any]:
         await call(svc.delete(run_id))
         return {"deleted": run_id}
+
+    @mcp.tool(
+        annotations=WRITE,
+        description="Ferme (docker stop) le conteneur conservé d'un run terminé "
+        "(container_alive=true). Le statut du run ne change pas.",
+    )
+    async def close_container(run_id: RunIdArg) -> dict[str, Any]:
+        return run_summary(await call(svc.close_container(run_id)))
 
     @mcp.tool(
         annotations=WRITE,
@@ -358,6 +383,7 @@ def _selection(
     config: str,
     overrides: list[str] | None,
     cuda: str | None,
+    params: dict[str, str] | None = None,
 ) -> Selection:
     return Selection(
         project=project,
@@ -367,6 +393,7 @@ def _selection(
         config=config,
         overrides=overrides or [],
         cuda_visible_devices=cuda,
+        params=params or {},
     )
 
 

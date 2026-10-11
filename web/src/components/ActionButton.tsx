@@ -1,9 +1,10 @@
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { createSignal, For, type JSX, Show } from "solid-js"
 import { api } from "~/lib/api"
+import { shellJoin } from "~/lib/command"
 import type { MenuAction, RunAction, RunView } from "~/lib/types"
-import { allowedActions } from "~/lib/types"
-import { deleteRun, displayStatus, runAction } from "~/stores/app"
+import { allowedActions, shellAvailable } from "~/lib/types"
+import { deleteRun, displayStatus, draftFromRun, openShell, runAction } from "~/stores/app"
 import { toast } from "~/stores/toasts"
 import {
   IconChevronDown,
@@ -11,9 +12,11 @@ import {
   IconDownload,
   IconPause,
   IconPlay,
+  IconPower,
   IconRelaunch,
   IconRestart,
   IconStop,
+  IconTerminal,
   IconTrash,
 } from "./Icons"
 
@@ -36,13 +39,22 @@ export const ACTIONS: Record<MenuAction, ActionDef> = {
     icon: IconRestart,
     hint: "Relance le même conteneur (docker start) : la commande repart du début",
   },
-  relaunch: { label: "Relancer", icon: IconRelaunch, hint: "Nouveau run avec les mêmes paramètres" },
+  relaunch: {
+    label: "Relancer…",
+    icon: IconRelaunch,
+    hint: "Ouvre un brouillon avec les mêmes paramètres, à vérifier avant de lancer",
+  },
+  close: {
+    label: "Fermer le conteneur",
+    icon: IconPower,
+    hint: "docker stop du conteneur conservé après la commande (le shell n'est plus disponible)",
+  },
   delete: {
     label: "Supprimer",
     icon: IconTrash,
     confirm: "Confirmer la suppression",
     danger: true,
-    hint: "docker rm : le conteneur et ses logs sont supprimés",
+    hint: "docker rm : le conteneur est supprimé ; la sauvegarde des logs est conservée",
   },
 }
 
@@ -56,6 +68,7 @@ export function primaryAction(status: RunView["status"]): RunAction | null {
 
 function perform(run: RunView, action: MenuAction) {
   if (action === "delete") return deleteRun(run.id)
+  if (action === "relaunch") return draftFromRun(run.id)
   return runAction(run.id, action)
 }
 
@@ -64,11 +77,14 @@ export function ActionButton(props: { run: RunView }) {
   const primary = () => primaryAction(status())
   const [confirming, setConfirming] = createSignal<MenuAction | null>(null)
   const [open, setOpen] = createSignal(false)
-  const menuActions = () => allowedActions(status()).filter((a) => a !== primary())
+  const menuActions = () => allowedActions(status(), props.run.container_alive).filter((a) => a !== primary())
+  const canShell = () => shellAvailable({ status: status(), container_alive: props.run.container_alive })
 
   const copyCommand = async () => {
     try {
-      await navigator.clipboard.writeText(props.run.full_command?.join(" ") || props.run.command)
+      await navigator.clipboard.writeText(
+        props.run.full_command?.length ? shellJoin(props.run.full_command) : props.run.command,
+      )
       toast("commande copiée", "success")
     } catch {
       toast("copie impossible", "error")
@@ -153,6 +169,32 @@ export function ActionButton(props: { run: RunView }) {
             </For>
             <Show when={menuActions().length}>
               <DropdownMenu.Separator class="my-0.5 border-line-weak" />
+            </Show>
+            <Show when={primary() !== "relaunch"}>
+              <DropdownMenu.Item
+                onSelect={() => draftFromRun(props.run.id)}
+                class="flex h-7 cursor-default items-center gap-2 rounded px-2.5 text-sm text-fg-strong outline-none data-[highlighted]:bg-surface-active"
+                title="Ouvre un brouillon avec les mêmes paramètres (machine, image, venv, config, GPU, overrides), à modifier avant de lancer ; ce run continue"
+                data-testid="menu-duplicate"
+              >
+                <span class="flex w-4 justify-center text-icon">
+                  <IconRelaunch size={12} />
+                </span>
+                Nouveau run à partir de celui-ci…
+              </DropdownMenu.Item>
+            </Show>
+            <Show when={canShell()}>
+              <DropdownMenu.Item
+                onSelect={() => openShell(props.run.id)}
+                class="flex h-7 cursor-default items-center gap-2 rounded px-2.5 text-sm text-fg-strong outline-none data-[highlighted]:bg-surface-active"
+                title="Shell interactif dans le conteneur (docker exec -it), venv activé"
+                data-testid="menu-shell"
+              >
+                <span class="flex w-4 justify-center text-icon">
+                  <IconTerminal size={12} />
+                </span>
+                Ouvrir un shell
+              </DropdownMenu.Item>
             </Show>
             <DropdownMenu.Item
               onSelect={copyCommand}

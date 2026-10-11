@@ -21,8 +21,11 @@ from pydantic import (
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 
-#: Placeholders autorisés dans la commande générique d'un projet.
+#: Placeholders remplis par TrainHub. Tout autre ``{nom}`` est un paramètre libre du run,
+#: saisi avant le lancement (champ texte du brouillon).
 ALLOWED_PLACEHOLDERS = frozenset({"config", "config_name", "run_id", "machine", "project"})
+#: Identifiant du venv toujours disponible : pas d'activation (Python de l'image).
+SYSTEM_VENV_ID = "system"
 #: Un placeholder est ``{nom}`` non précédé de ``$`` (pour laisser passer ``${VAR}`` et les
 #: interpolations Hydra/OmegaConf ``${oc.env:X}``).
 PLACEHOLDER_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -34,18 +37,17 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+def command_params(command: str) -> list[str]:
+    """Paramètres libres d'une commande (placeholders non réservés), dans l'ordre d'apparition."""
+    names = PLACEHOLDER_RE.findall(command)
+    return list(dict.fromkeys(n for n in names if n not in ALLOWED_PLACEHOLDERS))
+
+
 def validate_command_template(command: str) -> str:
     """Valide une commande générique ; lève ``ValueError`` avec un message lisible."""
     if not command.strip():
         raise ValueError("la commande est vide")
     names = PLACEHOLDER_RE.findall(command)
-    unknown = sorted({n for n in names if n not in ALLOWED_PLACEHOLDERS})
-    if unknown:
-        allowed = ", ".join("{" + p + "}" for p in sorted(ALLOWED_PLACEHOLDERS))
-        raise ValueError(
-            f"placeholder(s) inconnu(s) : {', '.join('{' + u + '}' for u in unknown)} "
-            f"(autorisés : {allowed})"
-        )
     if "config" not in names:
         raise ValueError("la commande doit contenir le placeholder {config}")
     return command
@@ -95,6 +97,17 @@ class Venv(_Strict):
         default=None, description="Restreint le venv à ces images (défaut : toutes)"
     )
 
+    @property
+    def is_system(self) -> bool:
+        """Pas de venv à activer (Python de l'image)."""
+        return self.path == ""
+
+
+#: Venv implicite ``system`` : aucune activation.
+SYSTEM_VENV = Venv.model_construct(
+    id=SYSTEM_VENV_ID, path="", label="sans venv (Python de l'image)", images=None
+)
+
 
 class DockerOptions(_Strict):
     """Options ``docker run`` propres à un projet."""
@@ -106,6 +119,10 @@ class DockerOptions(_Strict):
     extra_args: list[str] = Field(default_factory=list)
     tty: bool = True
     stop_timeout: int = Field(default=30, ge=0)
+    keep_alive: bool = Field(
+        default=True,
+        description="Conserver le conteneur (shell disponible) quand la commande se termine",
+    )
 
     @field_validator("env", mode="before")
     @classmethod
@@ -227,7 +244,7 @@ class Inventory(_Strict):
                 seen.add(item.id)
         machines = {m.id for m in self.machines}
         images = {i.id for i in self.images}
-        venvs = {v.id for v in self.venvs}
+        venvs = {v.id for v in self.venvs} | {SYSTEM_VENV_ID}
         for v in self.venvs:
             for ref in v.images or []:
                 if ref not in images:
@@ -248,6 +265,8 @@ class Inventory(_Strict):
         return _find(self.images, iid, "image")
 
     def venv(self, vid: str) -> Venv:
+        if vid == SYSTEM_VENV_ID and all(v.id != vid for v in self.venvs):
+            return SYSTEM_VENV
         return _find(self.venvs, vid, "venv")
 
     def project(self, pid: str) -> Project:
@@ -264,10 +283,13 @@ class Inventory(_Strict):
         return [self.image(i) for i in project.images]
 
     def allowed_venvs(self, project: Project, image: str | None = None) -> list[Venv]:
+        """Venvs utilisables ; ``system`` (sans venv) est toujours proposé, en dernier."""
         venvs = list(self.venvs) if project.venvs is None else [self.venv(v) for v in project.venvs]
-        if image is None:
-            return venvs
-        return [v for v in venvs if v.images is None or image in v.images]
+        if image is not None:
+            venvs = [v for v in venvs if v.images is None or image in v.images]
+        if not any(v.id == SYSTEM_VENV_ID for v in venvs):
+            venvs.append(SYSTEM_VENV)
+        return venvs
 
 
 class UnknownResourceError(KeyError):
@@ -360,4 +382,10 @@ class Run(BaseModel):
     source: RunSource = RunSource.UI
     overrides: list[str] = Field(default_factory=list)
     cuda_visible_devices: str | None = None
+    params: dict[str, str] = Field(
+        default_factory=dict, description="Valeurs des paramètres libres de la commande"
+    )
     stop_requested: bool = False
+    container_alive: bool = Field(
+        default=False, description="Conteneur encore démarré (shell disponible)"
+    )

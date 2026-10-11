@@ -25,7 +25,9 @@ function Shell(props: { children?: unknown }) {
   const navigate = useNavigate()
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && fullscreenRun()) {
+    // Échap appartient au shell interactif (vim…) quand il a le focus.
+    const inShell = !!(e.target as HTMLElement | null)?.closest?.('[data-testid="shell-terminal"]')
+    if (e.key === "Escape" && fullscreenRun() && !inShell) {
       e.preventDefault()
       setFullscreenRun(null)
       return

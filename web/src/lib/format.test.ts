@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { segments, validateCommand } from "./command"
+import { commandParams, segments, validateCommand } from "./command"
 import { elapsedSeconds, formatDuration, pausedSeconds } from "./format"
-import { allowedActions } from "./types"
+import { allowedActions, shellAvailable } from "./types"
 import { parseLogFrame } from "./ws"
 
 describe("formatDuration", () => {
@@ -40,14 +40,15 @@ describe("commande générique", () => {
     const segs = segments("python t.py --config-name {config} id={run_id} {oops} ${HOME}")
     expect(segments("{config_name}")[0]?.kind).toBe("placeholder")
     expect(segs.filter((s) => s.kind === "placeholder").map((s) => s.text)).toEqual(["{config}", "{run_id}"])
-    expect(segs.filter((s) => s.kind === "unknown").map((s) => s.text)).toEqual(["{oops}"])
+    expect(segs.filter((s) => s.kind === "param").map((s) => s.text)).toEqual(["{oops}"])
     expect(segs.map((s) => s.text).join("")).toBe(
       "python t.py --config-name {config} id={run_id} {oops} ${HOME}",
     )
   })
   it("valide {config}", () => {
     expect(validateCommand("python t.py")).toMatch("{config}")
-    expect(validateCommand("python t.py {config} {x}")).toMatch("inconnu")
+    expect(validateCommand("python t.py {config} {x}")).toBeNull()
+    expect(commandParams("t {config} {opts} --o {x} {opts} {run_id}")).toEqual(["opts", "x"])
     expect(validateCommand("python t.py {config} ${oc.env:X}")).toBeNull()
     expect(validateCommand("  ")).toMatch("vide")
   })
@@ -72,5 +73,19 @@ describe("trames de logs", () => {
     const { runId, data } = parseLogFrame(frame.buffer)
     expect(runId).toBe("r7f3k2")
     expect(new TextDecoder().decode(data)).toBe("\x1b[32mok\r\n")
+  })
+})
+
+describe("actions et shell", () => {
+  it("fermer le conteneur seulement s'il est conservé démarré", () => {
+    expect(allowedActions("succeeded")).not.toContain("close")
+    expect(allowedActions("succeeded", true)).toContain("close")
+    expect(allowedActions("running", true)).not.toContain("close")
+  })
+  it("shell disponible si le conteneur tourne", () => {
+    expect(shellAvailable({ status: "running", container_alive: true })).toBe(true)
+    expect(shellAvailable({ status: "paused", container_alive: true })).toBe(false)
+    expect(shellAvailable({ status: "failed", container_alive: true })).toBe(true)
+    expect(shellAvailable({ status: "failed", container_alive: false })).toBe(false)
   })
 })

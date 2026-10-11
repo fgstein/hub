@@ -38,7 +38,14 @@ def make_service(
     inv = InventoryManager(text=text or sim_inventory_text(**sim))
     ex = executor or FakeExecutor(inv.inventory.simulation, inventory=inv.inventory)
     path = db or (str(tmp_path / "th.sqlite") if tmp_path else ":memory:")
-    return RunService(inv, ex, Store(path), poll_interval=0.05, log_idle_timeout=0.2)
+    return RunService(
+        inv,
+        ex,
+        Store(path),
+        poll_interval=0.05,
+        log_idle_timeout=0.2,
+        log_dir=tmp_path / "logs" if tmp_path else None,
+    )
 
 
 SEL = Selection(

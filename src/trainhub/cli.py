@@ -50,6 +50,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
         command=args.command,
         overrides=args.overrides,
         cuda_visible_devices=args.gpus,
+        params=_params(args),
     )
     print(preview_exact(spec) if args.exact else preview(spec))
     return 0
@@ -92,6 +93,7 @@ async def _launch(args: argparse.Namespace) -> int:
             config=args.config,
             overrides=args.overrides,
             cuda_visible_devices=args.gpus,
+            params=_params(args),
         )
         print(f"{run.id}  {run.status}  {run.container_name}", file=sys.stderr)
         if run.error:
@@ -172,6 +174,16 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _params(args: argparse.Namespace) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in args.param:
+        name, sep, value = item.partition("=")
+        if not sep or not name:
+            raise SystemExit(f"--param attend NOM=VALEUR : {item!r}")
+        out[name] = value
+    return out
+
+
 def _add_selection(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--project", required=True)
     p.add_argument("-m", "--machine", required=True)
@@ -179,6 +191,14 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
     p.add_argument("-e", "--venv", required=True)
     p.add_argument("-c", "--config", required=True)
     p.add_argument("--gpus", help="CUDA_VISIBLE_DEVICES (ex. 0,1)")
+    p.add_argument(
+        "-P",
+        "--param",
+        action="append",
+        default=[],
+        metavar="NOM=VALEUR",
+        help="Paramètre libre de la commande ({nom}), répétable",
+    )
     p.add_argument("overrides", nargs="*", help="Overrides Hydra (ex. trainer.max_epochs=5)")
 
 

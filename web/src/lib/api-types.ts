@@ -273,6 +273,12 @@ export interface components {
              * @default 30
              */
             stop_timeout: number;
+            /**
+             * Keep Alive
+             * @description Conserver le conteneur (shell disponible) quand la commande se termine
+             * @default true
+             */
+            keep_alive: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -331,6 +337,10 @@ export interface components {
             config?: string | null;
             /** Cuda Visible Devices */
             cuda_visible_devices?: string | null;
+            /** Params */
+            params?: {
+                [key: string]: string;
+            };
         };
         /** LaunchRequest */
         LaunchRequest: {
@@ -354,6 +364,13 @@ export interface components {
              * @description Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')
              */
             cuda_visible_devices?: string | null;
+            /**
+             * Params
+             * @description Valeurs des paramètres libres de la commande ({nom} non réservés) ; chaque valeur est découpée comme par un shell, vide = rien d'inséré
+             */
+            params?: {
+                [key: string]: string;
+            };
             /** @default ui */
             source: components["schemas"]["RunSource"];
         };
@@ -443,6 +460,11 @@ export interface components {
             yaml_command: string;
             /** Command Overridden */
             command_overridden: boolean;
+            /**
+             * Params
+             * @description Paramètres libres de la commande effective, à renseigner au lancement
+             */
+            params?: string[];
             /** Workdir */
             workdir: string | null;
             /** Machines */
@@ -468,7 +490,7 @@ export interface components {
          * RunAction
          * @enum {string}
          */
-        RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch";
+        RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch" | "close";
         /**
          * RunCount
          * @description Nombre de runs lancés sur une config (tous statuts) et, parmi eux, actifs.
@@ -547,10 +569,23 @@ export interface components {
             /** Cuda Visible Devices */
             cuda_visible_devices?: string | null;
             /**
+             * Params
+             * @description Valeurs des paramètres libres de la commande
+             */
+            params?: {
+                [key: string]: string;
+            };
+            /**
              * Stop Requested
              * @default false
              */
             stop_requested: boolean;
+            /**
+             * Container Alive
+             * @description Conteneur encore démarré (shell disponible)
+             * @default false
+             */
+            container_alive: boolean;
             /** Active */
             active: boolean;
             /** Elapsed S */
@@ -583,6 +618,13 @@ export interface components {
              * @description Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')
              */
             cuda_visible_devices?: string | null;
+            /**
+             * Params
+             * @description Valeurs des paramètres libres de la commande ({nom} non réservés) ; chaque valeur est découpée comme par un shell, vide = rien d'inséré
+             */
+            params?: {
+                [key: string]: string;
+            };
         };
         /**
          * UiState

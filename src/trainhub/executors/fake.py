@@ -1,10 +1,14 @@
 """Exécuteur ``fake`` : machines et conteneurs simulés en mémoire.
 
 Il interprète l'argv docker réellement construit par :mod:`trainhub.core.commands`
-(``docker run/ps/inspect/logs/pause/unpause/stop/start/rm`` et ``ls``), ce qui teste aussi
+(``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm`` et ``find``), ce qui teste aussi
 la construction des commandes. Chaque conteneur produit des logs réalistes : bannière Hydra,
 config résolue, lignes ANSI colorées, barres tqdm réécrites avec ``\\r``, métriques par époque,
 warnings, et éventuellement un traceback avec code de sortie 1.
+
+Un conteneur lancé avec un healthcheck (``keep_alive``) reste démarré après la commande,
+comme le vrai script : healthcheck ``unhealthy`` et code de la commande dans ``inspect``.
+``open_shell`` simule un shell minimal dans ce conteneur.
 
 Paramètres : section ``simulation`` de l'inventaire (voir ``dev/inventory.dev.yaml``).
 """
@@ -24,7 +28,14 @@ from datetime import UTC, datetime
 
 from ..core.commands import discover_root, transport
 from ..core.models import Inventory, Machine, SimulationSettings
-from .base import ExecResult, Executor, LogStream, MachineUnreachableError
+from .base import (
+    ExecResult,
+    Executor,
+    ExecutorError,
+    LogStream,
+    MachineUnreachableError,
+    ShellSession,
+)
 
 # Options ``docker run`` prenant une valeur séparée.
 _RUN_VALUE_OPTS = frozenset(
@@ -59,6 +70,11 @@ _RUN_VALUE_OPTS = frozenset(
         "--publish",
         "--cap-add",
         "--security-opt",
+        "--health-cmd",
+        "--health-interval",
+        "--health-retries",
+        "--health-timeout",
+        "--health-start-period",
     }
 )
 
@@ -92,6 +108,9 @@ class FakeContainer:
     followers: list[asyncio.Queue[bytes | None]] = field(default_factory=list)
     task: asyncio.Task[None] | None = None
     running: asyncio.Event = field(default_factory=asyncio.Event)
+    keep_alive: bool = False
+    command_done: bool = False
+    command_code: int = 0
 
     def write(self, data: bytes) -> None:
         self.logs += data
@@ -105,9 +124,15 @@ class FakeContainer:
             q.put_nowait(None)
         self.followers.clear()
 
+    @property
+    def health(self) -> str | None:
+        if not self.keep_alive or self.state not in ("running", "paused"):
+            return None
+        return "unhealthy" if self.command_done else "healthy"
+
     def status_text(self) -> str:
         if self.state == "running":
-            return "Up"
+            return f"Up ({self.health})" if self.health else "Up"
         if self.state == "paused":
             return "Up (Paused)"
         if self.state == "exited":
@@ -142,6 +167,20 @@ class FakeContainer:
                         "ExitCode": self.exit_code if self.state == "exited" else 0,
                         "StartedAt": _iso(self.started_at),
                         "FinishedAt": _iso(self.finished_at),
+                        **(
+                            {
+                                "Health": {
+                                    "Status": self.health,
+                                    "Log": [
+                                        {"Output": f"{self.command_code}\n"}
+                                        if self.command_done
+                                        else {"Output": ""}
+                                    ],
+                                }
+                            }
+                            if self.health
+                            else {}
+                        ),
                     },
                     "Config": {"Image": self.image, "Labels": self.labels, "Tty": self.tty},
                 }
@@ -265,6 +304,7 @@ class FakeExecutor(Executor):
             "unpause": self._unpause,
             "stop": self._stop,
             "start": self._start,
+            "restart": self._restart,
             "rm": self._rm,
         }.get(sub)
         if handler is None:
@@ -300,6 +340,7 @@ class FakeExecutor(Executor):
         name: str | None = None
         labels: dict[str, str] = {}
         tty = False
+        keep_alive = "--health-cmd" in args
         i = 0
         while i < len(args):
             a = args[i]
@@ -339,7 +380,15 @@ class FakeExecutor(Executor):
                 f'is already in use by container "{existing.id}".',
             )
         cid = hashlib.sha256(f"{machine.id}/{name}/{time.time()}".encode()).hexdigest()
-        c = FakeContainer(name=name, image=image, labels=labels, command=command, tty=tty, id=cid)
+        c = FakeContainer(
+            name=name,
+            image=image,
+            labels=labels,
+            command=command,
+            tty=tty,
+            id=cid,
+            keep_alive=keep_alive,
+        )
         m.containers[name] = c
         self._start_container(c)
         return 0, cid + "\n", ""
@@ -347,6 +396,7 @@ class FakeExecutor(Executor):
     def _start_container(self, c: FakeContainer) -> None:
         c.state = "running"
         c.exit_code = 0
+        c.command_done = False
         c.started_at = _now()
         c.finished_at = None
         c.running.set()
@@ -444,7 +494,10 @@ class FakeExecutor(Executor):
                 "",
                 "Error response from daemon: cannot stop a paused container; unpause it first",
             )
-        if c.state == "running":
+        if c.state == "running" and c.command_done:
+            # Conteneur conservé : le script sort avec le code de la commande.
+            self._finish(c, c.command_code)
+        elif c.state == "running":
             if c.task is not None:
                 c.task.cancel()
             reset = "\x1b[0m" if c.tty else ""
@@ -461,6 +514,18 @@ class FakeExecutor(Executor):
             return self._no_such(args[-1])
         if c.state in ("running", "paused"):
             return 0, c.name + "\n", ""
+        self._start_container(c)
+        return 0, c.name + "\n", ""
+
+    def _restart(self, machine: Machine, m: FakeMachine, args: list[str]) -> tuple[int, str, str]:
+        c = self._get(m, args[-1])
+        if c is None:
+            return self._no_such(args[-1])
+        if c.state == "paused":
+            c.state = "running"
+            c.running.set()
+        if c.state == "running":
+            self._stop(machine, m, ["-t", "10", c.name])
         self._start_container(c)
         return 0, c.name + "\n", ""
 
@@ -509,6 +574,20 @@ class FakeExecutor(Executor):
             q.put_nowait(None)
         return _FakeLogStream(q, c)
 
+    async def open_shell(self, machine: Machine, remote: Sequence[str]) -> ShellSession:
+        await self._latency()
+        if not self.is_reachable(machine.id):
+            raise MachineUnreachableError(machine.id, "Connection timed out")
+        argv = list(remote)
+        if argv[:2] != ["docker", "exec"]:
+            raise ExecutorError("shell simulé : seul docker exec est pris en charge")
+        name = next((a for a in argv[2:] if not a.startswith("-") and "=" not in a), "")
+        c = self._get(self.machines.setdefault(machine.id, FakeMachine()), name)
+        if c is None or c.state not in ("running", "paused"):
+            msg = f"Error response from daemon: container {name} is not running"
+            return _FakeShell(name, error=msg)
+        return _FakeShell(name)
+
     async def close(self) -> None:
         for m in self.machines.values():
             for c in m.containers.values():
@@ -537,6 +616,15 @@ class FakeExecutor(Executor):
         except Exception as exc:  # pragma: no cover - filet de sécurité
             c.write(f"simulation error: {exc}\n".encode())
             code = 1
+        if c.keep_alive:
+            c.command_done = True
+            c.command_code = code
+            nl = "\r\n" if c.tty else "\n"
+            c.write(
+                f"{nl}[trainhub] commande terminée (code {code}) : conteneur conservé, "
+                f"shell disponible depuis TrainHub{nl}".encode()
+            )
+            return
         self._finish(c, code)
 
     async def _training(self, c: FakeContainer) -> int:
@@ -669,6 +757,85 @@ class FakeExecutor(Executor):
             "Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.",
         ]
         c.write("".join(line + nl for line in lines).encode())
+
+
+class _FakeShell(ShellSession):
+    """Shell simulé : écho local, quelques commandes, ``exit``."""
+
+    def __init__(self, container: str, *, error: str | None = None) -> None:
+        self._q: asyncio.Queue[bytes] = asyncio.Queue()
+        self._line = ""
+        self._closed = False
+        self.size = (120, 32)
+        if error:
+            self._q.put_nowait(f"{error}\r\n".encode())
+            self._q.put_nowait(b"")
+            self._closed = True
+            return
+        self._prompt = f"\x1b[1;32mroot@{container[:12]}\x1b[0m:\x1b[1;34m/workspace\x1b[0m# "
+        self._q.put_nowait(
+            "\x1b[2m(shell simulé : mode fake, aucune commande n'est exécutée)\x1b[0m\r\n".encode()
+            + self._prompt.encode()
+        )
+
+    async def read(self) -> bytes:
+        return await self._q.get()
+
+    def _run(self, line: str) -> str:
+        cmd = line.strip()
+        if not cmd:
+            return ""
+        if cmd in ("exit", "logout"):
+            return "\x00exit"
+        if cmd == "pwd":
+            return "/workspace\r\n"
+        if cmd == "ls":
+            return "checkpoints  configs  outputs  train.py\r\n"
+        if cmd.startswith("echo "):
+            return cmd[5:] + "\r\n"
+        if cmd == "nvidia-smi":
+            return "GPU 0: NVIDIA A100-SXM4-80GB (simulé)  | 0MiB / 81920MiB\r\n"
+        return f"{cmd.split()[0]}: commande simulée\r\n"
+
+    def write(self, data: bytes) -> None:
+        if self._closed:
+            return
+        out = ""
+        for ch in data.decode("utf-8", "replace"):
+            if ch in ("\r", "\n"):
+                res = self._run(self._line)
+                self._line = ""
+                if res == "\x00exit":
+                    self._q.put_nowait(b"\r\nexit\r\n")
+                    self._q.put_nowait(b"")
+                    self._closed = True
+                    return
+                out += "\r\n" + res + self._prompt
+            elif ch in ("\x7f", "\b"):
+                if self._line:
+                    self._line = self._line[:-1]
+                    out += "\b \b"
+            elif ch == "\x03":
+                self._line = ""
+                out += "^C\r\n" + self._prompt
+            elif ch == "\x04" and not self._line:
+                self._q.put_nowait(b"exit\r\n")
+                self._q.put_nowait(b"")
+                self._closed = True
+                return
+            elif ch >= " ":
+                self._line += ch
+                out += ch
+        if out:
+            self._q.put_nowait(out.encode())
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.size = (cols, rows)
+
+    async def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._q.put_nowait(b"")
 
 
 def _ts() -> str:

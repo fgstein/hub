@@ -25,7 +25,7 @@ type XtermModules = readonly [
 ]
 let xtermModules: Promise<XtermModules> | null = null
 
-function loadXterm(): Promise<XtermModules> {
+export function loadXterm(): Promise<XtermModules> {
   xtermModules ??= Promise.all([
     import("@xterm/xterm"),
     import("@xterm/addon-fit"),
@@ -74,7 +74,7 @@ const LIGHT_ANSI = {
   brightWhite: "#171717",
 }
 
-function xtermTheme(): ITheme {
+export function xtermTheme(): ITheme {
   const css = getComputedStyle(document.documentElement)
   const v = (name: string) => css.getPropertyValue(name).trim()
   return {
@@ -100,6 +100,10 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
   const queue: Uint8Array[] = []
   let raf = 0
   let disposed = false
+  // Libérés par le onCleanup synchrone plus bas : un onCleanup appelé après un await
+  // (dans onMount) n'est rattaché à aucun propriétaire et ne serait jamais exécuté.
+  let unsubscribe: (() => void) | undefined
+  let ro: ResizeObserver | undefined
 
   const [height, setHeight] = createSignal(360)
   const [ready, setReady] = createSignal(false)
@@ -175,7 +179,7 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
     host.addEventListener("wheel", () => requestAnimationFrame(checkBottom), { passive: true })
     fit.fit()
     setReady(true)
-    const ro = new ResizeObserver(() => {
+    ro = new ResizeObserver(() => {
       try {
         fit?.fit()
       } catch {
@@ -183,7 +187,7 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
       }
     })
     ro.observe(host)
-    const unsubscribe = subscribeLogs(props.runId, {
+    unsubscribe = subscribeLogs(props.runId, {
       data: enqueue,
       reset: () => {
         queue.length = 0
@@ -191,10 +195,6 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
         setNewLines(false)
         setAtBottom(true)
       },
-    })
-    onCleanup(() => {
-      ro.disconnect()
-      unsubscribe()
     })
   })
 
@@ -213,6 +213,8 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
 
   onCleanup(() => {
     disposed = true
+    ro?.disconnect()
+    unsubscribe?.()
     cancelAnimationFrame(raf)
     term?.dispose()
   })

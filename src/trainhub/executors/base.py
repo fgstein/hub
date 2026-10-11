@@ -84,6 +84,26 @@ class LogStream(abc.ABC):
         return None
 
 
+class ShellSession(abc.ABC):
+    """Session interactive dans un conteneur (``docker exec -it``), derrière un PTY."""
+
+    @abc.abstractmethod
+    async def read(self) -> bytes:
+        """Prochains octets de sortie ; ``b""`` quand la session est terminée."""
+
+    @abc.abstractmethod
+    def write(self, data: bytes) -> None:
+        """Envoie des octets (frappes clavier) au shell."""
+
+    @abc.abstractmethod
+    def resize(self, cols: int, rows: int) -> None:
+        """Change la taille du terminal."""
+
+    @abc.abstractmethod
+    async def close(self) -> None:
+        """Termine la session."""
+
+
 class Executor(abc.ABC):
     """Exécute des commandes sur les machines de l'inventaire."""
 
@@ -136,6 +156,10 @@ class Executor(abc.ABC):
     @abc.abstractmethod
     async def stream(self, machine: Machine, remote: Sequence[str]) -> LogStream:
         """Démarre une commande longue (``docker logs -f``) et renvoie son flux de sortie."""
+
+    async def open_shell(self, machine: Machine, remote: Sequence[str]) -> ShellSession:
+        """Ouvre un shell interactif (``docker exec -it …``) sur ``machine``."""
+        raise ExecutorError(f"shell interactif non disponible avec l'exécuteur {self.kind}")
 
     async def close(self) -> None:  # noqa: B027
         """Libère les ressources (processus, connexions)."""

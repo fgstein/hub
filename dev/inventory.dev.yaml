@@ -1,5 +1,12 @@
 # Inventaire de développement — mode fake (TRAINHUB_EXECUTOR=fake).
 # Machines et conteneurs sont simulés en mémoire ; rien n'est exécuté.
+#
+# Ce que montre la démo :
+#   - segmentation : arborescence de configs, paramètre libre {options}, conteneur conservé
+#     après la commande (shell simulé, « Fermer le conteneur »)
+#   - détection    : paramètres libres {seed} et {tags}, venv « system » (toujours proposé)
+#   - llm-finetune : paramètre {nproc}, conteneur supprimé à la fin (keep_alive: false)
+#   - gpu-03 instable, gpu-old hors ligne, image « broken » (échec au lancement)
 
 machines:
   - id: gpu-01
@@ -37,7 +44,8 @@ venvs:
 projects:
   - id: segmentation
     label: Segmentation
-    command: python train.py --config-name {config}
+    # {options} : paramètre libre, un champ dans le brouillon (ex. trainer.max_epochs=5 +seed=1)
+    command: python train.py --config-name {config} {options}
     workdir: /workspace/seg
     machines: [gpu-01, gpu-02, gpu-03, gpu-old]
     docker:
@@ -57,7 +65,7 @@ projects:
 
   - id: detection
     label: Détection
-    command: python -m det.train --config-name {config} run.id={run_id}
+    command: python -m det.train --config-name {config} run.id={run_id} seed={seed} --tags {tags}
     workdir: /workspace/det
     images: [torch-2.4, torch-nightly]
     docker:
@@ -65,13 +73,11 @@ projects:
       shm_size: 8g
       volumes: [/home/alice/det:/workspace/det]
     configs:
-      discover:
-        root: /home/alice/det/configs
-        pattern: "*.yaml"
+      root: /home/alice/det/configs
 
   - id: llm-finetune
     label: LLM fine-tune
-    command: torchrun --nproc-per-node 4 finetune.py --config-name {config}
+    command: torchrun --nproc-per-node {nproc} finetune.py --config-name {config}
     workdir: /workspace/llm
     machines: [gpu-02]
     images: [torch-nightly]
@@ -80,6 +86,7 @@ projects:
       gpus: all
       shm_size: 64g
       tty: false
+      keep_alive: false       # conteneur non conservé : il s'arrête avec la commande
     configs:
       static: [llama_8b_lora]
 

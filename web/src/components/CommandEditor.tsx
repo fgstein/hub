@@ -80,7 +80,7 @@ export function CommandEditor(props: { project: ProjectView }) {
                 <span
                   classList={{
                     "text-placeholder": s.kind === "placeholder",
-                    "text-fg-critical underline decoration-wavy": s.kind === "unknown",
+                    "text-fg-warning": s.kind === "param",
                   }}
                 >
                   {s.text}
@@ -173,6 +173,7 @@ function previewSelection(p: ProjectView): Selection | null {
     config,
     overrides: [],
     cuda_visible_devices: last?.cuda_visible_devices ?? null,
+    params: Object.fromEntries((p.params ?? []).map((k) => [k, last?.params?.[k] ?? ""])),
   }
 }
 

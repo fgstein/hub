@@ -5,6 +5,7 @@
 import { batch, createRoot, createSignal } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { ApiError, api } from "~/lib/api"
+import { shellJoin, splitArgs } from "~/lib/command"
 import type {
   ConfigList,
   InventoryView,
@@ -31,7 +32,13 @@ export interface Draft {
   venv: string | null
   config: string | null
   cuda: string
+  /** Overrides Hydra propres au run (ligne d'arguments, découpée comme par un shell). */
+  overrides: string
+  /** Valeurs des paramètres libres de la commande (``{nom}``), par nom. */
+  params: Record<string, string>
   launching: boolean
+  /** Brouillon créé par « Relancer » : mis en évidence et affiché à l'écran. */
+  focus?: boolean
 }
 
 interface AppState {
@@ -224,7 +231,7 @@ function defaultsFor(projectId: string): LastSelection {
   return state.ui.last_selection?.[projectId] ?? {}
 }
 
-export function addDraft(projectId: string): void {
+export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
   const p = project(projectId)
   if (!p) return
   const last = defaultsFor(projectId)
@@ -244,9 +251,44 @@ export function addDraft(projectId: string): void {
     venv: pick(last.venv, venvs),
     config: last.config ?? (p.static_configs?.length === 1 ? (p.static_configs[0] ?? null) : null),
     cuda: last.cuda_visible_devices ?? "",
+    overrides: "",
+    params: { ...(last.params ?? {}) },
     launching: false,
+    ...init,
   }
   setState("drafts", projectId, (d) => [...(d ?? []), draft])
+}
+
+/** « Relancer » : nouveau brouillon avec les mêmes choix que le run (rien n'est lancé). */
+export function draftFromRun(runId: string): void {
+  const r = state.runs[runId]
+  if (!r) return
+  const p = project(r.project_id)
+  if (!p) {
+    toast(`projet « ${r.project_id} » absent de l'inventaire`, "error")
+    return
+  }
+  const keep = (v: string, allowed: string[]) => (allowed.includes(v) ? v : null)
+  const machine = keep(r.machine_id, p.machines)
+  const image = keep(r.image_id, p.images)
+  const venv = keep(r.venv_id, compatibleVenvs(p, image))
+  addDraft(r.project_id, {
+    machine,
+    image,
+    venv,
+    config: r.config,
+    cuda: r.cuda_visible_devices ?? "",
+    overrides: shellJoin(r.overrides ?? []),
+    params: { ...(state.ui.last_selection?.[r.project_id]?.params ?? {}), ...(r.params ?? {}) },
+    focus: true,
+  })
+  if (state.ui.active_tab !== r.project_id) setActiveTab(r.project_id)
+  const missing = [
+    !machine && `machine ${r.machine_id}`,
+    !image && `image ${r.image_id}`,
+    !venv && `venv ${r.venv_id}`,
+  ].filter(Boolean)
+  if (missing.length) toast(`plus disponible pour ce projet : ${missing.join(", ")}`, "error")
 }
 
 export function compatibleVenvs(p: ProjectView, image: string | null): string[] {
@@ -275,16 +317,30 @@ export function removeDraft(projectId: string, key: number): void {
   setState("drafts", projectId, (d) => (d ?? []).filter((x) => x.key !== key))
 }
 
+/** Paramètres de la commande du projet dont la valeur du brouillon est invalide. */
+export function draftParamErrors(projectId: string, d: Draft): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of project(projectId)?.params ?? []) {
+    const err = splitArgs(d.params[k] ?? "").error
+    if (err) out[k] = err
+  }
+  return out
+}
+
 export function draftSelection(projectId: string, d: Draft): Selection | null {
   if (!d.machine || !d.image || !d.venv || !d.config) return null
+  const { args, error } = splitArgs(d.overrides)
+  if (error || Object.keys(draftParamErrors(projectId, d)).length) return null
+  const names = project(projectId)?.params ?? []
   return {
     project: projectId,
     machine: d.machine,
     image: d.image,
     venv: d.venv,
     config: d.config,
-    overrides: [],
+    overrides: args,
     cuda_visible_devices: d.cuda.trim() || null,
+    params: Object.fromEntries(names.map((k) => [k, d.params[k] ?? ""])),
   }
 }
 
@@ -293,7 +349,16 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
   if (!d || d.launching) return
   const sel = draftSelection(projectId, d)
   if (!sel) {
-    toast("sélection incomplète : machine, image, venv et config sont requis", "error")
+    const err = splitArgs(d.overrides).error
+    const paramErr = Object.entries(draftParamErrors(projectId, d))[0]
+    toast(
+      err
+        ? `overrides invalides : ${err}`
+        : paramErr
+          ? `paramètre {${paramErr[0]}} invalide : ${paramErr[1]}`
+          : "sélection incomplète : machine, image, venv et config sont requis",
+      "error",
+    )
     return
   }
   updateDraft(projectId, key, { launching: true })
@@ -311,6 +376,7 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
           venv: sel.venv,
           config: sel.config,
           cuda_visible_devices: sel.cuda_visible_devices ?? null,
+          params: { ...(state.ui.last_selection?.[projectId]?.params ?? {}), ...(sel.params ?? {}) },
         }),
       )
       removeDraft(projectId, key)
@@ -329,11 +395,12 @@ const OPTIMISTIC: Record<RunAction, RunStatus> = {
   stop: "stopping",
   restart: "launching",
   relaunch: "launching",
+  close: "succeeded",
 }
 
 /** Action optimiste : la pastille change tout de suite, confirmée ou annulée ensuite. */
 export async function runAction(id: string, action: RunAction): Promise<void> {
-  if (action !== "relaunch") setState("pending", id, OPTIMISTIC[action])
+  if (action !== "relaunch" && action !== "close") setState("pending", id, OPTIMISTIC[action])
   try {
     const run = await api.action(id, action)
     if (state.runs[run.id]) setState("runs", run.id, reconcile(run))
@@ -432,4 +499,22 @@ const [openTerminals, setOpenTerminals] = createStore<Record<string, boolean>>({
 export { openTerminals }
 export function setTerminalOpen(id: string, open: boolean): void {
   setOpenTerminals(id, open)
+}
+
+export type PanelView = "logs" | "shell"
+
+/** Vue affichée dans le panneau déplié d'un run (logs par défaut). */
+const [panelViews, setPanelViews] = createStore<Record<string, PanelView>>({})
+
+export { panelViews }
+export function setPanelView(id: string, view: PanelView): void {
+  setPanelViews(id, view)
+}
+
+/** Déplie le run et affiche son shell. */
+export function openShell(id: string): void {
+  batch(() => {
+    setPanelViews(id, "shell")
+    setOpenTerminals(id, true)
+  })
 }

@@ -170,3 +170,66 @@ async def websocket(ws: WebSocket) -> None:
         for t in (events, writer):
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
+
+
+@router.websocket("/ws/shell/{run_id}")
+async def shell(ws: WebSocket, run_id: str) -> None:
+    """Shell interactif dans le conteneur d'un run (``docker exec -it``).
+
+    Client → serveur : trames binaires (frappes clavier) et
+    ``{"type": "resize", "cols", "rows"}``. Serveur → client : trames binaires (sortie du
+    terminal), puis ``{"type": "exit"}`` à la fin de la session, ou ``{"type": "error",
+    "message"}`` si elle ne peut pas s'ouvrir.
+    """
+    if not websocket_authorized(ws):
+        await ws.close(code=4401, reason="jeton requis")
+        return
+    await ws.accept()
+    svc: RunService = ws.app.state.service
+    try:
+        session = await svc.open_shell(run_id)
+    except ServiceError as exc:
+        await ws.send_json({"type": "error", "message": exc.message})
+        await ws.close()
+        return
+    with contextlib.suppress(ValueError, TypeError):
+        cols = int(ws.query_params.get("cols", "0"))
+        rows = int(ws.query_params.get("rows", "0"))
+        if cols > 0 and rows > 0:
+            session.resize(cols, rows)
+
+    async def pump() -> None:
+        while True:
+            data = await session.read()
+            if not data:
+                break
+            await ws.send_bytes(data)
+        with contextlib.suppress(Exception):
+            await ws.send_json({"type": "exit"})
+            await ws.close()
+
+    out = asyncio.get_running_loop().create_task(pump())
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if msg.get("bytes"):
+                session.write(msg["bytes"])
+            elif msg.get("text"):
+                try:
+                    data = json.loads(msg["text"])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict) and data.get("type") == "resize":
+                    with contextlib.suppress(ValueError, TypeError):
+                        session.resize(int(data["cols"]), int(data["rows"]))
+                elif isinstance(data, dict) and data.get("type") == "input":
+                    session.write(str(data.get("data", "")).encode())
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        await session.close()
+        out.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await out

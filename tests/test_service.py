@@ -247,9 +247,13 @@ async def test_shared_log_stream(svc: RunService) -> None:
     assert opened == 1 and svc.logs.subscriber_count(run.id) == 2
     svc.unsubscribe_logs(a)
     svc.unsubscribe_logs(b)
-    assert svc.logs.is_following(run.id)
+    # un run actif reste suivi (et sauvegardé) sans abonné
     await asyncio.sleep(0.4)  # délai d'inactivité (0.2 s en test)
+    assert svc.logs.is_following(run.id)
+    await svc.stop(run.id, wait=True)
+    await asyncio.sleep(0.6)  # délai de fin + délai d'inactivité
     assert not svc.logs.is_following(run.id)
+    assert opened == 1
 
 
 async def test_buffer_is_bounded(svc: RunService) -> None:
@@ -362,3 +366,163 @@ async def test_stop_on_unreachable_machine_can_be_retried(svc: RunService) -> No
     await svc.monitor.poll("gpu-01")
     assert (await svc.get_run(run.id)).status is RunStatus.RUNNING
     assert (await svc.stop(run.id, wait=True)).status is RunStatus.STOPPED
+
+
+async def test_container_kept_after_command(svc: RunService) -> None:
+    fake = svc.executor
+    assert isinstance(fake, FakeExecutor)
+    run = await svc.launch(SEL, wait=True)
+    assert run.container_alive
+    await wait_for(lambda: status_is(svc, run.id, RunStatus.SUCCEEDED))
+    done = await svc.get_run(run.id)
+    assert done.exit_code == 0 and done.container_alive and done.finished_at is not None
+    assert fake.machines["gpu-01"].containers[run.container_name].state == "running"
+    logs = await svc.read_logs(run.id)
+    assert b"conteneur conserv" in logs
+    # le suivi des logs s'arrête bien malgré le conteneur toujours démarré
+    text = b"".join([c async for c in svc.stream_logs(run.id)])
+    assert b"Training finished" in text
+
+    shell = await svc.open_shell(run.id)
+    banner = await asyncio.wait_for(shell.read(), 1)
+    assert b"simul" in banner
+    shell.write(b"pwd\r")
+    assert b"/workspace" in await asyncio.wait_for(shell.read(), 1)
+    await shell.close()
+
+    closed = await svc.close_container(run.id)
+    assert closed.status is RunStatus.SUCCEEDED and not closed.container_alive
+    c = fake.machines["gpu-01"].containers[run.container_name]
+    assert c.state == "exited" and c.exit_code == 0
+    await svc.monitor.poll("gpu-01")
+    assert (await svc.get_run(run.id)).status is RunStatus.SUCCEEDED
+    with pytest.raises(ActionNotAllowedError):
+        await svc.close_container(run.id)
+    with pytest.raises(ActionNotAllowedError, match="pas démarré"):
+        await svc.open_shell(run.id)
+
+
+async def test_failed_command_keeps_container_and_restart(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, failure=1.0)
+    await svc.start()
+    try:
+        run = await svc.launch(SEL, wait=True)
+        await wait_for(lambda: status_is(svc, run.id, RunStatus.FAILED))
+        failed = await svc.get_run(run.id)
+        assert failed.exit_code == 1 and failed.container_alive
+        # docker restart sur un conteneur conservé : la commande repart du début
+        again = await svc.restart(run.id)
+        assert again.status is RunStatus.RUNNING and again.container_alive
+        await wait_for(lambda: status_is(svc, run.id, RunStatus.FAILED))
+        # suppression d'un conteneur encore démarré : docker rm -f
+        await svc.delete(run.id)
+        fake = svc.executor
+        assert isinstance(fake, FakeExecutor)
+        assert run.container_name not in fake.machines["gpu-01"].containers
+    finally:
+        await svc.close()
+
+
+async def test_logs_saved_to_file_and_kept(tmp_path: Path) -> None:
+    svc1 = make_service(tmp_path)
+    fake = svc1.executor
+    assert isinstance(fake, FakeExecutor)
+    await svc1.start()
+    run = await svc1.launch(SEL, wait=True)
+    path = svc1.log_path(run.id)
+    assert path is not None
+    # sauvegarde au fil de l'eau, sans abonné
+    await wait_for(lambda: _async(path.exists() and b"[HYDRA]" in path.read_bytes()))
+    await wait_for(lambda: status_is(svc1, run.id, RunStatus.SUCCEEDED))
+    await wait_for(lambda: _async(path.with_suffix(".done").exists()))
+    saved = path.read_bytes()
+    assert b"Training finished" in saved and b"conteneur conserv" in saved
+    await svc1.close()
+
+    # conteneur supprimé en dehors de TrainHub, puis redémarrage de TrainHub
+    fake.machines["gpu-01"].containers.pop(run.container_name)
+    svc2 = make_service(tmp_path, executor=fake)
+    await svc2.start(monitor=False)
+    try:
+        await svc2.monitor.poll("gpu-01")
+        sub = await svc2.subscribe_logs(run.id)
+        first = await asyncio.wait_for(sub.queue.get(), 1)
+        assert first.kind == "data" and first.data == saved
+        assert (await asyncio.wait_for(sub.queue.get(), 1)).kind == "end"
+        svc2.unsubscribe_logs(sub)
+        assert await svc2.read_logs(run.id) == saved
+        assert (await svc2.read_logs(run.id, tail=1)).startswith(b"[trainhub]")
+        # supprimer le run conserve le fichier de sauvegarde
+        await svc2.delete(run.id)
+        assert path.read_bytes() == saved
+    finally:
+        await svc2.close()
+
+
+async def test_log_file_not_truncated_by_shorter_session(tmp_path: Path) -> None:
+    from trainhub.service.log_hub import _LogFile
+
+    f = _LogFile(tmp_path / "r1.log")
+    f.begin()
+    f.write(b"0123456789")
+    f.close(final=False)
+    # session interrompue avant d'avoir rattrapé l'ancien fichier : abandonnée
+    f.begin()
+    f.write(b"abc")
+    f.close(final=False)
+    assert f.path.read_bytes() == b"0123456789" and not f.part.exists()
+    # session terminée plus courte (logs Docker tronqués) : l'ancien fichier est gardé à part
+    f.begin()
+    f.write(b"xyz")
+    f.close(final=True)
+    assert f.path.read_bytes() == b"xyz" and f.prev.read_bytes() == b"0123456789"
+    assert f.complete
+    # session qui rattrape l'ancien fichier : le remplace au fil de l'eau
+    f.begin()
+    assert not f.complete
+    f.write(b"xyz+more")
+    assert f.path.read_bytes() == b"xyz+more"
+    f.close(final=False)
+
+
+async def test_store_migrates_old_schema(tmp_path: Path) -> None:
+    import aiosqlite
+
+    from trainhub.service import Store
+    from trainhub.service.store import _SCHEMA
+
+    db = tmp_path / "old.sqlite"
+    async with aiosqlite.connect(db) as conn:
+        old_schema = _SCHEMA.replace(",\n    container_alive INTEGER NOT NULL DEFAULT 0", "")
+        assert "container_alive" not in old_schema
+        await conn.executescript(old_schema)
+        await conn.commit()
+    store = Store(db)
+    await store.open()
+    async with store.db.execute("PRAGMA table_info(runs)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    await store.close()
+    assert "container_alive" in cols
+
+
+async def _async(value: bool) -> bool:
+    return value
+
+
+async def test_params_saved_remembered_and_relaunched(svc: RunService) -> None:
+    await svc.set_project_command(
+        "segmentation", "python train.py --config-name {config} {options} --tag {tag}"
+    )
+    assert svc.project_view(svc.inventory.project("segmentation")).params == ["options", "tag"]
+    sel = SEL.model_copy(update={"venv": "system", "params": {"options": "a=1 b=2", "tag": "x"}})
+    run = await svc.launch(sel, wait=True)
+    assert run.params == {"options": "a=1 b=2", "tag": "x"}
+    assert run.command == "python train.py --config-name baseline a=1 b=2 --tag x"
+    assert "source" not in run.full_command[-1]
+    ui = await svc.get_ui_state()
+    assert ui.last_selection["segmentation"].params == {"options": "a=1 b=2", "tag": "x"}
+    await svc.stop(run.id, wait=True)
+    again = await svc.relaunch(run.id, wait=True)
+    assert again.params == run.params and again.venv_id == "system"
+    with pytest.raises(InvalidRequestError, match="tag"):
+        await svc.preview(SEL.model_copy(update={"params": {"tag": "'unclosed"}}))

@@ -42,6 +42,8 @@ projects:
       extra_args: ["--ipc=host"]
       # tty: false               # désactive -t (couleurs/barres de progression)
       # stop_timeout: 30         # délai de docker stop -t
+      # keep_alive: false        # défaut true : le conteneur reste démarré quand la commande
+      #                          # se termine (shell depuis TrainHub, « Fermer le conteneur »)
     configs:
       # Racine des configs Hydra sur la machine choisie (côté hôte). Tous les fichiers
       # *.yaml sous cette racine (récursivement) sont proposés sous forme d'arborescence.

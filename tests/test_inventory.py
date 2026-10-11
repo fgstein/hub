@@ -26,8 +26,13 @@ def test_dev_inventories_are_valid() -> None:
 def test_allowed_resources(inventory: Inventory) -> None:
     seg = inventory.project("segmentation")
     assert [m.id for m in inventory.allowed_machines(seg)] == ["gpu-01", "gpu-02"]
-    assert [v.id for v in inventory.allowed_venvs(seg, "torch-2.4")] == ["main"]
-    assert [v.id for v in inventory.allowed_venvs(seg, "torch-nightly")] == ["main", "exp"]
+    assert [v.id for v in inventory.allowed_venvs(seg, "torch-2.4")] == ["main", "system"]
+    assert [v.id for v in inventory.allowed_venvs(seg, "torch-nightly")] == [
+        "main",
+        "exp",
+        "system",
+    ]
+    assert inventory.venv("system").is_system
     det = inventory.project("detection")
     assert len(inventory.allowed_machines(det)) == 3
 
@@ -53,9 +58,18 @@ def test_error_has_file_line_and_field() -> None:
     assert "{config}" in msg
 
 
-def test_unknown_placeholder_rejected() -> None:
-    text = BASIC_INVENTORY.replace("{config}\n", "{config} {gpu}\n", 1)
-    with pytest.raises(InventoryError, match=r"\{gpu\}"):
+def test_free_placeholders_are_params() -> None:
+    from trainhub.core.models import command_params
+
+    text = BASIC_INVENTORY.replace("{config}\n", "{config} {options} --x {opt2} {options}\n", 1)
+    inv = parse_inventory(text)
+    assert command_params(inv.project("segmentation").command) == ["options", "opt2"]
+    assert command_params("python t.py {config} {run_id} ${HOME} {machine}") == []
+
+
+def test_command_without_config_rejected() -> None:
+    text = BASIC_INVENTORY.replace("{config}\n", "{gpu}\n", 1)
+    with pytest.raises(InventoryError, match=r"\{config\}"):
         parse_inventory(text)
 
 
