@@ -1,0 +1,10 @@
+# @package _global_
+# Config dans un sous-dossier : --config-name experiments/sweep/short
+defaults:
+  - /baseline
+  - _self_
+model:
+  name: short
+trainer:
+  max_epochs: 2
+  steps: 20

@@ -74,7 +74,7 @@ async def test_scenario(svc: RunService) -> None:
         res = await _call(c, "list_resources", project="segmentation")
         assert [m["id"] for m in res["machines"]] == ["gpu-01", "gpu-02"]
         cfg = await _call(c, "list_configs", project="detection", machine="gpu-02")
-        assert cfg["configs"] == ["yolo_m", "yolo_s"]
+        assert cfg["configs"] == ["exp/sweep/yolo_l", "yolo_m", "yolo_s"]
         prev = await _call(c, "preview_command", **SEL)
         assert "docker run" in prev["full_command"]
 

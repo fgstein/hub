@@ -265,9 +265,21 @@ async def test_configs_static_and_discovered(svc: RunService) -> None:
     cl = await svc.get_configs("segmentation", "gpu-01")
     assert cl.configs == ["baseline", "unet_large"] and cl.discovered is None
     det = await svc.get_configs("detection", "gpu-02")
-    assert det.discovered == ["yolo_m", "yolo_s"] and det.cached_at is not None
+    assert det.discovered == ["exp/sweep/yolo_l", "yolo_m", "yolo_s"] and det.cached_at is not None
     again = await svc.get_configs("detection", "gpu-02")
     assert again.cached_at == det.cached_at
+    assert det.root == "/home/alice/det/configs" and det.run_counts == {}
+    sel = Selection(
+        project="detection", machine="gpu-02", image="torch-2.4", venv="main",
+        config="exp/sweep/yolo_l",
+    )  # fmt: skip
+    run = await svc.launch(sel, wait=True)
+    assert "--config-name exp/sweep/yolo_l" in run.command
+    await svc.launch(sel, wait=True)
+    await svc.stop(run.id, wait=True)
+    counts = (await svc.get_configs("detection", "gpu-02")).run_counts
+    assert counts["exp/sweep/yolo_l"].total == 2 and counts["exp/sweep/yolo_l"].active == 1
+    assert "yolo_s" not in counts
     with pytest.raises(InvalidRequestError, match="configs disponibles : baseline, unet_large"):
         await svc.launch(SEL.model_copy(update={"config": "foo"}))
 

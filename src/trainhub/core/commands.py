@@ -102,9 +102,16 @@ def container_name(project_id: str, run_id: str) -> str:
 def resolve_command(template: str, *, config: str, run_id: str, machine: str, project: str) -> str:
     """Remplace les placeholders par leurs valeurs échappées pour le shell.
 
-    ``${VAR}`` et les interpolations Hydra ``${…}`` ne sont pas touchés.
+    ``{config}`` : chemin relatif sans extension (ex. ``exp/unet``) ; ``{config_name}`` :
+    basename (``unet``). ``${VAR}`` et les interpolations Hydra ``${…}`` ne sont pas touchés.
     """
-    values = {"config": config, "run_id": run_id, "machine": machine, "project": project}
+    values = {
+        "config": config,
+        "config_name": config.rsplit("/", 1)[-1],
+        "run_id": run_id,
+        "machine": machine,
+        "project": project,
+    }
 
     def repl(m: re.Match[str]) -> str:
         name = m.group(1)
@@ -192,6 +199,9 @@ def validate_spec(spec: RunSpec) -> None:
         raise ValueError(f"config invalide : {spec.config!r}")
     if "\n" in spec.config or "\x00" in spec.config:
         raise ValueError("config invalide : caractères de contrôle")
+    parts = spec.config.split("/")
+    if spec.config.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        raise ValueError(f"config invalide : {spec.config!r} (chemin relatif attendu)")
     if spec.cuda_visible_devices is not None and not _CUDA_RE.match(
         spec.cuda_visible_devices.replace(" ", "")
     ):
@@ -254,9 +264,64 @@ def docker_rm(container: str, *, force: bool = False) -> list[str]:
     return ["docker", "rm", *(["-f"] if force else []), container]
 
 
+def discover_root(discover: ConfigDiscover) -> str:
+    """Racine passée à ``find`` : ``~/x`` devient ``x`` (relatif au home de la session SSH)."""
+    root = discover.path
+    if root == "~":
+        return "."
+    if root.startswith("~/"):
+        root = root[2:] or "."
+    return root.rstrip("/") or "/"
+
+
 def list_configs(discover: ConfigDiscover) -> list[str]:
-    """argv distant listant le répertoire de configs (filtrage par motif côté Python)."""
-    return ["ls", "-1A", "--", discover.path]
+    """argv distant listant récursivement les fichiers de configs sous la racine."""
+    return [
+        "find",
+        "-L",
+        discover_root(discover),
+        "-maxdepth",
+        str(discover.max_depth),
+        "-type",
+        "f",
+        "-name",
+        discover.pattern,
+    ]
+
+
+def parse_config_listing(output: str, discover: ConfigDiscover) -> list[str]:
+    """Sortie de ``find`` → identifiants de configs triés (chemin relatif sans extension).
+
+    Les chemins contenant un composant caché (``.git``, ``.hydra``…) et ceux qui
+    correspondent à ``exclude`` sont ignorés.
+    """
+    import fnmatch
+
+    root = discover_root(discover)
+    prefix = "" if root == "/" else root
+    suffix = discover.pattern.rsplit("*", 1)[-1] if "*" in discover.pattern else ""
+    found: set[str] = set()
+    for line in output.splitlines():
+        path = line.rstrip("\r")
+        if not path:
+            continue
+        if prefix and path.startswith(prefix + "/"):
+            rel = path[len(prefix) + 1 :]
+        elif root == "/" and path.startswith("/"):
+            rel = path[1:]
+        else:
+            continue
+        parts = rel.split("/")
+        if any(p.startswith(".") or not p for p in parts):
+            continue
+        if not fnmatch.fnmatch(parts[-1], discover.pattern):
+            continue
+        if any(fnmatch.fnmatch(rel, pat) for pat in discover.exclude):
+            continue
+        name = rel[: -len(suffix)] if suffix and rel.endswith(suffix) else rel
+        if name:
+            found.add(name)
+    return sorted(found)
 
 
 def ssh_argv(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = ()) -> list[str]:

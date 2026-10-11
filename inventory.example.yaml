@@ -43,9 +43,11 @@ projects:
       # tty: false               # désactive -t (couleurs/barres de progression)
       # stop_timeout: 30         # délai de docker stop -t
     configs:
-      # soit une liste statique…
-      static: [baseline, unet_large, ablation_lr]
-      # …soit une découverte sur la machine choisie (chemin côté hôte)
-      discover:
-        path: /home/alice/seg/configs
-        pattern: "*.yaml"        # extension retirée pour obtenir le nom
+      # Racine des configs Hydra sur la machine choisie (côté hôte). Tous les fichiers
+      # *.yaml sous cette racine (récursivement) sont proposés sous forme d'arborescence.
+      # Une config = chemin relatif sans extension, ex. experiments/unet_large
+      # → {config} = experiments/unet_large, {config_name} = unet_large.
+      root: /home/alice/seg/configs
+      pattern: "*.yaml"          # optionnel
+      exclude: ["hydra/*"]       # optionnel : chemins relatifs à ignorer (glob)
+      # static: [baseline]       # optionnel : configs ajoutées à la liste

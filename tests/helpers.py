@@ -19,7 +19,7 @@ simulation:
   log_rate: 20
   seed: 1
   configs:
-    detection: [yolo_s, yolo_m]
+    detection: [yolo_s, yolo_m, exp/sweep/yolo_l]
 """
 
 

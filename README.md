@@ -10,7 +10,7 @@ et exécute la chaîne :
 ssh machine → docker run -d (conteneur conservé) → source venv → cd workdir → python train.py --config-name XXX
 ```
 
-- Projets en onglets, chacun avec sa commande générique éditable (`{config}`, `{run_id}`, `{machine}`, `{project}`).
+- Projets en onglets, chacun avec sa commande générique éditable (`{config}`, `{config_name}`, `{run_id}`, `{machine}`, `{project}`).
 - Suivi en direct : statut, temps écoulé, logs en streaming dans un terminal xterm.js (couleurs ANSI, barres tqdm).
 - Contrôle : pause, reprise, arrêt, redémarrage, relance, suppression.
 - Les mêmes actions pour un agent via MCP (Streamable HTTP sur `/mcp`, ou stdio avec `trainhub mcp`).
@@ -85,9 +85,19 @@ projects:
     workdir: /workspace/seg
     docker: {gpus: all, shm_size: 16g, volumes: [/data:/data:ro], tty: true, stop_timeout: 30}
     configs:
-      static: [baseline, unet_large]
-      discover: {path: /home/alice/seg/configs, pattern: "*.yaml"}   # ls via SSH, cache 60 s
+      root: /home/alice/seg/configs   # racine des configs Hydra sur la machine (côté hôte)
+      exclude: ["hydra/*"]            # optionnel
 ```
+
+**Choix de la config.** Tous les fichiers `*.yaml` sous la racine du projet (récursivement,
+via `find` sur la machine choisie, cache 60 s, bouton ↻) sont présentés sous forme
+d'arborescence dans le brouillon : on clique sur le fichier voulu. Chaque fichier (et chaque
+dossier, en cumulé) indique le nombre de runs déjà lancés sur cette config, avec un point vert
+s'il y en a en cours. Une config est le chemin relatif sans extension
+(`experiments/unet_large`) : c'est ce qu'attend `--config-name` de Hydra quand `config_path`
+est la racine (une config principale dans un sous-dossier doit commencer par
+`# @package _global_`). Le placeholder `{config_name}` donne le seul basename (`unet_large`).
+Les dossiers et fichiers cachés (`.hydra`, `.git`…) sont ignorés.
 
 L'état modifiable depuis l'interface (commande surchargée d'un projet, onglets ouverts, dernières
 sélections, runs) vit dans une base SQLite (`$TRAINHUB_DATA_DIR/trainhub.sqlite`).

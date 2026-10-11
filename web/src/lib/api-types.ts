@@ -220,8 +220,23 @@ export interface components {
             project: string;
             /** Machine */
             machine: string | null;
-            /** Configs */
+            /**
+             * Configs
+             * @description Identifiants de configs : chemin relatif à la racine, sans extension
+             */
             configs: string[];
+            /**
+             * Root
+             * @description Racine des configs (découverte)
+             */
+            root?: string | null;
+            /**
+             * Run Counts
+             * @description Runs existants par config (absent : aucun)
+             */
+            run_counts?: {
+                [key: string]: components["schemas"]["RunCount"];
+            };
             /** Static */
             static?: string[];
             /** Discovered */
@@ -454,6 +469,16 @@ export interface components {
          * @enum {string}
          */
         RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch";
+        /**
+         * RunCount
+         * @description Nombre de runs lancés sur une config (tous statuts) et, parmi eux, actifs.
+         */
+        RunCount: {
+            /** Total */
+            total: number;
+            /** Active */
+            active: number;
+        };
         /**
          * RunSource
          * @enum {string}

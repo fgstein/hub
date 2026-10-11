@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fnmatch
 import logging
 import shlex
 import time
@@ -22,6 +21,7 @@ from ..core.commands import RunSpec
 from ..core.ids import new_run_id
 from ..core.models import (
     FINISHED_STATUSES,
+    ConfigDiscover,
     Inventory,
     Machine,
     Project,
@@ -323,15 +323,18 @@ class RunService:
                 key = (project_id, machine_id)
                 hit = self._config_cache.get(key)
                 if hit is None or refresh or time.monotonic() - hit[0] > CONFIG_CACHE_TTL_S:
-                    found, err = await self._discover(machine, d.path, d.pattern)
+                    found, err = await self._discover(machine, d)
                     hit = (time.monotonic(), utcnow(), found, err)
                     self._config_cache[key] = hit
                 _, cached_at, discovered, error = hit
         configs = list(dict.fromkeys(static + (discovered or [])))
+        counts = await self.store.count_runs_by_config(project_id)
         return ConfigList(
             project=project_id,
             machine=machine_id,
             configs=configs,
+            root=d.path if d is not None else None,
+            run_counts={c: counts[c] for c in configs if c in counts},
             static=static,
             discovered=discovered,
             discover_error=error,
@@ -339,27 +342,18 @@ class RunService:
         )
 
     async def _discover(
-        self, machine: Machine, path: str, pattern: str
+        self, machine: Machine, discover: ConfigDiscover
     ) -> tuple[list[str] | None, str | None]:
-        from ..core.models import ConfigDiscover
-
         try:
-            res = await self.executor.exec(
-                machine, cmd.list_configs(ConfigDiscover(path=path, pattern=pattern))
-            )
-        except MachineUnreachableError as exc:
+            res = await self.executor.exec(machine, cmd.list_configs(discover), timeout=20.0)
+        except (MachineUnreachableError, ExecutorError) as exc:
             return None, str(exc)
-        except ExecutorError as exc:
-            return None, str(exc)
-        if not res.ok:
+        names = cmd.parse_config_listing(res.out, discover)
+        # find renvoie un code non nul si un sous-dossier est illisible : on garde ce qui a
+        # été trouvé et on ne signale une erreur que si rien n'a pu être listé.
+        if not res.ok and not names:
             return None, f"découverte des configs impossible : {res.error_message()}"
-        names = []
-        suffix = pattern.rsplit("*", 1)[-1] if "*" in pattern else ""
-        for line in res.out.splitlines():
-            name = line.strip()
-            if name and fnmatch.fnmatch(name, pattern):
-                names.append(name[: -len(suffix)] if suffix and name.endswith(suffix) else name)
-        return sorted(names), None
+        return names, None
 
     # -- état d'interface ------------------------------------------------------------
 

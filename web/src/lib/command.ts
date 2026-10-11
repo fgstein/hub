@@ -1,6 +1,6 @@
 /** Outils pour la commande générique d'un projet. */
 
-export const PLACEHOLDERS = ["config", "run_id", "machine", "project"] as const
+export const PLACEHOLDERS = ["config", "config_name", "run_id", "machine", "project"] as const
 const PLACEHOLDER_RE = /(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}/g
 
 export interface Segment {

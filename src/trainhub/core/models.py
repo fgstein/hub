@@ -10,12 +10,19 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 
 #: Placeholders autorisés dans la commande générique d'un projet.
-ALLOWED_PLACEHOLDERS = frozenset({"config", "run_id", "machine", "project"})
+ALLOWED_PLACEHOLDERS = frozenset({"config", "config_name", "run_id", "machine", "project"})
 #: Un placeholder est ``{nom}`` non précédé de ``$`` (pour laisser passer ``${VAR}`` et les
 #: interpolations Hydra/OmegaConf ``${oc.env:X}``).
 PLACEHOLDER_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -109,10 +116,31 @@ class DockerOptions(_Strict):
 
 
 class ConfigDiscover(_Strict):
-    """Découverte des configs Hydra par ``ls`` sur la machine choisie."""
+    """Découverte récursive des configs Hydra (``find``) sous une racine, sur la machine choisie.
 
-    path: str = Field(min_length=1, description="Répertoire côté hôte")
-    pattern: str = "*.yaml"
+    Une config est identifiée par son chemin relatif à la racine, sans extension
+    (ex. ``experiments/unet_large``), ce qui correspond à ``--config-name`` de Hydra quand
+    ``config_path`` pointe sur la racine. ``{config_name}`` donne le seul basename.
+    """
+
+    path: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("path", "root"),
+        description="Racine des configs côté hôte (absolue, ou relative au home si ~/…)",
+    )
+    pattern: str = Field(default="*.yaml", description="Motif des noms de fichiers")
+    exclude: list[str] = Field(
+        default_factory=list,
+        description="Motifs (glob) de chemins relatifs à ignorer, ex. hydra/*, outputs/*",
+    )
+    max_depth: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, v: str) -> str:
+        if v.startswith("-") or "\n" in v:
+            raise ValueError("racine des configs invalide")
+        return v
 
 
 class ConfigSource(_Strict):
@@ -120,6 +148,16 @@ class ConfigSource(_Strict):
 
     static: list[str] | None = None
     discover: ConfigDiscover | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _shorthand(cls, data: object) -> object:
+        """Forme courte : ``configs: {root: …, pattern: …, exclude: […]}``."""
+        if isinstance(data, dict) and "discover" not in data and ("root" in data or "path" in data):
+            data = dict(data)
+            keys = ("root", "path", "pattern", "exclude", "max_depth")
+            data["discover"] = {k: data.pop(k) for k in keys if k in data}
+        return data
 
     @model_validator(mode="after")
     def _one_source(self) -> ConfigSource:

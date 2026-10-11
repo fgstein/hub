@@ -38,6 +38,7 @@ describe("durées d'un run", () => {
 describe("commande générique", () => {
   it("colore les placeholders", () => {
     const segs = segments("python t.py --config-name {config} id={run_id} {oops} ${HOME}")
+    expect(segments("{config_name}")[0]?.kind).toBe("placeholder")
     expect(segs.filter((s) => s.kind === "placeholder").map((s) => s.text)).toEqual(["{config}", "{run_id}"])
     expect(segs.filter((s) => s.kind === "unknown").map((s) => s.text)).toEqual(["{oops}"])
     expect(segs.map((s) => s.text).join("")).toBe(

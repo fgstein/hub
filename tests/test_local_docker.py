@@ -92,6 +92,21 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
         await wait_for(failed, timeout=30)
         assert (await svc.get_run(broken.id)).exit_code == 1
 
+        # config dans un sous-dossier, découverte récursivement
+        cfg = await svc.get_configs("fake", "localhost")
+        assert "experiments/sweep/short" in cfg.configs
+        nested = await svc.launch(
+            sel.model_copy(update={"config": "experiments/sweep/short", "overrides": []}),
+            wait=True,
+        )
+        run_ids.append(nested.id)
+
+        async def nested_ok() -> bool:
+            return (await svc.get_run(nested.id)).status is RunStatus.SUCCEEDED
+
+        await wait_for(nested_ok, timeout=30)
+        assert b"name: short" in await svc.read_logs(nested.id)
+
         # image absente
         missing = await svc.launch(sel.model_copy(update={"image": "missing"}), wait=True)
         run_ids.append(missing.id)

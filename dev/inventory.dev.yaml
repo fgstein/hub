@@ -50,7 +50,10 @@ projects:
         WANDB_MODE: offline
       extra_args: ["--ipc=host"]
     configs:
-      static: [baseline, unet_large, ablation_lr]
+      # racine des configs Hydra sur la machine : tous les *.yaml (récursif) sont proposés
+      root: /home/alice/seg/configs
+      pattern: "*.yaml"
+      exclude: ["hydra/*", "*/_*"]
 
   - id: detection
     label: Détection
@@ -63,7 +66,7 @@ projects:
       volumes: [/home/alice/det:/workspace/det]
     configs:
       discover:
-        path: /home/alice/det/configs
+        root: /home/alice/det/configs
         pattern: "*.yaml"
 
   - id: llm-finetune
@@ -90,5 +93,15 @@ simulation:
   machines:
     gpu-03: flaky             # injoignable par intermittence
     gpu-old: down             # toujours injoignable
-  configs:                    # configs « découvertes » par ls, par projet
-    detection: [yolo_s, yolo_m, detr_r50, rtdetr_l]
+  configs:                    # arborescence simulée sous la racine, par projet
+    segmentation:
+      - baseline
+      - unet_large
+      - ablation/lr_1e-3
+      - ablation/lr_3e-4
+      - ablation/no_augment
+      - experiments/2026-10/unet_deep
+      - experiments/2026-10/unet_wide
+      - experiments/2026-09/segformer_b2
+      - hydra/launcher/slurm
+    detection: [yolo_s, yolo_m, detr/r50, detr/r101, rtdetr/rtdetr_l]

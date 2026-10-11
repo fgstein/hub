@@ -129,7 +129,51 @@ def test_list_configs(inventory: Inventory) -> None:
     det = inventory.project("detection")
     assert det.configs.discover is not None
     argv = c.build_list_configs(inventory.machine("gpu-01"), det.configs.discover)
-    assert shlex.split(argv[-1]) == ["ls", "-1A", "--", "/home/alice/det/configs"]
+    assert shlex.split(argv[-1]) == [
+        "find", "-L", "/home/alice/det/configs", "-maxdepth", "10", "-type", "f",
+        "-name", "*.yaml",
+    ]  # fmt: skip
+
+
+def test_parse_config_listing() -> None:
+    from trainhub.core.models import ConfigDiscover
+
+    d = ConfigDiscover(path="/cfg/", exclude=["hydra/*", "*/_*"])
+    out = "\n".join(
+        [
+            "/cfg/baseline.yaml",
+            "/cfg/exp/sweep/unet large.yaml",
+            "/cfg/exp/_defaults.yaml",
+            "/cfg/hydra/launcher.yaml",
+            "/cfg/.hydra/config.yaml",
+            "/cfg/notes.txt",
+            "/elsewhere/x.yaml",
+            "",
+        ]
+    )
+    assert c.parse_config_listing(out, d) == ["baseline", "exp/sweep/unet large"]
+
+
+def test_discover_root_home_relative() -> None:
+    from trainhub.core.models import ConfigDiscover
+
+    d = ConfigDiscover.model_validate({"root": "~/seg/configs"})
+    assert c.discover_root(d) == "seg/configs"
+    assert c.list_configs(d)[2] == "seg/configs"
+    assert c.parse_config_listing("seg/configs/a/b.yaml\n", d) == ["a/b"]
+
+
+def test_config_name_placeholder(inventory: Inventory) -> None:
+    spec = spec_for(
+        inventory,
+        config="exp/sweep/unet",
+        command="python t.py --config-path /cfg/{config} --config-name {config_name}",
+    )
+    assert c.resolved_command(spec) == (
+        "python t.py --config-path /cfg/exp/sweep/unet --config-name unet"
+    )
+    with pytest.raises(ValueError, match="chemin relatif"):
+        c.docker_run(spec_for(inventory, config="../etc/passwd"))
 
 
 def test_resolve_placeholders() -> None:

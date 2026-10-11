@@ -57,7 +57,7 @@ async def test_ssh_full_path(tmp_path: Path) -> None:
     created: list[str] = []
     try:
         cfg = await svc.get_configs("fake", "sim-gpu-01")
-        assert cfg.configs == ["baseline", "broken", "long"]
+        assert cfg.configs == ["baseline", "broken", "experiments/sweep/short", "long"]
 
         sel = Selection(
             project="fake",

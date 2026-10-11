@@ -103,3 +103,13 @@ def test_empty_inventory() -> None:
 def test_missing_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(InventoryError, match="lecture impossible"):
         load_inventory(tmp_path / "absent.yaml")
+
+
+def test_configs_root_shorthand() -> None:
+    text = BASIC_INVENTORY.replace(
+        "      static: [baseline, unet_large]",
+        "      root: /cfg\n      exclude: ['hydra/*']",
+    )
+    inv = parse_inventory(text)
+    d = inv.project("segmentation").configs.discover
+    assert d is not None and d.path == "/cfg" and d.exclude == ["hydra/*"]

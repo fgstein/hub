@@ -51,10 +51,23 @@ class PreviewResult(BaseModel):
     container_name: str
 
 
+class RunCount(BaseModel):
+    """Nombre de runs lancés sur une config (tous statuts) et, parmi eux, actifs."""
+
+    total: int
+    active: int
+
+
 class ConfigList(BaseModel):
     project: str
     machine: str | None
-    configs: list[str]
+    configs: list[str] = Field(
+        description="Identifiants de configs : chemin relatif à la racine, sans extension"
+    )
+    root: str | None = Field(default=None, description="Racine des configs (découverte)")
+    run_counts: dict[str, RunCount] = Field(
+        default_factory=dict, description="Runs existants par config (absent : aucun)"
+    )
     static: list[str] = Field(default_factory=list)
     discovered: list[str] | None = None
     discover_error: str | None = None

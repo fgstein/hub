@@ -36,4 +36,5 @@ projects:
         HYDRA_FULL_ERROR: "1"
       stop_timeout: 10
     configs:
-      static: [baseline, long, broken]
+      # mode local : racine relative au répertoire de lancement du serveur (racine du dépôt)
+      root: dev/fake-train/configs

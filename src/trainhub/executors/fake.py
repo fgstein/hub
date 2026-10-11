@@ -12,6 +12,7 @@ Paramètres : section ``simulation`` de l'inventaire (voir ``dev/inventory.dev.y
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import json
 import math
@@ -21,7 +22,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ..core.commands import transport
+from ..core.commands import discover_root, transport
 from ..core.models import Inventory, Machine, SimulationSettings
 from .base import ExecResult, Executor, LogStream, MachineUnreachableError
 
@@ -250,8 +251,8 @@ class FakeExecutor(Executor):
     def _dispatch(self, machine: Machine, m: FakeMachine, argv: list[str]) -> tuple[int, str, str]:
         if not argv:
             return 127, "", "commande vide"
-        if argv[0] == "ls":
-            return self._ls(argv)
+        if argv[0] == "find":
+            return self._find(argv)
         if argv[0] != "docker" or len(argv) < 2:
             return 127, "", f"bash: {argv[0]}: command not found"
         sub, args = argv[1], argv[2:]
@@ -270,20 +271,28 @@ class FakeExecutor(Executor):
             return 1, "", f"docker: '{sub}' is not a docker command."
         return handler(machine, m, args)
 
-    def _ls(self, argv: list[str]) -> tuple[int, str, str]:
-        path = argv[-1]
+    def _find(self, argv: list[str]) -> tuple[int, str, str]:
+        """Simule ``find -L ROOT -maxdepth N -type f -name PATTERN`` sur les racines de configs."""
+        root = next((a for a in argv[1:] if not a.startswith("-")), "")
+        pattern = argv[argv.index("-name") + 1] if "-name" in argv else "*"
         inv = self.inventory
         if inv is not None:
             for p in inv.projects:
                 d = p.configs.discover
-                if d is not None and d.path.rstrip("/") == path.rstrip("/"):
-                    names = self.settings.configs.get(p.id)
-                    if names is None:
-                        names = list(p.configs.static or ["default"])
-                    ext = d.pattern.rsplit("*", 1)[-1] if "*" in d.pattern else ".yaml"
-                    files = [n + ext for n in names] + ["README.md", "_base"]
-                    return 0, "\n".join(files) + "\n", ""
-        return 2, "", f"ls: cannot access '{path}': No such file or directory"
+                if d is None or discover_root(d) != root:
+                    continue
+                names = self.settings.configs.get(p.id)
+                if names is None:
+                    names = list(p.configs.static or ["default"])
+                ext = d.pattern.rsplit("*", 1)[-1] if "*" in d.pattern else ".yaml"
+                # bruit réaliste : fichiers cachés et non-YAML (filtrés par TrainHub / -name)
+                files = [f"{n}{ext}" for n in names] + [".hydra/config.yaml", "README.md"]
+                prefix = "" if root == "/" else root
+                out = [
+                    f"{prefix}/{f}" for f in files if fnmatch.fnmatch(f.rsplit("/", 1)[-1], pattern)
+                ]
+                return 0, "\n".join(out) + "\n", ""
+        return 1, "", f"find: '{root}': No such file or directory"
 
     # docker run ---------------------------------------------------------------
 

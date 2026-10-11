@@ -15,6 +15,7 @@ import {
   state,
   updateDraft,
 } from "~/stores/app"
+import { ConfigPicker } from "./ConfigPicker"
 import { IconChevronDown, IconClose, IconRefresh, IconSpinner } from "./Icons"
 import { StatusDot } from "./StatusDot"
 
@@ -191,7 +192,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
     >
       <StatusDot status={d().launching ? "launching" : "draft"} />
       <span class="w-[68px] shrink-0 text-xs text-fg-weak">{d().launching ? "lancement" : "brouillon"}</span>
-      <div class="grid min-w-0 flex-1 grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,1.3fr)_64px] items-center gap-1.5">
+      <div class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.7fr)_64px] items-center gap-1.5">
         <Field
           name="machine"
           label="machine"
@@ -220,16 +221,15 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
           describe={describeVenv}
           testid="field-venv"
         />
-        <Field
-          name="config"
-          label="config"
+        <ConfigPicker
+          projectId={p().id}
           value={d().config}
-          options={configs()}
-          onChange={(v) => set({ config: v })}
+          configs={configs()}
+          root={cfg()?.data?.root}
           loading={cfg()?.loading}
-          onRefresh={p().discover ? () => void loadConfigs(p().id, d().machine, true) : undefined}
           error={cfg()?.error}
-          testid="field-config"
+          onChange={(v) => set({ config: v })}
+          onRefresh={p().discover ? () => void loadConfigs(p().id, d().machine, true) : undefined}
         />
         <input
           value={d().cuda}

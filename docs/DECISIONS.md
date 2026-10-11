@@ -130,3 +130,28 @@ Spécification : issue #1 (« TrainHub — lanceur d'entraînements Hydra »). C
 - Image Docker construite et démarrée en mode fake (utilisateur non root, front servi). Dans le
   bac à sable, l'accès réseau des builds a nécessité des réglages locaux (proxy, miroir) non
   inclus dans le dépôt.
+
+## Évolution — choix de la config dans l'arborescence (demande du 11/10)
+
+Demande : la config est le nom d'un fichier YAML Hydra ; la racine des fichiers est donnée par
+projet ; l'utilisateur choisit en cliquant dans l'arborescence complète (récursive) ; chaque
+config indique combien de runs ont déjà été lancés dessus.
+
+- Inventaire : `configs.root` (forme courte de `configs.discover.path`), `pattern` (défaut
+  `*.yaml`), `exclude` (globs de chemins relatifs, ex. `hydra/*`), `max_depth` (défaut 10).
+  `root: ~/x` est relatif au home de la session SSH.
+- Découverte : `find -L <root> -maxdepth N -type f -name <pattern>` sur la machine choisie
+  (au lieu de `ls`), cache 60 s, bouton ↻. Composants cachés ignorés. Un sous-dossier illisible
+  n'empêche pas d'afficher le reste.
+- **Identifiant d'une config = chemin relatif sans extension** (`experiments/unet_large`), et
+  non le seul basename : deux fichiers de même nom dans deux dossiers restent distincts, et
+  c'est la valeur que Hydra accepte pour `--config-name` (config_path = racine). Le basename
+  reste disponible via le nouveau placeholder `{config_name}` (ex. `--config-path …
+  --config-name {config_name}`). **[à valider]**
+- Compteurs : calculés en direct côté front depuis l'état des runs (tous statuts, et en cours)
+  par fichier et cumulés par dossier ; côté serveur, `run_counts` dans
+  `GET /api/projects/{id}/configs` et dans l'outil MCP `list_configs`. Un run supprimé ne compte
+  plus.
+- Sélecteur : popover avec recherche (filtre sur le chemin, dossiers parents conservés), arbre
+  repliable (tout déplié par défaut), navigation clavier (↑/↓, →/← pour déplier/replier ou
+  remonter au dossier parent, Entrée), racine affichée en tête, légende en pied.

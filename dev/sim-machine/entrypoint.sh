@@ -13,8 +13,6 @@ if [ -S /var/run/docker.sock ]; then
   fi
   usermod -aG "$group" alice
 fi
-# Configs Hydra « découvrables » par ls
-for c in baseline long broken; do touch "/home/alice/seg/configs/$c.yaml"; done
-chown -R alice:alice /home/alice/seg
+# Les configs Hydra de l'image de test sont montées dans /home/alice/seg/configs.
 ssh-keygen -A >/dev/null
 exec /usr/sbin/sshd -D -e

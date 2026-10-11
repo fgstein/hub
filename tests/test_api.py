@@ -71,7 +71,7 @@ def test_inventory_health_openapi(client: TestClient) -> None:
 
 def test_configs_and_preview(client: TestClient) -> None:
     r = client.get("/api/projects/detection/configs", params={"machine": "gpu-01"})
-    assert r.json()["configs"] == ["yolo_m", "yolo_s"]
+    assert r.json()["configs"] == ["exp/sweep/yolo_l", "yolo_m", "yolo_s"]
     p = client.post("/api/preview", json=SEL.model_dump()).json()
     assert p["argv"][0] == "ssh" and "docker run -d -t --init" in p["text"]
     bad = client.post("/api/preview", json={**SEL.model_dump(), "venv": "exp"})

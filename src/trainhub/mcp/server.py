@@ -161,8 +161,11 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Configs Hydra disponibles pour un projet : liste statique et/ou "
-        "découverte par ls sur la machine (première machine autorisée si omise ; cache 60 s).",
+        description="Configs Hydra disponibles pour un projet. Une config est le chemin du "
+        "fichier YAML relatif à la racine des configs du projet, sans extension (ex. "
+        "'experiments/unet_large'), découvert récursivement sur la machine (première machine "
+        "autorisée si omise ; cache 60 s). run_counts indique, pour les configs déjà utilisées, "
+        "le nombre de runs lancés (total) et en cours (active).",
     )
     async def list_configs(
         project: ProjectArg,
@@ -172,7 +175,9 @@ def build_mcp(
         return {
             "project": project,
             "machine": cl.machine,
+            "root": cl.root,
             "configs": cl.configs,
+            "run_counts": {k: v.model_dump() for k, v in cl.run_counts.items()},
             "discover_error": cl.discover_error,
         }
 

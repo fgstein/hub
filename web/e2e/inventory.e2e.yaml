@@ -18,7 +18,8 @@ projects:
     command: python train.py --config-name {config}
     workdir: /workspace/seg
     configs:
-      static: [baseline, unet_large]
+      root: /seg/configs
+      exclude: ["hydra/*"]
   - id: det
     label: Détection
     command: python -m det.train --config-name {config}
@@ -34,4 +35,5 @@ simulation:
   machines:
     gpu-down: down
   configs:
+    seg: [baseline, unet_large, exp/sweep/lr_small, exp/sweep/lr_big, hydra/launcher/local]
     det: [yolo_s, yolo_m]
