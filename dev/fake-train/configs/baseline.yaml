@@ -1,0 +1,9 @@
+model:
+  name: baseline
+  depth: 18
+trainer:
+  max_epochs: 3
+  steps: 50
+  step_s: 0.05
+seed: 0
+fail_at_epoch: null

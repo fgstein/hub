@@ -1,0 +1,9 @@
+defaults:
+  - baseline
+  - _self_
+model:
+  name: long
+trainer:
+  max_epochs: 20
+  steps: 200
+  step_s: 0.1

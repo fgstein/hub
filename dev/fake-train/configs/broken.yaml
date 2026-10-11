@@ -1,0 +1,6 @@
+defaults:
+  - baseline
+  - _self_
+model:
+  name: broken
+fail_at_epoch: 2

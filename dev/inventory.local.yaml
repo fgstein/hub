@@ -1,0 +1,39 @@
+# Inventaire du mode local (TRAINHUB_EXECUTOR=local) : vraies commandes docker, sans SSH.
+# Prérequis : un accès Docker local et l'image de test (make fake-train-image).
+# Toutes les machines s'exécutent sur le Docker local ; le label trainhub.machine
+# permet de distinguer leurs conteneurs.
+
+machines:
+  - id: localhost
+    label: Docker local
+    host: localhost
+  - id: local-b
+    label: Docker local (2e « machine »)
+    host: localhost
+
+images:
+  - id: fake-train
+    label: Image de test (Hydra + tqdm)
+    image: trainhub-fake-train
+  - id: missing
+    label: Image absente (démo d'échec)
+    image: trainhub-does-not-exist:latest
+
+venvs:
+  - id: main
+    path: /opt/venvs/main
+  - id: exp
+    path: /opt/venvs/exp
+
+projects:
+  - id: fake
+    label: Fake train
+    command: python train.py --config-name {config}
+    workdir: /workspace/fake
+    images: [fake-train, missing]
+    docker:
+      env:
+        HYDRA_FULL_ERROR: "1"
+      stop_timeout: 10
+    configs:
+      static: [baseline, long, broken]

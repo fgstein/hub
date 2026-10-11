@@ -1,0 +1,94 @@
+# Inventaire de développement — mode fake (TRAINHUB_EXECUTOR=fake).
+# Machines et conteneurs sont simulés en mémoire ; rien n'est exécuté.
+
+machines:
+  - id: gpu-01
+    label: GPU 01 (4×A100)
+    host: gpu-01.lab.local
+    user: alice
+  - id: gpu-02
+    label: GPU 02 (8×H100)
+    host: gpu-02.lab.local
+    user: alice
+  - id: gpu-03
+    label: GPU 03 (instable)
+    host: gpu-03.lab.local
+  - id: gpu-old
+    label: Ancienne machine (hors ligne)
+    host: gpu-old.lab.local
+
+images:
+  - id: torch-2.4
+    label: PyTorch 2.4 / CUDA 12
+    image: registry.lab/ml/torch:2.4-cuda12
+  - id: torch-nightly
+    image: registry.lab/ml/torch:nightly
+  - id: broken
+    label: Image absente (démo d'échec)
+    image: registry.lab/ml/missing:latest
+
+venvs:
+  - id: main
+    path: /opt/venvs/main
+  - id: exp
+    path: /opt/venvs/exp
+    images: [torch-nightly]
+
+projects:
+  - id: segmentation
+    label: Segmentation
+    command: python train.py --config-name {config}
+    workdir: /workspace/seg
+    machines: [gpu-01, gpu-02, gpu-03, gpu-old]
+    docker:
+      gpus: all
+      shm_size: 16g
+      volumes:
+        - /data:/data:ro
+        - /home/alice/seg:/workspace/seg
+      env:
+        WANDB_MODE: offline
+      extra_args: ["--ipc=host"]
+    configs:
+      static: [baseline, unet_large, ablation_lr]
+
+  - id: detection
+    label: Détection
+    command: python -m det.train --config-name {config} run.id={run_id}
+    workdir: /workspace/det
+    images: [torch-2.4, torch-nightly]
+    docker:
+      gpus: all
+      shm_size: 8g
+      volumes: [/home/alice/det:/workspace/det]
+    configs:
+      discover:
+        path: /home/alice/det/configs
+        pattern: "*.yaml"
+
+  - id: llm-finetune
+    label: LLM fine-tune
+    command: torchrun --nproc-per-node 4 finetune.py --config-name {config}
+    workdir: /workspace/llm
+    machines: [gpu-02]
+    images: [torch-nightly]
+    venvs: [exp]
+    docker:
+      gpus: all
+      shm_size: 64g
+      tty: false
+    configs:
+      static: [llama_8b_lora]
+
+simulation:
+  duration_s: [60, 300]       # durée d'un entraînement simulé
+  log_rate: 6                 # mises à jour de la barre de progression par seconde
+  failure_prob: 0.15          # probabilité d'échec (traceback, code 1)
+  time_scale: 1.0             # > 1 accélère le temps simulé
+  latency_ms: [50, 300]       # latence SSH simulée
+  flaky_period_s: 60
+  machines:
+    gpu-03: flaky             # injoignable par intermittence
+    gpu-old: down             # toujours injoignable
+  configs:                    # configs « découvertes » par ls, par projet
+    detection: [yolo_s, yolo_m, detr_r50, rtdetr_l]
