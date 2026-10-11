@@ -1,0 +1,37 @@
+# Inventaire des tests Playwright (mode fake, simulation rapide et déterministe).
+machines:
+  - id: gpu-01
+    label: GPU 01
+    host: gpu-01.lab
+  - id: gpu-down
+    label: Machine hors ligne
+    host: gpu-down.lab
+images:
+  - id: torch
+    image: registry.lab/ml/torch:2.4
+venvs:
+  - id: main
+    path: /opt/venvs/main
+projects:
+  - id: seg
+    label: Segmentation
+    command: python train.py --config-name {config}
+    workdir: /workspace/seg
+    configs:
+      static: [baseline, unet_large]
+  - id: det
+    label: Détection
+    command: python -m det.train --config-name {config}
+    machines: [gpu-01]
+    configs:
+      discover: {path: /det/configs}
+simulation:
+  duration_s: [600, 600]
+  time_scale: 1
+  log_rate: 10
+  failure_prob: 0
+  latency_ms: [5, 10]
+  machines:
+    gpu-down: down
+  configs:
+    det: [yolo_s, yolo_m]

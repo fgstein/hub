@@ -127,13 +127,14 @@ export function ActionButton(props: { run: RunView }) {
                 const needsConfirm = () => !!def.confirm && confirming() !== a
                 return (
                   <DropdownMenu.Item
-                    closeOnSelect={!def.confirm || confirming() === a}
+                    closeOnSelect={!def.confirm}
                     onSelect={() => {
                       if (needsConfirm()) {
                         setConfirming(a)
                         return
                       }
                       setConfirming(null)
+                      setOpen(false)
                       void perform(props.run, a)
                     }}
                     class="flex h-7 cursor-default items-center gap-2 rounded px-2.5 text-sm outline-none data-[highlighted]:bg-surface-active"

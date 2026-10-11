@@ -15,3 +15,5 @@ dev/ssh/
 test-results/
 playwright-report/
 web/openapi.json
+web/test-results/
+web/playwright-report/
