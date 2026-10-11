@@ -53,6 +53,17 @@ The inventory is validated at startup with readable errors (file, line, field) a
 and the error is shown in the page footer. A full commented example is in
 [`inventory.example.yaml`](inventory.example.yaml).
 
+TrainHub uses the inventory given by `--inventory` or `TRAINHUB_INVENTORY`. Without either, it
+takes the first of these files that exists:
+
+1. `./inventory.yaml` (current directory)
+2. `$XDG_CONFIG_HOME/trainhub/inventory.yaml` (by default `~/.config/trainhub/inventory.yaml`)
+3. `/etc/trainhub/inventory.yaml`
+
+```bash
+mkdir -p ~/.config/trainhub && cp inventory.example.yaml ~/.config/trainhub/inventory.yaml
+```
+
 What you change from the interface (project command, open tabs, last selections, runs) is stored
 in a SQLite database, `$TRAINHUB_DATA_DIR/trainhub.sqlite`, not in the inventory.
 
@@ -339,7 +350,7 @@ the whole directory.
 
 | Variable                | Default              | Purpose                                                        |
 |-------------------------|----------------------|----------------------------------------------------------------|
-| `TRAINHUB_INVENTORY`    | `./inventory.yaml`   | Path of the inventory (hot-reloaded)                           |
+| `TRAINHUB_INVENTORY`    | see [Configuration](#configuration) | Path of the inventory (hot-reloaded)            |
 | `TRAINHUB_DATA_DIR`     | `./.trainhub`        | SQLite database directory                                      |
 | `TRAINHUB_HOST`         | `127.0.0.1`          | Listen address                                                 |
 | `TRAINHUB_PORT`         | `8420`               | Port                                                           |
@@ -422,7 +433,7 @@ Or over stdio (relays to the running server; `TRAINHUB_TOKEN` is read from the e
 ```python
 from trainhub import TrainHub
 
-tb = TrainHub.from_inventory("inventory.yaml")          # executor: TRAINHUB_EXECUTOR (default ssh)
+tb = TrainHub.from_inventory()   # inventory searched as in Configuration; executor: TRAINHUB_EXECUTOR (default ssh)
 run = await tb.launch(project="segmentation", machine="gpu-01",
                       image="torch-2.4", venv="main", config="baseline")
 async for chunk in tb.stream_logs(run.id):

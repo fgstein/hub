@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from trainhub.core.inventory import InventoryError, load_inventory, parse_inventory
@@ -127,3 +129,31 @@ def test_configs_root_shorthand() -> None:
     inv = parse_inventory(text)
     d = inv.project("segmentation").configs.discover
     assert d is not None and d.path == "/cfg" and d.exclude == ["hydra/*"]
+
+
+def test_inventory_search_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trainhub.config import find_inventory, require_inventory
+
+    monkeypatch.chdir(tmp_path)
+    xdg = tmp_path / "xdg"
+    env = {"XDG_CONFIG_HOME": str(xdg)}
+    user_inv = xdg / "trainhub" / "inventory.yaml"
+
+    # Nothing exists: fallback to ./inventory.yaml, with an error listing the searched paths.
+    assert find_inventory(env=env) == Path("inventory.yaml")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    with pytest.raises(
+        InventoryError,
+        match=r"not found: inventory\.yaml\n.*create one of: inventory\.yaml, .*xdg/trainhub",
+    ):
+        require_inventory(find_inventory(env=env))
+
+    user_inv.parent.mkdir(parents=True)
+    user_inv.write_text("")
+    assert find_inventory(env=env) == user_inv
+
+    (tmp_path / "inventory.yaml").write_text("")
+    assert find_inventory(env=env) == Path("inventory.yaml")
+
+    assert find_inventory(env={**env, "TRAINHUB_INVENTORY": "/x.yaml"}) == Path("/x.yaml")
+    assert find_inventory("other.yaml", env={"TRAINHUB_INVENTORY": "/x.yaml"}) == Path("other.yaml")

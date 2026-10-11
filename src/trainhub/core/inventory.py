@@ -30,6 +30,21 @@ class InventoryError(ValueError):
         )
 
 
+class InventoryNotFoundError(InventoryError):
+    """Inventory file missing."""
+
+    def __init__(self, source: str, searched: Sequence[str]) -> None:
+        self.searched = list(searched)
+        super().__init__(source, [])
+
+    def __str__(self) -> str:
+        return (
+            f"inventory not found: {self.source}\n"
+            "  Pass --inventory or set TRAINHUB_INVENTORY, or create one of: "
+            + ", ".join(self.searched)
+        )
+
+
 def _locate(node: yaml.Node | None, loc: Sequence[int | str]) -> int | None:
     """Line (1-based) of the deepest YAML node matching ``loc``."""
     line = node.start_mark.line + 1 if node is not None else None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..config import Settings
+from ..config import Settings, require_inventory
 from ..executors import create_executor
 from .events import Event, EventBus
 from .inventory_watch import InventoryManager
@@ -24,7 +24,7 @@ from .store import Store
 
 def create_service(settings: Settings, *, version: str = "0.1.0") -> RunService:
     """Wire up inventory, executor and SQLite database according to the settings."""
-    inv = InventoryManager(settings.inventory)
+    inv = InventoryManager(require_inventory(settings.inventory))
     executor = create_executor(settings.executor, inv.inventory)
     store = Store(Path(settings.db_path))
     return RunService(

@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
+from .config import find_inventory, require_inventory
 from .core.commands import preview, preview_exact
 from .core.ids import new_run_id
 from .core.inventory import InventoryError, load_inventory
@@ -23,7 +24,7 @@ from .core.status import elapsed_seconds, format_duration
 
 
 def _inventory_path(args: argparse.Namespace) -> str:
-    return str(args.inventory or os.environ.get("TRAINHUB_INVENTORY", "inventory.yaml"))
+    return str(require_inventory(find_inventory(args.inventory)))
 
 
 def _hub(args: argparse.Namespace) -> Any:
@@ -208,7 +209,11 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trainhub", description=__doc__.split("\n")[0])
-    parser.add_argument("--inventory", help="Path of inventory.yaml (TRAINHUB_INVENTORY)")
+    parser.add_argument(
+        "--inventory",
+        help="Path of inventory.yaml (TRAINHUB_INVENTORY; default: ./inventory.yaml, "
+        "~/.config/trainhub/inventory.yaml, /etc/trainhub/inventory.yaml)",
+    )
     parser.add_argument(
         "--executor", choices=["fake", "local", "ssh"], help="Executor (TRAINHUB_EXECUTOR)"
     )

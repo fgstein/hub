@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 
-from .config import Settings
+from .config import Settings, find_inventory, require_inventory
 from .core.models import Run, RunSource, RunStatus
 from .executors import Executor, create_executor
 from .service import InventoryManager, RunService, Selection, Store
@@ -43,7 +43,7 @@ class TrainHub:
     @classmethod
     def from_inventory(
         cls,
-        path: str | Path = "inventory.yaml",
+        path: str | Path | None = None,
         *,
         executor: str | Executor | None = None,
         data_dir: str | Path | None = None,
@@ -52,11 +52,14 @@ class TrainHub:
     ) -> TrainHub:
         """Create an instance from an inventory file.
 
+        ``path``: defaults to ``TRAINHUB_INVENTORY``, else the first of ``./inventory.yaml``,
+        ``~/.config/trainhub/inventory.yaml`` and ``/etc/trainhub/inventory.yaml`` that exists.
+
         ``executor``: ``"fake"``, ``"local"``, ``"ssh"`` or an instance; defaults to
         ``TRAINHUB_EXECUTOR`` (else ``ssh``). ``data_dir``: SQLite database directory
         (default ``TRAINHUB_DATA_DIR`` or ``.trainhub``); ``":memory:"`` for a throwaway database.
         """
-        inv = InventoryManager(path)
+        inv = InventoryManager(require_inventory(find_inventory(path)))
         if executor is None or isinstance(executor, str):
             kind = executor or os.environ.get("TRAINHUB_EXECUTOR", "ssh")
             ex = create_executor(kind, inv.inventory)
