@@ -69,7 +69,7 @@ format:  ## Format the code
 	$(UV) run ruff check --fix src tests dev scripts
 	cd web && $(NPM) run format
 
-zip:  ## Zip the repository without ignored files (../trainhubX.Y.Z.zip)
+zip: build-web  ## Zip the repository with the built front end (../trainhubX.Y.Z.zip)
 	$(UV) run python scripts/make_zip.py
 
 openapi:  ## Regenerate web/src/lib/api-types.ts from the OpenAPI
