@@ -18,6 +18,7 @@ import {
   updateDraft,
 } from "~/stores/app"
 import { ConfigPicker } from "./ConfigPicker"
+import { GpuPicker } from "./GpuPicker"
 import { IconChevronDown, IconClose, IconRefresh, IconSpinner } from "./Icons"
 import { StatusDot } from "./StatusDot"
 
@@ -260,16 +261,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
             onChange={(v) => set({ config: v })}
             onRefresh={p().discover ? () => void loadConfigs(p().id, d().machine, true) : undefined}
           />
-          <input
-            value={d().cuda}
-            onInput={(e) => set({ cuda: e.currentTarget.value })}
-            placeholder="GPU"
-            title="CUDA_VISIBLE_DEVICES (optional), e.g. 0,1"
-            aria-label="CUDA_VISIBLE_DEVICES"
-            data-gpu=""
-            data-testid="field-gpu"
-            class="h-7 min-w-0 rounded border border-line-weak bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
-          />
+          <GpuPicker machine={d().machine} value={d().cuda} onChange={(v) => set({ cuda: v })} />
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <button

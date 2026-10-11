@@ -1,6 +1,7 @@
 import type {
   ConfigList,
   InventoryView,
+  MachineGpus,
   PreviewResult,
   ProjectView,
   RunAction,
@@ -61,6 +62,7 @@ export const api = {
     request<ProjectView>("PATCH", `/api/projects/${encodeURIComponent(project)}`, { command }),
   resetCommand: (project: string) =>
     request<ProjectView>("PATCH", `/api/projects/${encodeURIComponent(project)}`, { reset: true }),
+  gpus: (machine: string) => request<MachineGpus>("GET", `/api/machines/${encodeURIComponent(machine)}/gpus`),
   uiState: () => request<UiState>("GET", "/api/ui-state"),
   putUiState: (state: UiState) => request<UiState>("PUT", "/api/ui-state", state),
   preview: (sel: Selection) => request<PreviewResult>("POST", "/api/preview", sel),

@@ -44,6 +44,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/machines/{machine_id}/gpus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machine Gpus
+         * @description GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it.
+         */
+        get: operations["machine_gpus_api_machines__machine_id__gpus_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/configs": {
         parameters: {
             query?: never;
@@ -280,6 +300,47 @@ export interface components {
              */
             keep_alive: boolean;
         };
+        /** GpuRunView */
+        GpuRunView: {
+            /** Id */
+            id: string;
+            /** Project */
+            project: string;
+            status: components["schemas"]["RunStatus"];
+            /**
+             * Cuda Visible Devices
+             * @description None: every GPU visible
+             */
+            cuda_visible_devices: string | null;
+        };
+        /**
+         * GpuView
+         * @description A GPU of a machine (``nvidia-smi``).
+         */
+        GpuView: {
+            /** Index */
+            index: number;
+            /** Name */
+            name: string;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
+            /** Utilization Pct */
+            utilization_pct: number | null;
+            /** Temperature C */
+            temperature_c: number | null;
+            /**
+             * Processes
+             * @description Compute processes on the GPU (all users)
+             */
+            processes: number;
+            /**
+             * Runs
+             * @description Active TrainHub runs pinned to this GPU by CUDA_VISIBLE_DEVICES
+             */
+            runs: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -373,6 +434,25 @@ export interface components {
             };
             /** @default ui */
             source: components["schemas"]["RunSource"];
+        };
+        /**
+         * MachineGpus
+         * @description GPU state of a machine, with the active TrainHub runs placed on it.
+         */
+        MachineGpus: {
+            /** Machine */
+            machine: string;
+            /** Gpus */
+            gpus?: components["schemas"]["GpuView"][];
+            /** Active Runs */
+            active_runs?: components["schemas"]["GpuRunView"][];
+            /** Error */
+            error?: string | null;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
         };
         /** MachineStatus */
         MachineStatus: {
@@ -709,6 +789,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InventoryView"];
+                };
+            };
+        };
+    };
+    machine_gpus_api_machines__machine_id__gpus_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineGpus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

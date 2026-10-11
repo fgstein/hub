@@ -165,3 +165,44 @@ def test_http_transport(tmp_path: Path) -> None:
         data = json.loads(body.split("data: ", 1)[1]) if "data: " in body else r.json()
         assert data["result"]["isError"] is False
         assert "segmentation" in json.dumps(data["result"])
+
+
+async def test_wait_cursor_and_gpus(svc: RunService) -> None:
+    progress: list[float] = []
+
+    async def on_progress(p: float, total: float | None, message: str | None) -> None:
+        progress.append(p)
+
+    async with create_connected_server_and_client_session(build_mcp(svc)._mcp_server) as c:
+        gpus = await _call(c, "get_gpus", project="segmentation")
+        assert [g["machine"] for g in gpus] == ["gpu-01", "gpu-02"]
+        assert len(gpus[0]["gpus"]) == 4 and gpus[0]["gpus"][0]["processes"] == 0
+
+        run = await _call(c, "launch_run", **SEL, cuda_visible_devices="1")
+        rid = run["id"]
+        one = await _call(c, "get_gpus", machine="gpu-01")
+        assert one[0]["gpus"][1]["runs"] == [rid]
+        assert one[0]["active_runs"][0]["cuda_visible_devices"] == "1"
+
+        matched = await _call(c, "wait_run", run_id=rid, pattern="epoch 2/", timeout_s=10)
+        assert matched["wait"]["reason"] == "match" and "2/" in matched["wait"]["match"]
+        assert matched["status"] == "running" and matched["last_lines"]
+
+        logs = await _call(c, "get_logs", run_id=rid, tail=5)
+        cursor = int(logs.split("cursor ", 1)[1].split("]", 1)[0])
+        res = await c.call_tool(
+            "wait_run", {"run_id": rid, "timeout_s": 10}, progress_callback=on_progress
+        )
+        done = payload(res)
+        assert done["wait"]["reason"] == "finished" and done["status"] == "succeeded"
+        assert progress, "progress notifications while waiting"
+        new = await _call(c, "get_logs", run_id=rid, since=cursor)
+        assert "command finished" in new or "Epoch" in new
+        end = int(new.split("cursor ", 1)[1].split("]", 1)[0])
+        assert end > cursor
+        assert (await _call(c, "get_logs", run_id=rid, since=end)).endswith("(no new output)")
+
+        bad = await c.call_tool("wait_run", {"run_id": rid, "pattern": "("})
+        assert bad.isError and "invalid regex" in bad.content[0].text
+        down = await c.call_tool("get_gpus", {"machine": "nope"})
+        assert down.isError

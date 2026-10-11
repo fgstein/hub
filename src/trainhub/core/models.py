@@ -221,6 +221,7 @@ class SimulationSettings(_Strict):
         default_factory=dict, description="Simulated “discovered” configs, per project"
     )
     flaky_period_s: float = Field(default=40.0, gt=0)
+    gpus: int = Field(default=4, ge=0, description="Simulated GPUs per machine (nvidia-smi)")
     seed: int | None = None
 
 

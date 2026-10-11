@@ -15,6 +15,7 @@ from ..service.schemas import (
     ConfigList,
     Health,
     InventoryView,
+    MachineGpus,
     PreviewResult,
     ProjectView,
     RunView,
@@ -54,6 +55,12 @@ async def health(svc: Svc) -> Health:
 async def inventory(svc: Svc) -> InventoryView:
     """Machines, images, venvs, projects (merged view of YAML + database)."""
     return svc.inventory_view()
+
+
+@router.get("/machines/{machine_id}/gpus", response_model=MachineGpus, tags=["inventory"])
+async def machine_gpus(machine_id: str, svc: Svc) -> MachineGpus:
+    """GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it."""
+    return await svc.machine_gpus(machine_id)
 
 
 @router.get("/projects/{project_id}/configs", response_model=ConfigList, tags=["inventory"])

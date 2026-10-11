@@ -131,6 +131,30 @@ test("tabs: close, reopen with +, URL and shortcuts", async ({ page }) => {
   await expect(page.getByTestId("draft-row")).toHaveCount(0)
 })
 
+test("GPU picker: nvidia-smi state of the machine, click toggles CUDA_VISIBLE_DEVICES", async ({ page }) => {
+  const draft = await newDraft(page)
+  await draft.getByTestId("gpu-trigger").click()
+  const picker = page.getByTestId("gpu-picker")
+  await expect(picker.getByTestId("gpu-empty")).toHaveText("Choose a machine first")
+  await page.keyboard.press("Escape")
+  await expect(picker).toHaveCount(0)
+  await expect(page.getByTestId("draft-row")).toHaveCount(1)
+
+  await pick(page, "field-machine", "gpu-01")
+  await draft.getByTestId("gpu-trigger").click()
+  await expect(picker.getByTestId("gpu-row")).toHaveCount(4)
+  await picker.locator("[data-testid=gpu-row][data-index='2']").click()
+  await picker.locator("[data-testid=gpu-row][data-index='0']").click()
+  await expect(draft.getByTestId("field-gpu")).toHaveValue("0,2")
+  await picker.getByTestId("gpu-all").click()
+  await expect(draft.getByTestId("field-gpu")).toHaveValue("")
+  await page.keyboard.press("Escape")
+
+  await pick(page, "field-machine", "gpu-down")
+  await draft.getByTestId("gpu-trigger").click()
+  await expect(picker.getByTestId("gpu-empty")).toContainText("unreachable")
+})
+
 test("layout at 900 px: nothing overflows", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 700 })
   await page.goto("/p/seg")

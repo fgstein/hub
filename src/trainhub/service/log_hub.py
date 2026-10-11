@@ -230,6 +230,22 @@ class LogHub:
         except OSError:
             return None
 
+    def read_file_from(self, run_id: str, offset: int) -> tuple[bytes, int] | None:
+        """Backup file from byte ``offset`` and its size (``None`` if there is no file).
+
+        If the file is shorter than ``offset`` (rewritten), it is read from the start.
+        """
+        path = self.log_path(run_id)
+        if path is None:
+            return None
+        try:
+            with path.open("rb") as f:
+                size = f.seek(0, os.SEEK_END)
+                f.seek(offset if 0 <= offset <= size else 0)
+                return f.read(), size
+        except OSError:
+            return None
+
     def _channel(self, run_id: str) -> _Channel:
         ch = self._channels.get(run_id)
         if ch is None:

@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..core.commands import discover_root, transport
+from ..core.gpus import visible_indices
 from ..core.models import Inventory, Machine, SimulationSettings
 from .base import (
     ExecResult,
@@ -99,6 +100,7 @@ class FakeContainer:
     command: list[str]
     tty: bool
     id: str
+    env: dict[str, str] = field(default_factory=dict)
     created_at: datetime = field(default_factory=_now)
     state: str = "created"
     exit_code: int = 0
@@ -292,6 +294,8 @@ class FakeExecutor(Executor):
             return 127, "", "empty command"
         if argv[0] == "find":
             return self._find(argv)
+        if argv[0] == "nvidia-smi":
+            return self._nvidia_smi(machine, m, argv)
         if argv[0] != "docker" or len(argv) < 2:
             return 127, "", f"bash: {argv[0]}: command not found"
         sub, args = argv[1], argv[2:]
@@ -334,11 +338,46 @@ class FakeExecutor(Executor):
                 return 0, "\n".join(out) + "\n", ""
         return 1, "", f"find: '{root}': No such file or directory"
 
+    def _nvidia_smi(
+        self, machine: Machine, m: FakeMachine, argv: list[str]
+    ) -> tuple[int, str, str]:
+        """Simulate the ``nvidia-smi --query-*`` of :mod:`trainhub.core.gpus`.
+
+        A container whose command is running uses the GPUs of its ``CUDA_VISIBLE_DEVICES``
+        (GPU 0 without restriction), with a memory footprint derived from its name.
+        """
+        n = self.settings.gpus
+        if n == 0:
+            return 127, "", "bash: nvidia-smi: command not found"
+        tag = hashlib.sha1(machine.id.encode()).hexdigest()[:8]
+        uuids = [f"GPU-{tag}-{i:04d}" for i in range(n)]
+        apps: list[tuple[int, int, int]] = []  # (gpu, pid, MiB)
+        for c in m.containers.values():
+            if c.state not in ("running", "paused") or c.command_done:
+                continue
+            indices = visible_indices(c.env.get("CUDA_VISIBLE_DEVICES"))
+            h = int(hashlib.sha1(c.name.encode()).hexdigest()[:6], 16)
+            for i in [0] if indices is None else indices:
+                if i < n:
+                    apps.append((i, 1000 + h % 30000, 8000 + h % 50000))
+        if any(a.startswith("--query-compute-apps") for a in argv):
+            return 0, "".join(f"{uuids[g]}, {pid}, {mib}\n" for g, pid, mib in apps), ""
+        lines = []
+        for i in range(n):
+            used = sum(mib for g, _, mib in apps if g == i)
+            util = min(100, 85 * sum(1 for g, _, _ in apps if g == i))
+            lines.append(
+                f"{i}, {uuids[i]}, NVIDIA A100-SXM4-80GB, {used + 4 if used else 1}, 81920, "
+                f"{util}, {34 + util // 3}\n"
+            )
+        return 0, "".join(lines), ""
+
     # docker run ---------------------------------------------------------------
 
     def _run(self, machine: Machine, m: FakeMachine, args: list[str]) -> tuple[int, str, str]:
         name: str | None = None
         labels: dict[str, str] = {}
+        env: dict[str, str] = {}
         tty = False
         keep_alive = "--health-cmd" in args
         i = 0
@@ -353,6 +392,9 @@ class FakeExecutor(Executor):
                 elif a in ("--label", "-l"):
                     k, _, v = val.partition("=")
                     labels[k] = v
+                elif a in ("-e", "--env"):
+                    k, _, v = val.partition("=")
+                    env[k] = v
                 i += 2
                 continue
             if a == "--tty" or (not a.startswith("--") and "t" in a[1:]):
@@ -387,6 +429,7 @@ class FakeExecutor(Executor):
             command=command,
             tty=tty,
             id=cid,
+            env=env,
             keep_alive=keep_alive,
         )
         m.containers[name] = c

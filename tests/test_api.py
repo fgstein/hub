@@ -216,3 +216,11 @@ def test_shell_websocket_refused_for_unknown_run(client: TestClient) -> None:
     with client.websocket_connect("/ws/shell/nope") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "error" and "not found" in msg["message"]
+
+
+def test_machine_gpus_route(client: TestClient) -> None:
+    r = client.get("/api/machines/gpu-01/gpus")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["machine"] == "gpu-01" and len(data["gpus"]) == 4
+    assert client.get("/api/machines/nope/gpus").status_code == 404

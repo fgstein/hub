@@ -178,4 +178,36 @@ class Health(BaseModel):
     version: str
 
 
+class GpuView(BaseModel):
+    """A GPU of a machine (``nvidia-smi``)."""
+
+    index: int
+    name: str
+    memory_used_mib: int | None
+    memory_total_mib: int | None
+    utilization_pct: int | None
+    temperature_c: int | None
+    processes: int = Field(description="Compute processes on the GPU (all users)")
+    runs: list[str] = Field(
+        description="Active TrainHub runs pinned to this GPU by CUDA_VISIBLE_DEVICES"
+    )
+
+
+class GpuRunView(BaseModel):
+    id: str
+    project: str
+    status: RunStatus
+    cuda_visible_devices: str | None = Field(description="None: every GPU visible")
+
+
+class MachineGpus(BaseModel):
+    """GPU state of a machine, with the active TrainHub runs placed on it."""
+
+    machine: str
+    gpus: list[GpuView] = Field(default_factory=list)
+    active_runs: list[GpuRunView] = Field(default_factory=list)
+    error: str | None = None
+    checked_at: datetime
+
+
 RUN_STATUSES = [s.value for s in RunStatus]

@@ -9,17 +9,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import shlex
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..core import commands as cmd
+from ..core import gpus
 from ..core.commands import RunSpec
 from ..core.ids import new_run_id
+from ..core.logs_clean import clean_logs
 from ..core.models import (
     FINISHED_STATUSES,
     ConfigDiscover,
@@ -50,10 +54,13 @@ from .inventory_watch import InventoryManager
 from .log_hub import LogHub, LogsGoneError, LogSubscriber
 from .schemas import (
     ConfigList,
+    GpuRunView,
+    GpuView,
     Health,
     ImageView,
     InventoryView,
     LastSelection,
+    MachineGpus,
     MachineStatus,
     MachineView,
     PreviewResult,
@@ -70,6 +77,37 @@ log = logging.getLogger("trainhub.service")
 
 CONFIG_CACHE_TTL_S = 60.0
 UI_STATE_KEY = "ui_state"
+#: Polling period of :meth:`RunService.wait_run` (capped by the monitoring period).
+WAIT_POLL_S = 1.0
+#: Unfinished last line kept by :meth:`RunService.wait_run` between two reads.
+_CARRY_MAX = 64 * 1024
+
+WaitUntil = Literal["finished", "status_change"]
+WaitReason = Literal["finished", "match", "status_change", "timeout"]
+
+
+@dataclass(frozen=True)
+class LogSlice:
+    """Part of a run's logs, read from a byte offset."""
+
+    data: bytes
+    start: int
+    """Offset of ``data[0]`` in the full logs."""
+    cursor: int
+    """Offset to pass next time to only get what follows."""
+    reset: bool
+    """The logs were rewritten (shorter than the requested offset): read from the start."""
+
+
+@dataclass(frozen=True)
+class WaitResult:
+    run: Run
+    reason: WaitReason
+    waited_s: float
+    match: str | None = None
+    """Matching log line (cleaned) when a pattern was given."""
+    cursor: int | None = None
+    """Log offset reached by the search (``None`` without a pattern)."""
 
 
 # --------------------------------------------------------------------------- errors
@@ -935,6 +973,142 @@ class RunService:
         # Without a TTY, docker logs separates stdout and stderr: concatenate them.
         return res.stdout + res.stderr
 
+    async def read_logs_since(self, run_id: str, since: int = 0) -> LogSlice:
+        """Raw logs from byte offset ``since`` (the ``cursor`` of an earlier read).
+
+        Offsets count bytes of the full log (backup file, else ``docker logs``). If the logs
+        are now shorter than ``since`` (rewritten), they are returned from the start with
+        ``reset``.
+        """
+        await self.get_run(run_id)
+        got = self.logs.read_file_from(run_id, since)
+        if got is not None:
+            data, size = got
+            reset = since > size
+        else:
+            full = await self.read_logs(run_id)
+            reset = since > len(full)
+            data = full if reset else full[since:]
+        start = 0 if reset else since
+        return LogSlice(data=data, start=start, cursor=start + _complete_utf8(data), reset=reset)
+
+    async def wait_run(
+        self,
+        run_id: str,
+        *,
+        timeout: float,
+        pattern: str | None = None,
+        since: int | None = None,
+        until: WaitUntil = "finished",
+        on_tick: Callable[[float, Run], Awaitable[None]] | None = None,
+    ) -> WaitResult:
+        """Wait until the run finishes, a log line matches ``pattern`` or ``timeout`` expires.
+
+        ``pattern`` (case-insensitive regex) is searched in the cleaned lines written after
+        ``since`` (default: the end of the logs at call time). ``until="status_change"`` also
+        returns as soon as the status differs from the initial one. ``on_tick`` is called on
+        every polling round (progress).
+        """
+        rx: re.Pattern[str] | None = None
+        if pattern:
+            try:
+                rx = re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                raise InvalidRequestError(f"invalid regex {pattern!r}: {exc}") from exc
+        t0 = time.monotonic()
+        run = await self.get_run(run_id)
+        initial = run.status
+        cursor: int | None = None
+        carry = b""  # unfinished last line, searched again with what follows
+        if rx is not None:
+            cursor = since if since is not None else (await self.read_logs_since(run_id)).cursor
+
+        async def scan() -> str | None:
+            nonlocal cursor, carry
+            assert rx is not None and cursor is not None
+            sl = await self.read_logs_since(run_id, cursor)
+            if sl.reset:
+                carry = b""
+            chunk = carry + sl.data[: sl.cursor - sl.start]
+            cursor = sl.cursor
+            nl = chunk.rfind(b"\n")
+            carry = chunk[nl + 1 :][-_CARRY_MAX:]
+            for line in clean_logs(chunk).split("\n"):
+                if rx.search(line):
+                    return line.strip()[:500]
+            return None
+
+        def result(reason: WaitReason, run: Run, match: str | None = None) -> WaitResult:
+            return WaitResult(run, reason, time.monotonic() - t0, match, cursor)
+
+        poll = min(WAIT_POLL_S, self.poll_interval)
+        while True:
+            if run.status.is_finished:
+                # the last lines may still be arriving: give them a chance to match
+                match = await scan() if rx is not None else None
+                return result("finished", run, match)
+            if rx is not None and (match := await scan()) is not None:
+                return result("match", run, match)
+            if until == "status_change" and run.status is not initial:
+                return result("status_change", run)
+            elapsed = time.monotonic() - t0
+            if elapsed >= timeout:
+                return result("timeout", run)
+            if on_tick is not None:
+                await on_tick(elapsed, run)
+            await asyncio.sleep(min(poll, max(0.0, timeout - elapsed)))
+            run = await self.get_run(run_id)
+
+    # -- GPUs ---------------------------------------------------------------------------
+
+    async def machine_gpus(self, machine_id: str) -> MachineGpus:
+        """GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it."""
+        machine = self._machine(machine_id)
+        runs = [r for r in await self.store.list_runs(machine=machine_id) if r.status.is_active]
+        report = MachineGpus(
+            machine=machine_id,
+            active_runs=[
+                GpuRunView(
+                    id=r.id,
+                    project=r.project_id,
+                    status=r.status,
+                    cuda_visible_devices=r.cuda_visible_devices,
+                )
+                for r in runs
+            ],
+            checked_at=utcnow(),
+        )
+        try:
+            gpus_res, apps_res = await asyncio.gather(
+                self.executor.exec(machine, gpus.query_gpus()),
+                self.executor.exec(machine, gpus.query_apps()),
+            )
+        except MachineUnreachableError as exc:
+            raise UnreachableError(str(exc)) from exc
+        except ExecutorError as exc:
+            raise ServiceError(str(exc)) from exc
+        if not gpus_res.ok:
+            report.error = f"nvidia-smi failed: {gpus_res.error_message()}"
+            return report
+        pinned: dict[int, list[str]] = {}
+        for r in runs:
+            for i in gpus.visible_indices(r.cuda_visible_devices) or []:
+                pinned.setdefault(i, []).append(r.id)
+        report.gpus = [
+            GpuView(
+                index=g.index,
+                name=g.name,
+                memory_used_mib=g.memory_used_mib,
+                memory_total_mib=g.memory_total_mib,
+                utilization_pct=g.utilization_pct,
+                temperature_c=g.temperature_c,
+                processes=g.processes,
+                runs=pinned.get(g.index, []),
+            )
+            for g in gpus.parse_gpus(gpus_res.out, apps_res.out if apps_res.ok else "")
+        ]
+        return report
+
     # -- updates and monitoring ----------------------------------------------------------
 
     async def _inspect(self, run: Run) -> ContainerState | None:
@@ -1143,6 +1317,18 @@ def _tail_lines(data: bytes, tail: int | None) -> bytes:
         if idx < 0:
             return data
     return data[idx + 1 :]
+
+
+def _complete_utf8(data: bytes) -> int:
+    """Length of ``data`` without a trailing incomplete UTF-8 sequence."""
+    for back in range(1, min(4, len(data)) + 1):
+        b = data[-back]
+        if b < 0x80:
+            return len(data)
+        if b >= 0xC0:  # lead byte: complete if its sequence fits in what follows
+            need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4
+            return len(data) if back >= need else len(data) - back
+    return len(data)
 
 
 def _close_pause(run: Run) -> dict[str, Any]:

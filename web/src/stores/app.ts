@@ -10,6 +10,7 @@ import type {
   ConfigList,
   InventoryView,
   LastSelection,
+  MachineGpus,
   MachineStatus,
   ProjectView,
   RunAction,
@@ -477,6 +478,33 @@ export async function loadConfigs(projectId: string, machine: string | null, ref
     setConfigsCache(key, { loading: false, data, error: data.discover_error ?? undefined })
   } catch (e) {
     setConfigsCache(key, { loading: false, error: e instanceof Error ? e.message : String(e) })
+  }
+}
+
+// --------------------------------------------------------------------------- GPUs
+
+/** GPU state per machine (``nvidia-smi``), loaded on demand. */
+const [gpusCache, setGpusCache] = createStore<
+  Record<string, { loading: boolean; data?: MachineGpus; error?: string; at?: number }>
+>({})
+
+export { gpusCache }
+
+/** Reload the GPUs of a machine unless they are being loaded or are fresh (``maxAgeMs``). */
+export async function loadGpus(machine: string, maxAgeMs = 5000) {
+  const cur = gpusCache[machine]
+  if (cur?.loading || (cur?.at && Date.now() - cur.at < maxAgeMs)) return
+  setGpusCache(machine, { loading: true, data: cur?.data, error: undefined })
+  try {
+    const data = await api.gpus(machine)
+    setGpusCache(machine, { loading: false, data, error: data.error ?? undefined, at: Date.now() })
+  } catch (e) {
+    setGpusCache(machine, {
+      loading: false,
+      data: undefined,
+      error: e instanceof Error ? e.message : String(e),
+      at: Date.now(),
+    })
   }
 }
 

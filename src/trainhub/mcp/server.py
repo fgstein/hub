@@ -6,9 +6,10 @@ interface (``run.created`` event) with ``source = "mcp"``.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+import asyncio
+from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
@@ -25,7 +26,8 @@ TrainHub launches and monitors training commands on remote GPU machines
 (ssh → docker → venv → command). A run is defined by 5 choices: project, machine, Docker
 image, Python venv and config file. Recommended flow: list_projects, then
 list_resources and list_configs for a project, preview_command to check, launch_run,
-then get_run / get_logs to monitor. Statuses: launching, running, paused, stopping,
+then wait_run / get_logs to monitor (get_gpus helps choosing a machine and
+cuda_visible_devices). Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
 """
 
@@ -49,6 +51,10 @@ OverridesArg = Annotated[
         description="Optional extra arguments appended to the command, "
         "e.g. ['trainer.max_epochs=5', 'seed=2']"
     ),
+]
+SinceArg = Annotated[
+    int | None,
+    Field(description="Log cursor returned by an earlier get_logs / wait_run", ge=0),
 ]
 CudaArg = Annotated[str | None, Field(description="Optional CUDA_VISIBLE_DEVICES, e.g. '0,1'")]
 ParamsArg = Annotated[
@@ -255,18 +261,108 @@ def build_mcp(
         annotations=READ,
         description="Logs of a run as readable text: ANSI sequences stripped, progress "
         "bars reduced to their last state, last lines only (tail, default 200), optional "
-        "regex filtering (grep, case-insensitive). Output truncated if too long.",
+        "regex filtering (grep, case-insensitive). Output truncated if too long. The header "
+        "gives a cursor: pass it as since on the next call to only get the new output.",
     )
     async def get_logs(
         run_id: RunIdArg,
         tail: Annotated[int, Field(description="Number of final lines", ge=1, le=5000)] = 200,
-        grep: Annotated[str | None, Field(description="Regex used to filter lines")] = None,
+        grep: Annotated[str | None, Field(description="Regex filtering the lines")] = None,
+        since: SinceArg = None,
     ) -> str:
         run = await call(svc.get_run(run_id))
-        raw = await call(svc.read_logs(run_id, None if grep else max(tail * 2, 500)))
-        text = readable_logs(raw, tail=tail, grep=grep, max_chars=MAX_LOG_CHARS)
-        header = f"[run {run.id} · {run.status} · {format_duration(elapsed_seconds(run))}]\n"
-        return header + (text if text.strip() else "(no lines)")
+        sl = await call(svc.read_logs_since(run_id, since or 0))
+        text = readable_logs(sl.data, tail=tail, grep=grep, max_chars=MAX_LOG_CHARS)
+        header = (
+            f"[run {run.id} · {run.status} · {format_duration(elapsed_seconds(run))}"
+            f" · cursor {sl.cursor}]\n"
+        )
+        if since and sl.reset:
+            header += "[logs rewritten since this cursor: read from the start]\n"
+        empty = "(no new output)" if since and not sl.reset else "(no lines)"
+        return header + (text if text.strip() else empty)
+
+    @mcp.tool(
+        annotations=READ,
+        description="Wait, without polling, until a run finishes, a log line matches pattern "
+        "(case-insensitive regex, searched in the output written after since, default: "
+        "from now) or timeout_s expires; with until='status_change', also return on any status "
+        "change (e.g. launching → running, running → unreachable). Returns the run, "
+        "wait.reason (finished, match, status_change, timeout), the matching line, a log "
+        "cursor for get_logs / the next wait_run, and the last log lines. Keep timeout_s "
+        "below your client's tool-call timeout; call again to keep waiting.",
+    )
+    async def wait_run(
+        run_id: RunIdArg,
+        ctx: Context,  # type: ignore[type-arg]
+        timeout_s: Annotated[
+            float, Field(description="Maximum wait in seconds (0: check once)", ge=0, le=3600)
+        ] = 120,
+        pattern: Annotated[
+            str | None, Field(description="Regex to wait for in the logs, e.g. 'epoch 3'")
+        ] = None,
+        since: SinceArg = None,
+        until: Annotated[
+            Literal["finished", "status_change"],
+            Field(description="finished (default) or status_change"),
+        ] = "finished",
+        log_tail: Annotated[
+            int, Field(description="Last log lines returned (0: none)", ge=0, le=500)
+        ] = 20,
+    ) -> dict[str, Any]:
+        async def tick(elapsed: float, run: Run) -> None:
+            await ctx.report_progress(
+                elapsed, timeout_s, f"run {run.id} {run.status}, waited {elapsed:.0f} s"
+            )
+
+        res = await call(
+            svc.wait_run(
+                run_id, timeout=timeout_s, pattern=pattern, since=since, until=until, on_tick=tick
+            )
+        )
+        out = run_summary(res.run)
+        sl = await call(svc.read_logs_since(run_id))
+        out["wait"] = {
+            "reason": res.reason,
+            "waited_s": round(res.waited_s, 1),
+            "match": res.match,
+            "cursor": res.cursor if res.cursor is not None else sl.cursor,
+        }
+        if log_tail:
+            out["last_lines"] = readable_logs(sl.data, tail=log_tail, max_chars=4000)
+        return out
+
+    @mcp.tool(
+        annotations=READ,
+        description="GPU state of machines (nvidia-smi on the host): memory used/total, "
+        "utilization, temperature, number of compute processes (all users) and the active "
+        "TrainHub runs pinned to each GPU by CUDA_VISIBLE_DEVICES; active_runs also lists "
+        "runs without restriction (cuda_visible_devices null: every GPU visible). Use it to "
+        "pick a machine and cuda_visible_devices before launch_run. Without machine: every "
+        "machine of the project (or of the inventory), queried in parallel.",
+    )
+    async def get_gpus(
+        machine: Annotated[str | None, Field(description="Machine id")] = None,
+        project: Annotated[
+            str | None, Field(description="Without machine: the machines of this project")
+        ] = None,
+    ) -> list[dict[str, Any]]:
+        if machine is not None:
+            ids = [machine]
+        elif project is not None:
+            ids = (await call(_project_view(svc, project))).machines
+        else:
+            ids = [m.id for m in svc.inventory.machines]
+
+        async def one(mid: str) -> dict[str, Any]:
+            try:
+                return (await svc.machine_gpus(mid)).model_dump(mode="json")
+            except ServiceError as exc:
+                if machine is not None:
+                    raise ToolError(exc.message) from exc
+                return {"machine": mid, "gpus": [], "active_runs": [], "error": exc.message}
+
+        return list(await asyncio.gather(*(one(m) for m in ids)))
 
     if readonly:
         return mcp
@@ -408,5 +504,7 @@ READ_TOOLS = frozenset(
         "list_runs",
         "get_run",
         "get_logs",
+        "wait_run",
+        "get_gpus",
     }
 )

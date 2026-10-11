@@ -357,11 +357,14 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 ## MCP server
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
-`list_runs`, `get_run`, `get_logs`, `pause_run`, `resume_run`, `stop_run`, `restart_run`,
-`relaunch_run`, `close_container`, `delete_run`, `set_project_command`) call the same service
-layer as the interface: a run launched by an agent shows up immediately in the interface, with
-an “agent” icon. `get_logs` returns cleaned text (no ANSI, progress bars reduced to their last
-state, truncated with a note).
+`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `pause_run`, `resume_run`,
+`stop_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
+`set_project_command`) call the same service layer as the interface: a run launched by an agent
+shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text
+(no ANSI, progress bars reduced to their last state, truncated with a note) and a cursor: passed
+back as `since`, only the new output is returned. `wait_run` waits on the server side until a
+run finishes, a log line matches a regex or its status changes (progress notifications while
+waiting). `get_gpus` runs `nvidia-smi` on the machines and shows the TrainHub runs on each GPU.
 
 ```bash
 # Streamable HTTP (running server)

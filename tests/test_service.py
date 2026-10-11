@@ -16,6 +16,7 @@ from trainhub.service import (
     RunService,
     Selection,
     UiState,
+    UnreachableError,
 )
 
 from .helpers import SEL, make_service, wait_for
@@ -526,3 +527,69 @@ async def test_params_saved_remembered_and_relaunched(svc: RunService) -> None:
     assert again.params == run.params and again.venv_id == "system"
     with pytest.raises(InvalidRequestError, match="tag"):
         await svc.preview(SEL.model_copy(update={"params": {"tag": "'unclosed"}}))
+
+
+async def test_read_logs_since_cursor(svc: RunService) -> None:
+    run = await svc.launch(SEL, wait=True)
+    await asyncio.sleep(0.3)
+    first = await svc.read_logs_since(run.id)
+    assert first.start == 0 and first.cursor == len(first.data) > 0 and not first.reset
+    await wait_for(lambda: status_is(svc, run.id, RunStatus.SUCCEEDED))
+    await asyncio.sleep(0.3)
+    rest = await svc.read_logs_since(run.id, first.cursor)
+    assert rest.start == first.cursor and rest.data and not rest.reset
+    full = await svc.read_logs(run.id)
+    assert first.data + rest.data == full
+    assert (await svc.read_logs_since(run.id, rest.cursor)).data == b""
+    beyond = await svc.read_logs_since(run.id, len(full) + 10)
+    assert beyond.reset and beyond.start == 0 and beyond.data == full
+
+
+async def test_wait_run(svc: RunService) -> None:
+    run = await svc.launch(SEL, wait=True)
+    timeout = await svc.wait_run(run.id, timeout=0)
+    assert timeout.reason == "timeout" and timeout.run.status is RunStatus.RUNNING
+    match = await svc.wait_run(run.id, timeout=10, pattern=r"epoch\s*2/")
+    assert match.reason == "match" and match.match and "2/" in match.match
+    assert match.cursor is not None
+    ticks: list[float] = []
+
+    async def tick(elapsed: float, _run: object) -> None:
+        ticks.append(elapsed)
+
+    done = await svc.wait_run(run.id, timeout=10, on_tick=tick)
+    assert done.reason == "finished" and done.run.status is RunStatus.SUCCEEDED and ticks
+    again = await svc.wait_run(run.id, timeout=10)
+    assert again.reason == "finished" and again.waited_s < 0.5
+    with pytest.raises(InvalidRequestError, match="invalid regex"):
+        await svc.wait_run(run.id, timeout=1, pattern="(")
+
+
+async def test_wait_run_status_change(svc: RunService) -> None:
+    run = await svc.launch(SEL, wait=True)
+    task = asyncio.create_task(svc.wait_run(run.id, timeout=10, until="status_change"))
+    await asyncio.sleep(0.1)
+    await svc.pause(run.id)
+    res = await task
+    assert res.reason == "status_change" and res.run.status is RunStatus.PAUSED
+    await svc.stop(run.id, wait=True)
+
+
+async def test_machine_gpus(svc: RunService) -> None:
+    idle = await svc.machine_gpus("gpu-01")
+    assert len(idle.gpus) == 4 and idle.error is None and idle.active_runs == []
+    assert all(g.processes == 0 and g.utilization_pct == 0 for g in idle.gpus)
+    pinned = await svc.launch(SEL.model_copy(update={"cuda_visible_devices": "2,3"}), wait=True)
+    free = await svc.launch(SEL, wait=True)
+    busy = await svc.machine_gpus("gpu-01")
+    assert [g.processes for g in busy.gpus] == [1, 0, 1, 1]
+    assert busy.gpus[2].runs == [pinned.id] and busy.gpus[0].runs == []
+    assert busy.gpus[2].memory_used_mib and busy.gpus[2].memory_used_mib > 1000
+    runs = {r.id: r.cuda_visible_devices for r in busy.active_runs}
+    assert runs == {pinned.id: "2,3", free.id: None}
+    assert isinstance(svc.executor, FakeExecutor)
+    svc.executor.forced_state["gpu-02"] = "down"
+    with pytest.raises(UnreachableError):
+        await svc.machine_gpus("gpu-02")
+    svc.executor.settings = svc.executor.settings.model_copy(update={"gpus": 0})
+    assert "nvidia-smi failed" in ((await svc.machine_gpus("gpu-01")).error or "")

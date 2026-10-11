@@ -15,6 +15,8 @@ export type Selection = S["Selection"]
 export type PreviewResult = S["PreviewResult"]
 export type ConfigList = S["ConfigList"]
 export type Health = S["Health"]
+export type MachineGpus = S["MachineGpus"]
+export type GpuView = S["GpuView"]
 
 export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close"
 export type MenuAction = RunAction | "delete"
