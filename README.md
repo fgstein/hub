@@ -376,6 +376,43 @@ claude mcp add --transport http trainhub http://127.0.0.1:8420/mcp --header "Aut
 claude mcp add trainhub -- trainhub mcp --url http://127.0.0.1:8420
 ```
 
+**OpenCode**: `mcp` section of `opencode.json` (or `opencode.jsonc`) at the project root.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    // Streamable HTTP (running server)
+    "trainhub": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8420/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+With a token, add the header (read from the environment) and disable OpenCode's automatic
+OAuth detection:
+
+```jsonc
+"trainhub": {
+  "type": "remote",
+  "url": "http://127.0.0.1:8420/mcp",
+  "headers": { "Authorization": "Bearer {env:TRAINHUB_TOKEN}" },
+  "oauth": false
+}
+```
+
+Or over stdio (relays to the running server; `TRAINHUB_TOKEN` is read from the environment):
+
+```jsonc
+"trainhub": {
+  "type": "local",
+  "command": ["trainhub", "mcp", "--url", "http://127.0.0.1:8420"]
+}
+```
+
 `TRAINHUB_MCP_READONLY=1` only exposes the read-only tools.
 
 ---
