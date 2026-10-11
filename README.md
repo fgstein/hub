@@ -305,6 +305,7 @@ make test      # pytest + vitest
 make e2e       # Playwright (fake mode)
 make build     # front end + Python package
 make image     # trainhub:latest Docker image
+make zip       # ../trainhubX.Y.Z.zip of the repo, without git-ignored files
 ```
 
 The Docker (`tests/test_local_docker.py`) and SSH (`tests/test_sim_ssh.py`) integration tests

@@ -6,7 +6,7 @@ PORT ?= 8420
 
 export TRAINHUB_PORT := $(PORT)
 
-.PHONY: help install dev dev-local dev-sim backend backend-local backend-sim web test test-py test-web e2e lint lint-py lint-web typecheck format build build-web image fake-train-image sim-up sim-down sim-keys openapi clean
+.PHONY: help install dev dev-local dev-sim backend backend-local backend-sim web test test-py test-web e2e lint lint-py lint-web typecheck format build build-web image fake-train-image sim-up sim-down sim-keys openapi zip clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -57,17 +57,20 @@ e2e: build-web  ## Playwright flows (fake mode)
 lint: lint-py lint-web  ## ruff, mypy, eslint/tsc
 
 lint-py:
-	$(UV) run ruff check src tests dev
-	$(UV) run ruff format --check src tests dev
+	$(UV) run ruff check src tests dev scripts
+	$(UV) run ruff format --check src tests dev scripts
 	$(UV) run mypy
 
 lint-web:
 	cd web && $(NPM) run lint && $(NPM) run typecheck
 
 format:  ## Format the code
-	$(UV) run ruff format src tests dev
-	$(UV) run ruff check --fix src tests dev
+	$(UV) run ruff format src tests dev scripts
+	$(UV) run ruff check --fix src tests dev scripts
 	cd web && $(NPM) run format
+
+zip:  ## Zip the repository without ignored files (../trainhubX.Y.Z.zip)
+	$(UV) run python scripts/make_zip.py
 
 openapi:  ## Regenerate web/src/lib/api-types.ts from the OpenAPI
 	$(UV) run python -m trainhub.api.export_openapi web/openapi.json
