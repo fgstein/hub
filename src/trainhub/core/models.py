@@ -133,11 +133,10 @@ class DockerOptions(_Strict):
 
 
 class ConfigDiscover(_Strict):
-    """Recursive discovery of Hydra configs (``find``) under a root, on the chosen machine.
+    """Recursive discovery of config files (``find``) under a root, on the chosen machine.
 
     A config is identified by its path relative to the root, without extension
-    (e.g. ``experiments/unet_large``), which matches Hydra's ``--config-name`` when
-    ``config_path`` points to the root. ``{config_name}`` gives the basename only.
+    (e.g. ``experiments/unet_large``). ``{config_name}`` gives the basename only.
     """
 
     path: str = Field(

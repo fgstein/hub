@@ -45,7 +45,7 @@ projects:
       # keep_alive: false        # default true: the container stays started when the command
       #                          # finishes (shell from TrainHub, “Close container”)
     configs:
-      # Root of the Hydra configs on the chosen machine (host side). Every *.yaml file
+      # Root of the config files on the chosen machine (host side). Every *.yaml file
       # under this root (recursively) is offered as a tree.
       # A config = relative path without extension, e.g. experiments/unet_large
       # → {config} = experiments/unet_large, {config_name} = unet_large.

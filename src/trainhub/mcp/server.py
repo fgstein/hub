@@ -21,9 +21,9 @@ from ..service import RunService, ServiceError, allowed_actions
 from ..service.schemas import Selection
 
 INSTRUCTIONS = """\
-TrainHub launches and monitors Hydra trainings on remote GPU machines
+TrainHub launches and monitors training commands on remote GPU machines
 (ssh → docker → venv → command). A run is defined by 5 choices: project, machine, Docker
-image, Python venv and Hydra config. Recommended flow: list_projects, then
+image, Python venv and config file. Recommended flow: list_projects, then
 list_resources and list_configs for a project, preview_command to check, launch_run,
 then get_run / get_logs to monitor. Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
@@ -42,10 +42,13 @@ RunIdArg = Annotated[str, Field(description="Short run id, e.g. r7f3k2")]
 MachineArg = Annotated[str, Field(description="Machine id (see list_resources)")]
 ImageArg = Annotated[str, Field(description="Docker image id (see list_resources)")]
 VenvArg = Annotated[str, Field(description="Venv id (see list_resources)")]
-ConfigArg = Annotated[str, Field(description="Hydra config name (see list_configs)")]
+ConfigArg = Annotated[str, Field(description="Config identifier (see list_configs)")]
 OverridesArg = Annotated[
     list[str] | None,
-    Field(description="Optional Hydra overrides, e.g. ['trainer.max_epochs=5', 'seed=2']"),
+    Field(
+        description="Optional extra arguments appended to the command, "
+        "e.g. ['trainer.max_epochs=5', 'seed=2']"
+    ),
 ]
 CudaArg = Annotated[str | None, Field(description="Optional CUDA_VISIBLE_DEVICES, e.g. '0,1'")]
 ParamsArg = Annotated[
@@ -171,7 +174,7 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Hydra configs available for a project. A config is the path of the "
+        description="Configs available for a project. A config is the path of the "
         "YAML file relative to the project's configs root, without extension (e.g. "
         "'experiments/unet_large'), discovered recursively on the machine (first allowed "
         "machine if omitted; 60 s cache). run_counts gives, for configs already used, "

@@ -32,7 +32,7 @@ export interface Draft {
   venv: string | null
   config: string | null
   cuda: string
-  /** Run-specific Hydra overrides (argument line, split as a shell would). */
+  /** Run-specific extra arguments (overrides) (argument line, split as a shell would). */
   overrides: string
   /** Values of the free command parameters (``{name}``), by name. */
   params: Record<string, string>

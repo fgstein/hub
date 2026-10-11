@@ -199,7 +199,11 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
         metavar="NAME=VALUE",
         help="Free command parameter ({name}), repeatable",
     )
-    p.add_argument("overrides", nargs="*", help="Hydra overrides (e.g. trainer.max_epochs=5)")
+    p.add_argument(
+        "overrides",
+        nargs="*",
+        help="Extra arguments appended to the command (e.g. Hydra overrides trainer.max_epochs=5)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

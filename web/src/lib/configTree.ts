@@ -1,5 +1,5 @@
 /**
- * Hydra config tree: a config is a path relative to the root, without extension
+ * Config tree: a config is a path relative to the root, without extension
  * (e.g. "experiments/sweep/unet"). Pure, tested functions.
  */
 

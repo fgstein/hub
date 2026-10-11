@@ -356,7 +356,7 @@ export interface components {
             config: string;
             /**
              * Overrides
-             * @description Optional Hydra overrides
+             * @description Optional extra arguments appended to the command
              */
             overrides?: string[];
             /**
@@ -610,7 +610,7 @@ export interface components {
             config: string;
             /**
              * Overrides
-             * @description Optional Hydra overrides
+             * @description Optional extra arguments appended to the command
              */
             overrides?: string[];
             /**

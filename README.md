@@ -1,46 +1,264 @@
 # TrainHub
 
-TrainHub launches and monitors [Hydra](https://hydra.cc) trainings on remote machines, from a
-web interface, an MCP server (for agents) or plain Python.
+TrainHub launches and monitors training commands on remote machines, from a web interface, an
+MCP server (for agents) or plain Python.
 
 Each run is built from 4 choices (**machine**, **Docker image**, **venv**, **config**) and runs
 the chain:
 
 ```
-ssh machine → docker run -d → source venv → cd workdir → python train.py --config-name XXX
+ssh machine → docker run -d → source venv → cd workdir → <your command, with {config} filled in>
 ```
 
-When the command finishes, the container **stays started** (run status: succeeded or failed
-depending on the exit code): you can open a shell in it from the interface, then close it
-yourself (“Close container”). Can be disabled per project with `docker.keep_alive: false`.
+The command is yours: any script taking a config file works. [Hydra](https://hydra.cc) projects
+are a common case, see the [examples](#examples).
 
-- Projects as tabs, each with its own editable generic command. Placeholders filled in by
-  TrainHub: `{config}`, `{config_name}`, `{run_id}` (identifier generated at launch, e.g.
-  `rn3ceg`), `{machine}`, `{project}`. **Any other `{name}` is a run parameter**: the draft
-  shows one field per parameter (e.g. `python train.py --config-name {config} {options}
-  --my_option {option2}`). The value is split as a shell would (`a=1 b=2` = two arguments,
-  `"a b"` = a single one), each word is escaped, an empty field inserts nothing; the last values
-  are remembered per project.
-- Venv chosen among those of the inventory, plus **`system`**, always offered: no venv
-  activated (the image's Python, or `uv run …` in the command).
-- Live monitoring: status, elapsed time, logs streamed into an xterm.js terminal (ANSI colors, tqdm bars).
-- Logs of **every** run saved as they come in `$TRAINHUB_DATA_DIR/logs/<run>.log`: still shown
-  and downloadable after the container is closed or deleted, a machine outage or a TrainHub
+## Features
+
+- **Projects as tabs**, each with its own generic command, editable from the interface.
+- **Config picker**: config files are discovered on the machine and shown as a tree, with the
+  number of runs already launched on each one.
+- **Run parameters**: any `{name}` in the command that is not a built-in placeholder becomes a
+  text field in the launch form.
+- **Live monitoring**: status, elapsed time, logs streamed into an xterm.js terminal (ANSI
+  colors, progress bars).
+- **Saved logs**: every run's logs are written to `$TRAINHUB_DATA_DIR/logs/<run>.log` as they
+  come, and stay available after the container is deleted, a machine outage or a TrainHub
   restart.
-- Command of each run visible in its panel: resolved generic command, or full command (ssh +
-  `docker run` + script, including the project's Docker options).
-- Interactive shell in a run's container (`docker exec -it`, venv activated, in the workdir),
-  “shell” tab of the panel.
-- Hydra overrides appended to the command through the API, MCP and the CLI
-  (`trainhub launch … trainer.max_epochs=5`). In the interface, use a parameter (`… {options}`);
-  the “overrides” field only shows up to relaunch a run that had some.
-- Control: pause, resume, stop, restart, relaunch (opens a prefilled draft), closing the kept
-  container, deletion.
-- The same actions for an agent through MCP (Streamable HTTP on `/mcp`, or stdio with `trainhub mcp`).
-- Development and tests without a GPU thanks to the `fake` (in-memory simulation) and `local` (local Docker) modes.
+- **Kept container**: when the command finishes, the container stays started (status succeeded
+  or failed from the exit code) so that you can open a shell in it, then close it yourself.
+- **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete.
+- **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
+  + script).
+- **Agents**: the same actions over MCP (Streamable HTTP on `/mcp`, or stdio with `trainhub mcp`).
+- **No GPU needed for development**: `fake` (in-memory simulation) and `local` (local Docker)
+  modes.
 
 The original specification is issue #1 of the repository; choices and deviations are listed in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
+---
+
+## Configuration
+
+TrainHub is configured by two things:
+
+1. **The inventory** (`inventory.yaml`): machines, images, venvs and projects. Read-only for
+   TrainHub, edited by you.
+2. **Environment variables**: server settings (port, token, data directory…), see
+   [Environment variables](#environment-variables).
+
+The inventory is validated at startup with readable errors (file, line, field) and
+**hot-reloaded** when it changes. If the new file is invalid, the previous inventory stays active
+and the error is shown in the page footer. A full commented example is in
+[`inventory.example.yaml`](inventory.example.yaml).
+
+What you change from the interface (project command, open tabs, last selections, runs) is stored
+in a SQLite database, `$TRAINHUB_DATA_DIR/trainhub.sqlite`, not in the inventory.
+
+### Where each path lives
+
+A run involves two filesystems, and the inventory mixes paths from both:
+
+| Field                       | Resolved on                     | Used by                          |
+|-----------------------------|---------------------------------|----------------------------------|
+| `projects[].configs.root`   | the **machine** (host, over SSH) | `find`, to list the configs      |
+| `projects[].docker.volumes` | `host_path:container_path`      | `docker run -v`                  |
+| `projects[].workdir`        | the **container**               | `cd` before the command          |
+| `venvs[].path`              | the **container**               | `source <path>/bin/activate`     |
+
+So the configs root must also be mounted in the container (through `volumes`, or baked into the
+image) for your command to read the files. Mounting a directory at the same path on both sides
+keeps things simple.
+
+### Machines
+
+```yaml
+machines:
+  - id: gpu-01                  # identifier used everywhere (letters, digits, _ . -)
+    label: GPU 01 (4×A100)      # optional: display name
+    host: gpu-01.lab.local      # hostname or alias from ~/.ssh/config
+    user: alice                 # optional
+    port: 22                    # optional
+```
+
+Commands run through the system `ssh` binary, so `~/.ssh/config`, the SSH agent and jump hosts
+all apply. `host: localhost` (without `user`/`port`) runs on the TrainHub host, without SSH.
+
+### Images
+
+```yaml
+images:
+  - id: torch-2.4
+    image: registry.lab/ml/torch:2.4-cuda12   # pulled by docker run on the machine if missing
+```
+
+### Venvs
+
+```yaml
+venvs:
+  - id: main
+    path: /opt/venvs/main       # path INSIDE the container
+  - id: exp
+    path: /opt/venvs/exp
+    images: [torch-nightly]     # optional: only offered with these images
+```
+
+A **`system`** venv is always offered: nothing is activated (the image's Python, or `uv run …`
+in the command).
+
+### Projects
+
+A project is a tab of the interface: a command, where to run it, and where its configs are.
+
+```yaml
+projects:
+  - id: segmentation
+    label: Segmentation                         # optional
+    command: python train.py --config {config}  # must contain {config}
+    workdir: /workspace/seg                     # optional: cd before the command (container)
+    machines: [gpu-01, gpu-02]                  # optional: allowed subset (default: all)
+    images: [torch-2.4]                         # optional, same
+    venvs: [main]                               # optional, same (system is always added)
+    docker:                                     # optional: docker run options
+      gpus: all                                 # --gpus
+      shm_size: 16g                             # --shm-size
+      volumes: [/data:/data:ro, /home/alice/seg:/workspace/seg]
+      env: {WANDB_MODE: online}
+      extra_args: ["--ipc=host"]                # any other docker run argument
+      tty: true                                 # default true: -t (colors, progress bars)
+      stop_timeout: 30                          # default 30: docker stop -t
+      keep_alive: true                          # default true: keep the container at the end
+    configs:
+      root: /home/alice/seg/configs             # configs root, on the machine
+      pattern: "*.yaml"                         # optional (default *.yaml)
+      exclude: ["outputs/*"]                    # optional: relative paths to ignore (glob)
+      max_depth: 10                             # optional
+      # static: [baseline]                      # optional: configs listed by hand
+```
+
+#### The command and its placeholders
+
+The command is a shell line run with `bash -lc` in the container. TrainHub fills in these
+placeholders, each value escaped with `shlex.quote`:
+
+| Placeholder     | Value                                                                 |
+|-----------------|-----------------------------------------------------------------------|
+| `{config}`      | Chosen config: path relative to `configs.root`, **without extension** |
+| `{config_name}` | Basename of the config only                                           |
+| `{run_id}`      | Short run identifier generated at launch, e.g. `rn3ceg`               |
+| `{machine}`     | Machine id                                                            |
+| `{project}`     | Project id                                                            |
+
+For `configs.root: /home/alice/seg/configs` and the file
+`/home/alice/seg/configs/experiments/unet_large.yaml`:
+`{config}` = `experiments/unet_large`, `{config_name}` = `unet_large`.
+
+**Any other `{name}` is a run parameter.** The launch form shows one field per parameter, e.g.
+`python train.py --config {config} {options} --seed {seed}`. A value is split as a shell would
+(`a=1 b=2` gives two arguments, `"a b"` a single one), each word is escaped, and an empty field
+inserts nothing. The last values are remembered per project.
+
+`${VAR}` is left untouched (shell variables, or interpolations of tools such as OmegaConf).
+
+Extra arguments can also be appended to the command at launch through the API, MCP and the CLI
+(`trainhub launch … lr=0.1 epochs=5`). In the interface, use a run parameter (`… {options}`).
+
+#### Config discovery
+
+Every file matching `pattern` under `configs.root` is listed (recursively, `find` on the chosen
+machine, 60 s cache, ↻ button to refresh) and shown as a tree: click the file you want. Each file
+(and each directory, cumulatively) shows the number of runs already launched on it, with a green
+dot if some are running. Hidden files and directories (`.git`, `.hydra`…) are ignored.
+
+`root` is either absolute or relative to the SSH user's home (`~/…`). It is **not** relative to
+`workdir`, which is a container path. Use an absolute path.
+
+Pick `root` so that `{config}` is exactly what your command expects: the identifier is always
+relative to `root` and has no extension. Add the extension back in the command if needed
+(`--config configs/{config}.yaml`).
+
+### Examples
+
+#### Plain script taking a file path
+
+`train.py --config path/to/file.yaml`, run from `/workspace/proj`, configs in
+`/workspace/proj/configs`:
+
+```yaml
+- id: proj
+  command: python train.py --config configs/{config}.yaml
+  workdir: /workspace/proj
+  docker:
+    volumes: [/home/alice/proj:/workspace/proj]
+  configs:
+    root: /home/alice/proj/configs
+```
+
+#### Hydra: primary config (`--config-name`)
+
+With `@hydra.main(config_path="configs", …)` in `train.py`, `--config-name` takes the path
+relative to `config_path`, without extension. So `root` is the `configs` directory itself:
+
+```yaml
+- id: segmentation
+  command: python train.py --config-name {config} hydra.run.dir=outputs/{run_id}
+  workdir: /home/alice/seg
+  docker:
+    volumes: [/home/alice/seg:/home/alice/seg]
+  configs:
+    root: /home/alice/seg/configs
+    exclude: ["hydra/*", "model/*", "data/*"]   # config groups, not primary configs
+```
+
+A primary config in a subdirectory must start with `# @package _global_`.
+
+#### Hydra: config group (`exp=…`)
+
+The project is launched with `python run.py exp=exp1/run1`, where `exp` is a Hydra config group:
+
+```
+/this/is/a/path/trainer/
+├── run.py                      # @hydra.main(config_path="configs", config_name="config")
+└── configs/
+    ├── config.yaml
+    └── exp/
+        └── exp1/
+            └── run1.yaml       # selected with exp=exp1/run1
+```
+
+A group option is named relative to the **group directory**, without extension. So `root` is
+`configs/exp`, not `configs`:
+
+```yaml
+- id: trainer
+  command: python run.py exp={config}
+  workdir: /this/is/a/path/trainer
+  docker:
+    volumes: [/this/is/a/path/trainer:/this/is/a/path/trainer]
+  configs:
+    root: /this/is/a/path/trainer/configs/exp
+```
+
+Choosing `exp1/run1.yaml` in the tree gives `{config}` = `exp1/run1`, and the command
+`python run.py exp=exp1/run1`. With `root: …/configs`, you would get `exp=exp/exp1/run1`, which
+Hydra rejects.
+
+`workdir` only matters for launching `run.py` (and for where Hydra writes `outputs/`): Hydra
+resolves `config_path` from the location of `run.py`, not from the current directory.
+
+### Kept container and logs
+
+With `keep_alive` (default), the script launched in the container runs the command in the
+background, forwards `SIGTERM` (“Stop” = `docker stop`), then, when the command finishes, writes
+its code to `/tmp/.trainhub-exit` and keeps the container started. A healthcheck
+(`--health-cmd`, every 3 s) then becomes `unhealthy`: this is how TrainHub detects the end and
+reads the exit code, without any extra command. Closing the container makes it exit with the
+command's code. Set `docker.keep_alive: false` to let the container exit with the command.
+
+Logs are followed for every active run and written to `$TRAINHUB_DATA_DIR/logs/<run>.log`
+(`<run>.done` once the backup is complete). If the Docker logs come back shorter than the backup
+(rotation), the old version is kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
 ---
 
@@ -54,8 +272,8 @@ make dev       # backend in fake mode (auto reload) + Vite HMR → http://localh
 ```
 
 `make dev` uses `dev/inventory.dev.yaml`: 4 simulated machines (one flaky and one offline),
-3 projects, realistic logs (Hydra banner, resolved config, progress bars, metrics, warnings,
-random failures).
+3 projects, realistic logs (a simulated Hydra training: banner, resolved config, progress bars,
+metrics, warnings, random failures).
 
 Other modes:
 
@@ -80,59 +298,6 @@ make image     # trainhub:latest Docker image
 
 The Docker (`tests/test_local_docker.py`) and SSH (`tests/test_sim_ssh.py`) integration tests
 are skipped automatically if Docker, the test image or the simulated machines are missing.
-
----
-
-## Inventory (`inventory.yaml`)
-
-Resources are declared in a read-only YAML file, validated at startup with readable errors
-(file, line, field) and **hot-reloaded** when it changes (a file that became invalid is ignored:
-the previous inventory stays active and the error is shown in the page footer).
-
-Full commented example: [`inventory.example.yaml`](inventory.example.yaml).
-
-```yaml
-machines:
-  - id: gpu-01
-    host: gpu-01.lab.local      # or an alias from ~/.ssh/config; “localhost” = without SSH
-    user: alice                 # optional
-images:
-  - id: torch-2.4
-    image: registry.lab/ml/torch:2.4-cuda12
-venvs:
-  - id: main
-    path: /opt/venvs/main        # path INSIDE the container
-projects:
-  - id: segmentation
-    command: python train.py --config-name {config}
-    workdir: /workspace/seg
-    docker: {gpus: all, shm_size: 16g, volumes: [/data:/data:ro], tty: true, stop_timeout: 30}
-    configs:
-      root: /home/alice/seg/configs   # root of the Hydra configs on the machine (host side)
-      exclude: ["hydra/*"]            # optional
-```
-
-**Choosing the config.** Every `*.yaml` file under the project root (recursively, through
-`find` on the chosen machine, 60 s cache, ↻ button) is shown as a tree in the draft: click the
-file you want. Each file (and each directory, cumulatively) shows the number of runs already
-launched on that config, with a green dot if some are running. A config is the relative path
-without extension (`experiments/unet_large`): this is what Hydra's `--config-name` expects when
-`config_path` is the root (a primary config in a subdirectory must start with
-`# @package _global_`). The `{config_name}` placeholder gives the basename only (`unet_large`).
-Hidden directories and files (`.hydra`, `.git`…) are ignored.
-
-State that can be changed from the interface (overridden project command, open tabs, last
-selections, runs) lives in a SQLite database (`$TRAINHUB_DATA_DIR/trainhub.sqlite`).
-
-**Kept container and logs.** With `keep_alive` (default), the script launched in the container
-runs the command in the background, forwards `SIGTERM` (“Stop” = `docker stop`, as before),
-then, when the command finishes, writes its code to `/tmp/.trainhub-exit` and keeps the
-container started. A healthcheck (`--health-cmd`, every 3 s) then becomes `unhealthy`: this is
-how TrainHub detects the end and reads the exit code, without any extra command. Closing the
-container makes it exit with the command's code. Logs are followed permanently for every active
-run and written to `$TRAINHUB_DATA_DIR/logs/<run>.log` (`<run>.done` once the backup is
-complete); if the Docker logs come back shorter than the backup (rotation), the old version is
-kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
 ---
 

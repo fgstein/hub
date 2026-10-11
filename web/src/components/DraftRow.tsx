@@ -343,9 +343,9 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                 title={
                   overridesError()
                     ? `Invalid overrides: ${overridesError()}`
-                    : "Hydra overrides of the original run, appended to the command (clear the field to remove them)"
+                    : "Extra arguments of the original run, appended to the command (clear the field to remove them)"
                 }
-                aria-label="Hydra overrides"
+                aria-label="Overrides"
                 spellcheck={false}
                 data-testid="field-overrides"
                 class="h-7 w-72 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none focus:border-line"

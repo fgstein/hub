@@ -21,7 +21,9 @@ class Selection(BaseModel):
     image: str
     venv: str
     config: str
-    overrides: list[str] = Field(default_factory=list, description="Optional Hydra overrides")
+    overrides: list[str] = Field(
+        default_factory=list, description="Optional extra arguments appended to the command"
+    )
     cuda_visible_devices: str | None = Field(
         default=None, description="Value of CUDA_VISIBLE_DEVICES (e.g. '0,1')"
     )

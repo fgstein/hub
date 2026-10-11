@@ -89,7 +89,7 @@ def create_app(
     app = FastAPI(
         title="TrainHub",
         version=__version__,
-        description="Launch and monitor Hydra trainings on remote machines.",
+        description="Launch and monitor training commands on remote machines.",
         lifespan=lifespan,
     )
     app.state.service = svc

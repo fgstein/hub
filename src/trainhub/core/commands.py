@@ -9,7 +9,7 @@ Interpretation levels for a launch over SSH:
    :func:`shlex.join`; the remote login shell splits it back into an argv.
 2. ``docker run … bash -lc SCRIPT``: ``SCRIPT`` is interpreted by ``bash`` inside the
    container. Every value inserted in ``SCRIPT`` (venv path, workdir, placeholders,
-   Hydra overrides) is escaped with :func:`shlex.quote`.
+   extra arguments) is escaped with :func:`shlex.quote`.
 
 The ``docker_*`` functions return the “remote” argv (what runs on the machine);
 :func:`transport` wraps it in ``ssh`` except for a local machine.
@@ -75,7 +75,7 @@ class RunSpec:
     command: str | None = None
     """Generic command (overrides ``project.command``), placeholders unresolved."""
     overrides: tuple[str, ...] = ()
-    """Hydra overrides appended to the command, each one escaped."""
+    """Extra arguments (overrides) appended to the command, each one escaped."""
     cuda_visible_devices: str | None = None
     params: Mapping[str, str] = field(default_factory=dict)
     """Values of the free parameters (non-reserved ``{name}``) of the command."""
@@ -160,7 +160,7 @@ def resolve_command(
 
 
 def resolved_command(spec: RunSpec) -> str:
-    """Resolved generic command, including Hydra overrides."""
+    """Resolved generic command, including extra arguments (overrides)."""
     cmd = resolve_command(
         spec.template,
         config=spec.config,
