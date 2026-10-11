@@ -46,6 +46,8 @@ Spécification : issue #1 (« TrainHub — lanceur d'entraînements Hydra »). C
   code 255 ou délai dépassé = machine injoignable.
 - Exécuteur `fake` : il interprète l'argv docker réellement construit (ce qui teste aussi la
   construction des commandes). Une image dont le nom contient `missing` simule une image absente.
+- Un arrêt impossible (machine injoignable) est abandonné proprement (`stop_requested` remis à
+  faux) : au retour de la machine le run redevient `running` et peut être arrêté à nouveau.
 - `stopped` vs `failed` : un champ interne `stop_requested` (persisté) indique qu'un arrêt vient
   de TrainHub. Champ interne `paused_at` pour le calcul de `paused_total_s`.
 - Un run en base dont le conteneur a disparu passe en `failed` (« conteneur introuvable… »).
@@ -89,6 +91,8 @@ Spécification : issue #1 (« TrainHub — lanceur d'entraînements Hydra »). C
   sélection du projet.
 - Le bouton « + » des brouillons est toujours visible sous les runs actifs ; l'état vide affiche
   un bouton « Nouveau run » mis en avant.
+- Un terminal déplié reste ouvert quand son run passe dans « Terminés » (état mémorisé par run).
+- Un run jamais démarré (échec au lancement) affiche « — » comme durée.
 - Bundle principal ≈ 72 ko gzip ; xterm et ses addons sont chargés à la première ouverture d'un
   terminal (chunk séparé). Vérifié en CI (< 300 ko).
 
