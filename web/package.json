@@ -1,0 +1,42 @@
+{
+  "name": "trainhub-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "lint": "biome check src e2e",
+    "format": "biome check --write src e2e",
+    "typecheck": "tsc --noEmit",
+    "openapi": "openapi-typescript openapi.json -o src/lib/api-types.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@kobalte/core": "^0.13.14",
+    "@solidjs/router": "^0.15.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "solid-js": "^1.9.17"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@playwright/test": "1.56.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.20.5",
+    "jsdom": "^30.1.2",
+    "openapi-typescript": "^7.13.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.3"
+  }
+}
