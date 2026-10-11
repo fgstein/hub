@@ -39,3 +39,13 @@ def setup_logging(level: str = "INFO", *, json_format: bool = True) -> None:
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
     root.propagate = False
+    # Logs d'uvicorn et du SDK MCP au même format.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "mcp"):
+        lg = logging.getLogger(name)
+        lg.handlers[:] = [handler]
+        lg.propagate = False
+        lg.setLevel(
+            max(logging.INFO, logging.getLevelName(level.upper()))
+            if name != "uvicorn.access"
+            else logging.WARNING
+        )

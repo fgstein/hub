@@ -39,8 +39,12 @@ def main(cfg: DictConfig) -> None:
     rng = random.Random(cfg.seed)
     loss = 2.3
     for epoch in range(1, cfg.trainer.max_epochs + 1):
-        bar = tqdm(range(cfg.trainer.steps), desc=f"Epoch {epoch}/{cfg.trainer.max_epochs}",
-                   dynamic_ncols=False, ncols=100)
+        bar = tqdm(
+            range(cfg.trainer.steps),
+            desc=f"Epoch {epoch}/{cfg.trainer.max_epochs}",
+            dynamic_ncols=False,
+            ncols=100,
+        )
         for step in bar:
             if _stop:
                 bar.close()
