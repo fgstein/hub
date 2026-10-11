@@ -425,3 +425,11 @@ export function machineReachable(id: string): boolean | null | undefined {
 const [commandErrors, setCommandErrors] = createStore<Record<string, boolean>>({})
 
 export { commandErrors, setCommandErrors }
+
+/** Terminaux dépliés, par run (conservé quand un run passe dans « Terminés »). */
+const [openTerminals, setOpenTerminals] = createStore<Record<string, boolean>>({})
+
+export { openTerminals }
+export function setTerminalOpen(id: string, open: boolean): void {
+  setOpenTerminals(id, open)
+}

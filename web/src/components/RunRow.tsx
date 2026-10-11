@@ -2,7 +2,14 @@ import { Tooltip } from "@kobalte/core/tooltip"
 import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js"
 import { elapsedSeconds, formatDateTime, formatDuration, pausedSeconds } from "~/lib/format"
 import { isActive } from "~/lib/types"
-import { displayStatus, fullscreenRun, setFullscreenRun, state } from "~/stores/app"
+import {
+  displayStatus,
+  fullscreenRun,
+  openTerminals,
+  setFullscreenRun,
+  setTerminalOpen,
+  state,
+} from "~/stores/app"
 import { now } from "~/stores/clock"
 import { ActionButton } from "./ActionButton"
 import { IconAgent, IconChevronDown } from "./Icons"
@@ -30,7 +37,8 @@ function Tip(props: { content: JSX.Element; children: JSX.Element; class?: strin
 function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; header?: boolean }) {
   const run = () => state.runs[props.id]!
   const status = () => displayStatus(props.id)
-  const elapsed = () => formatDuration(elapsedSeconds(run(), isActive(run().status) ? now() : 0))
+  const elapsed = () =>
+    run().started_at ? formatDuration(elapsedSeconds(run(), isActive(run().status) ? now() : 0)) : "—"
   const paused = () => pausedSeconds(run(), now())
   const inv = () => state.inventory
   const imageFull = () => inv()?.images.find((i) => i.id === run().image_id)?.image ?? run().image_id
@@ -109,8 +117,9 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
 
 export function RunRow(props: { id: string }) {
   const run = () => state.runs[props.id]
-  const [open, setOpen] = createSignal(false)
-  const [mounted, setMounted] = createSignal(false)
+  const open = () => openTerminals[props.id] === true
+  const setOpen = (fn: (o: boolean) => boolean) => setTerminalOpen(props.id, fn(open()))
+  const [mounted, setMounted] = createSignal(open())
   let unmountTimer: ReturnType<typeof setTimeout> | undefined
   const fullscreen = () => fullscreenRun() === props.id
 
@@ -134,30 +143,32 @@ export function RunRow(props: { id: string }) {
         data-run-id={props.id}
         data-status={displayStatus(props.id)}
       >
-        <div class="group relative">
-          <RunLine id={props.id} onToggle={toggle} />
+        <div class="group">
+          <div class="relative">
+            <RunLine id={props.id} onToggle={toggle} />
+            <button
+              type="button"
+              class="absolute bottom-0 left-1/2 flex h-3 w-10 -translate-x-1/2 items-center justify-center text-fg-weaker opacity-40 transition-opacity group-hover:opacity-100"
+              aria-label={open() ? "Replier les logs" : "Déplier les logs"}
+              aria-expanded={open()}
+              onClick={toggle}
+              data-testid="run-toggle"
+            >
+              <IconChevronDown
+                size={12}
+                class={`transition-transform duration-150 ${open() ? "rotate-180" : ""}`}
+              />
+            </button>
+          </div>
           <Show when={(run()!.status === "unreachable" || run()!.status === "failed") && run()!.error}>
             <div
-              class="-mt-2 truncate px-4 pb-1.5 pl-[100px] text-xs text-fg-critical"
+              class="-mt-1 truncate px-4 pb-2 pl-[100px] text-xs text-fg-critical"
               data-testid="run-error"
               title={run()!.error ?? ""}
             >
               {run()!.error}
             </div>
           </Show>
-          <button
-            type="button"
-            class="absolute bottom-0 left-1/2 flex h-3 w-10 -translate-x-1/2 items-center justify-center text-fg-weaker opacity-40 transition-opacity group-hover:opacity-100"
-            aria-label={open() ? "Replier les logs" : "Déplier les logs"}
-            aria-expanded={open()}
-            onClick={toggle}
-            data-testid="run-toggle"
-          >
-            <IconChevronDown
-              size={12}
-              class={`transition-transform duration-150 ${open() ? "rotate-180" : ""}`}
-            />
-          </button>
         </div>
         <div class="th-collapse" data-open={open() ? "" : undefined}>
           <div>

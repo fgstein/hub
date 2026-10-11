@@ -335,3 +335,18 @@ async def test_inventory_hot_reload(tmp_path: Path) -> None:
         assert svc.inventory.project("segmentation").label == "Seg 2"
     finally:
         await svc.close()
+
+
+async def test_stop_on_unreachable_machine_can_be_retried(svc: RunService) -> None:
+    await svc.monitor.stop()
+    run = await svc.launch(SEL, wait=True)
+    fake = svc.executor
+    assert isinstance(fake, FakeExecutor)
+    fake.forced_state["gpu-01"] = "down"
+    failed = await svc.stop(run.id, wait=True)
+    assert failed.status is RunStatus.UNREACHABLE and not failed.stop_requested
+    assert failed.error and "arrêt impossible" in failed.error
+    fake.forced_state["gpu-01"] = "ok"
+    await svc.monitor.poll("gpu-01")
+    assert (await svc.get_run(run.id)).status is RunStatus.RUNNING
+    assert (await svc.stop(run.id, wait=True)).status is RunStatus.STOPPED

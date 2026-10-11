@@ -684,10 +684,13 @@ class RunService:
                     run, cmd.docker_stop(run.container_name, timeout), timeout + ACTION_TIMEOUT_S
                 )
             except ServiceError as exc:
+                # L'arrêt n'a pas eu lieu : on l'oublie pour que le suivi ne reste pas bloqué
+                # en « stopping » au retour de la machine ; l'utilisateur pourra réessayer.
                 await self._update(
                     run,
                     status=RunStatus.UNREACHABLE if isinstance(exc, UnreachableError) else previous,
                     error=f"arrêt impossible : {exc.message}",
+                    stop_requested=False,
                 )
                 return
             if not res.ok:

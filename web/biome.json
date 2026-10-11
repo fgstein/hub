@@ -31,7 +31,8 @@
         "noNonNullAssertion": "off"
       },
       "suspicious": {
-        "noArrayIndexKey": "off"
+        "noArrayIndexKey": "off",
+        "noTemplateCurlyInString": "off"
       },
       "correctness": {
         "useExhaustiveDependencies": "off"
