@@ -1,4 +1,4 @@
-"""Validation d'une sélection (projet, machine, image, venv, config) contre l'inventaire."""
+"""Validation of a selection (project, machine, image, venv, config) against the inventory."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .models import Inventory, command_params
 
 
 class SelectionError(ValueError):
-    """Sélection incompatible avec les restrictions de l'inventaire."""
+    """Selection incompatible with the inventory restrictions."""
 
 
 def make_spec(
@@ -26,10 +26,10 @@ def make_spec(
     cuda_visible_devices: str | None = None,
     params: Mapping[str, str] | None = None,
 ) -> RunSpec:
-    """Construit un :class:`RunSpec` en vérifiant les ressources autorisées pour le projet.
+    """Build a :class:`RunSpec`, checking the resources allowed for the project.
 
-    Lève :class:`~trainhub.core.models.UnknownResourceError` ou :class:`SelectionError`
-    avec un message actionnable (valeurs possibles).
+    Raises :class:`~trainhub.core.models.UnknownResourceError` or :class:`SelectionError`
+    with an actionable message (possible values).
     """
     proj = inv.project(project)
     m = inv.machine(machine)
@@ -40,26 +40,24 @@ def make_spec(
     unknown = sorted(set(params or {}) - set(wanted))
     if unknown:
         raise SelectionError(
-            f"paramètre(s) absent(s) de la commande : {', '.join(unknown)} ; "
-            f"paramètres de la commande : {', '.join(wanted) or 'aucun'}"
+            f"parameter(s) not in the command: {', '.join(unknown)}; "
+            f"command parameters: {', '.join(wanted) or 'none'}"
         )
     machines = [x.id for x in inv.allowed_machines(proj)]
     if m.id not in machines:
         raise SelectionError(
-            f"machine '{m.id}' non autorisée pour le projet '{proj.id}' ; "
-            f"autorisées : {', '.join(machines)}"
+            f"machine '{m.id}' not allowed for project '{proj.id}'; allowed: {', '.join(machines)}"
         )
     images = [x.id for x in inv.allowed_images(proj)]
     if i.id not in images:
         raise SelectionError(
-            f"image '{i.id}' non autorisée pour le projet '{proj.id}' ; "
-            f"autorisées : {', '.join(images)}"
+            f"image '{i.id}' not allowed for project '{proj.id}'; allowed: {', '.join(images)}"
         )
     venvs = [x.id for x in inv.allowed_venvs(proj, i.id)]
     if v.id not in venvs:
         raise SelectionError(
-            f"venv '{v.id}' non disponible pour le projet '{proj.id}' avec l'image '{i.id}' ; "
-            f"disponibles : {', '.join(venvs) or 'aucun'}"
+            f"venv '{v.id}' not available for project '{proj.id}' with image '{i.id}'; "
+            f"available: {', '.join(venvs) or 'none'}"
         )
     cvd = cuda_visible_devices.strip() if cuda_visible_devices else None
     return RunSpec(

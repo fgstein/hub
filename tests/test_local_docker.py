@@ -1,4 +1,4 @@
-"""Intégration en mode local : vraies commandes docker (ignoré si Docker est indisponible)."""
+"""Local mode integration: real docker commands (skipped if Docker is unavailable)."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _docker_ok() -> bool:
 
 pytestmark = [
     pytest.mark.docker,
-    pytest.mark.skipif(not _docker_ok(), reason=f"Docker ou l'image {IMAGE} indisponible"),
+    pytest.mark.skipif(not _docker_ok(), reason=f"Docker or the {IMAGE} image unavailable"),
 ]
 
 
@@ -64,7 +64,7 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
         await wait_for(finished, timeout=30)
         assert (await svc.get_run(run.id)).exit_code == 0
 
-        # pause / reprise / arrêt (SIGTERM géré par train.py → 143)
+        # pause / resume / stop (SIGTERM handled by train.py → 143)
         long = await svc.launch(
             sel.model_copy(update={"config": "long", "overrides": []}), wait=True
         )
@@ -80,7 +80,7 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
         assert stopped.status is RunStatus.STOPPED and stopped.exit_code == 143
         assert b"SIGTERM" in await svc.read_logs(long.id)
 
-        # échec à l'époque 2
+        # failure at epoch 2
         broken = await svc.launch(
             sel.model_copy(update={"config": "broken", "overrides": []}), wait=True
         )
@@ -92,7 +92,7 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
         await wait_for(failed, timeout=30)
         assert (await svc.get_run(broken.id)).exit_code == 1
 
-        # config dans un sous-dossier, découverte récursivement
+        # config in a subdirectory, discovered recursively
         cfg = await svc.get_configs("fake", "localhost")
         assert "experiments/sweep/short" in cfg.configs
         nested = await svc.launch(

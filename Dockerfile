@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# Image TrainHub : front compilé (Vite) + paquet Python + openssh-client, utilisateur non root.
+# TrainHub image: built front end (Vite) + Python package + openssh-client, non-root user.
 
-# --- 1. front -------------------------------------------------------------------------
+# --- 1. front end -------------------------------------------------------------------
 FROM node:22-slim AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
@@ -9,7 +9,7 @@ RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-# --- 2. paquet Python -----------------------------------------------------------------
+# --- 2. Python package ----------------------------------------------------------------
 FROM python:3.12-slim AS wheel
 WORKDIR /src
 RUN pip install --no-cache-dir build
@@ -17,13 +17,13 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m build --wheel --outdir /dist
 
-# --- 3. image finale ------------------------------------------------------------------
+# --- 3. final image -------------------------------------------------------------------
 FROM python:3.12-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-client ca-certificates tini \
  && rm -rf /var/lib/apt/lists/*
 
-# Utilisateur non root ; ~/.ssh inscriptible (sockets ControlMaster).
+# Non-root user; writable ~/.ssh (ControlMaster sockets).
 ARG UID=1000
 ARG GID=1000
 RUN groupadd -g ${GID} th \

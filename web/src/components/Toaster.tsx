@@ -21,7 +21,7 @@ export function Toaster() {
               type="button"
               class="mt-0.5 text-icon hover:text-icon-hover"
               onClick={() => dismiss(t.id)}
-              aria-label="Fermer"
+              aria-label="Close"
             >
               <IconClose size={12} />
             </button>

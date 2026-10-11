@@ -1,4 +1,4 @@
-"""Base des exécuteurs à sous-processus (``local`` et ``ssh``)."""
+"""Base of subprocess executors (``local`` and ``ssh``)."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ log = logging.getLogger("trainhub.exec")
 
 
 class ProcessLogStream(LogStream):
-    """Sortie (stdout + stderr fusionnés) d'un processus local."""
+    """Output (stdout + stderr merged) of a local process."""
 
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
@@ -72,15 +72,15 @@ def _set_winsize(fd: int, cols: int, rows: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def _take_controlling_tty() -> None:  # pragma: no cover - exécuté dans le processus fils
-    # Après setsid (start_new_session) : le PTY devient le terminal de contrôle, pour que
-    # ssh/docker reçoivent SIGWINCH lors d'un redimensionnement.
+def _take_controlling_tty() -> None:  # pragma: no cover - runs in the child process
+    # After setsid (start_new_session): the PTY becomes the controlling terminal, so that
+    # ssh/docker receive SIGWINCH on resize.
     with contextlib.suppress(OSError):
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 class PtyShellSession(ShellSession):
-    """Processus local (``ssh -tt … docker exec -it`` ou ``docker exec -it``) relié à un PTY."""
+    """Local process (``ssh -tt … docker exec -it`` or ``docker exec -it``) attached to a PTY."""
 
     def __init__(self, proc: asyncio.subprocess.Process, master: int) -> None:
         self._proc = proc
@@ -96,7 +96,7 @@ class PtyShellSession(ShellSession):
             data = os.read(self._master, 65536)
         except BlockingIOError:
             return
-        except OSError:  # EIO : le processus a fermé le terminal
+        except OSError:  # EIO: the process closed the terminal
             data = b""
         if not data:
             self._loop.remove_reader(self._master)
@@ -139,9 +139,9 @@ class PtyShellSession(ShellSession):
 
 
 class SubprocessExecutor(Executor):
-    """Lance les commandes via ``asyncio.create_subprocess_exec`` (jamais de shell local)."""
+    """Run commands through ``asyncio.create_subprocess_exec`` (never a local shell)."""
 
-    #: Code de retour signalant une erreur de transport (255 pour ssh).
+    #: Exit code signaling a transport error (255 for ssh).
     transport_error_code: int | None = None
 
     def _env(self) -> dict[str, str] | None:
@@ -160,13 +160,13 @@ class SubprocessExecutor(Executor):
                 env=self._env(),
             )
         except FileNotFoundError as exc:
-            raise ExecutorError(f"binaire introuvable : {argv[0]}") from exc
+            raise ExecutorError(f"binary not found: {argv[0]}") from exc
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
         except TimeoutError as exc:
             await _terminate(proc)
             raise MachineUnreachableError(
-                machine.id, f"délai dépassé ({timeout:.0f} s) pour {remote[:2]}"
+                machine.id, f"timed out ({timeout:.0f} s) for {remote[:2]}"
             ) from exc
         except asyncio.CancelledError:
             await _terminate(proc)
@@ -183,7 +183,7 @@ class SubprocessExecutor(Executor):
         return res
 
     def shell_argv(self, machine: Machine, remote: Sequence[str]) -> list[str]:
-        """argv local d'un shell interactif (``ssh -tt`` pour les machines distantes)."""
+        """Local argv of an interactive shell (``ssh -tt`` for remote machines)."""
         return self.full_argv(machine, remote)
 
     async def open_shell(self, machine: Machine, remote: Sequence[str]) -> ShellSession:
@@ -202,10 +202,10 @@ class SubprocessExecutor(Executor):
             )
         except FileNotFoundError as exc:
             os.close(master)
-            raise ExecutorError(f"binaire introuvable : {argv[0]}") from exc
+            raise ExecutorError(f"binary not found: {argv[0]}") from exc
         finally:
             os.close(slave)
-        log.info("shell ouvert", extra={"machine": machine.id, "argv": list(remote)})
+        log.info("shell opened", extra={"machine": machine.id, "argv": list(remote)})
         return PtyShellSession(proc, master)
 
     async def stream(self, machine: Machine, remote: Sequence[str]) -> LogStream:
@@ -220,5 +220,5 @@ class SubprocessExecutor(Executor):
                 env=self._env(),
             )
         except FileNotFoundError as exc:
-            raise ExecutorError(f"binaire introuvable : {argv[0]}") from exc
+            raise ExecutorError(f"binary not found: {argv[0]}") from exc
         return ProcessLogStream(proc)

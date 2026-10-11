@@ -9,7 +9,7 @@ import type {
   UiState,
 } from "./types"
 
-/** Erreur métier renvoyée par l'API (message lisible, affiché tel quel). */
+/** Business error returned by the API (readable message, shown as is). */
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -29,11 +29,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       credentials: "same-origin",
     })
   } catch {
-    throw new ApiError("serveur TrainHub injoignable", 0)
+    throw new ApiError("TrainHub server unreachable", 0)
   }
   if (res.status === 401) {
     window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`
-    throw new ApiError("authentification requise", 401)
+    throw new ApiError("authentication required", 401)
   }
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`
@@ -41,7 +41,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       const data = await res.json()
       if (typeof data?.detail === "string") detail = data.detail
     } catch {
-      /* corps non JSON */
+      /* non-JSON body */
     }
     throw new ApiError(detail, res.status)
   }

@@ -1,4 +1,4 @@
-"""Logs structurés du serveur (une ligne JSON par événement)."""
+"""Structured server logs (one JSON line per event)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ _RESERVED = set(vars(logging.makeLogRecord({}))) | {"message", "asctime", "color
 
 
 class JsonFormatter(logging.Formatter):
-    """Formate chaque enregistrement en JSON, avec les champs passés via ``extra``."""
+    """Format each record as JSON, with the fields passed through ``extra``."""
 
     def format(self, record: logging.LogRecord) -> str:
         data: dict[str, Any] = {
@@ -30,7 +30,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(level: str = "INFO", *, json_format: bool = True) -> None:
-    """Configure le logger ``trainhub`` (JSON sur stderr)."""
+    """Configure the ``trainhub`` logger (JSON on stderr)."""
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
         JsonFormatter() if json_format else logging.Formatter("%(levelname)s %(name)s %(message)s")
@@ -39,7 +39,7 @@ def setup_logging(level: str = "INFO", *, json_format: bool = True) -> None:
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
     root.propagate = False
-    # Logs d'uvicorn et du SDK MCP au même format.
+    # uvicorn and MCP SDK logs in the same format.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "mcp"):
         lg = logging.getLogger(name)
         lg.handlers[:] = [handler]

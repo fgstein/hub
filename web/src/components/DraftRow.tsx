@@ -35,7 +35,7 @@ interface FieldProps {
   autofocus?: boolean
 }
 
-/** Une liste avec recherche ; un label fixe si une seule option est possible. */
+/** A searchable list; a fixed label if only one option is possible. */
 function Field(props: FieldProps) {
   let controlEl: HTMLDivElement | undefined
   const single = () => props.options.length === 1 && !props.loading && !props.onRefresh
@@ -98,8 +98,8 @@ function Field(props: FieldProps) {
               type="button"
               tabIndex={-1}
               class="shrink-0 px-0.5 text-icon hover:text-icon-hover"
-              title="Rafraîchir la liste (découverte sur la machine)"
-              aria-label="Rafraîchir les configs"
+              title="Refresh the list (discovery on the machine)"
+              aria-label="Refresh configs"
               onClick={(e) => {
                 e.stopPropagation()
                 props.onRefresh?.()
@@ -121,17 +121,15 @@ function Field(props: FieldProps) {
           <Combobox.Content
             class="menu-content z-[70] min-w-[180px] max-w-[420px] rounded-md bg-float p-0.5 shadow-float outline-none"
             onCloseAutoFocus={(e) => {
-              // Fermée par un clic sur un autre champ : ne pas lui reprendre le focus (sinon
-              // la saisie suivante atterrit dans ce champ-ci).
+              // Closed by a click on another field: do not take focus back from it (otherwise
+              // the next keystrokes land in this field).
               const active = document.activeElement
               if (active && active !== document.body && !controlEl?.contains(active)) e.preventDefault()
             }}
           >
             <Combobox.Listbox class="max-h-72 overflow-y-auto outline-none" />
             <Show when={props.options.length === 0}>
-              <div class="px-2 py-1.5 text-xs text-fg-weak">
-                {props.loading ? "chargement…" : "aucune option"}
-              </div>
+              <div class="px-2 py-1.5 text-xs text-fg-weak">{props.loading ? "loading…" : "no options"}</div>
             </Show>
           </Combobox.Content>
         </Combobox.Portal>
@@ -141,8 +139,8 @@ function Field(props: FieldProps) {
 }
 
 export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?: boolean }) {
-  // État « liste ouverte » mémorisé AVANT que Kobalte ne traite la touche (phase de capture) :
-  // Entrée dans une liste ouverte sélectionne une option, elle ne lance pas le run.
+  // “List open” state recorded BEFORE Kobalte handles the key (capture phase):
+  // Enter in an open list selects an option, it does not launch the run.
   let listOpenAtKeydown = false
   const p = () => props.project
   const d = () => props.draft
@@ -152,22 +150,22 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
   const cfg = () => configsCache[cfgKey()]
   const configs = createMemo(() => cfg()?.data?.configs ?? p().static_configs ?? [])
 
-  // Les configs découvertes se chargent quand la machine est choisie.
+  // Discovered configs load once the machine is chosen.
   createEffect(
     on(cfgKey, () => {
       void loadConfigs(p().id, p().discover ? d().machine : null)
     }),
   )
-  // Sélection automatique quand une seule config est disponible.
+  // Automatic selection when a single config is available.
   createEffect(() => {
     const list = configs()
     if (list.length === 1 && d().config !== list[0]) set({ config: list[0] ?? null })
   })
 
   const overridesError = () => splitArgs(d().overrides).error
-  // Le champ d'overrides n'apparaît que pour un brouillon qui en hérite (relance d'un run lancé
-  // avec des overrides via l'API, le MCP ou la CLI) : sinon, les paramètres {nom} de la
-  // commande remplissent ce rôle.
+  // The overrides field only shows up for a draft that inherits some (relaunch of a run
+  // launched with overrides through the API, MCP or the CLI): otherwise, the command's {name}
+  // parameters fill that role.
   const showOverrides = d().overrides.trim() !== ""
   const params = () => p().params ?? []
   const paramErrors = () => draftParamErrors(p().id, d())
@@ -175,7 +173,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
   const blocked = () => commandErrors[p().id] === true
   const canLaunch = () => !!sel() && !blocked() && !d().launching
 
-  // Brouillon issu de « Relancer » : amené à l'écran et brièvement mis en évidence.
+  // Draft coming from “Relaunch”: scrolled into view and briefly highlighted.
   let rowEl: HTMLDivElement | undefined
   onMount(() => {
     if (!d().focus) return
@@ -186,12 +184,12 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
   const describeMachine = (id: string) => {
     const m = state.inventory?.machines.find((x) => x.id === id)
     const r = machineReachable(id)
-    return [m?.label, r === false ? "injoignable" : undefined].filter(Boolean).join(" · ") || undefined
+    return [m?.label, r === false ? "unreachable" : undefined].filter(Boolean).join(" · ") || undefined
   }
   const describeImage = (id: string) => state.inventory?.images.find((x) => x.id === id)?.image
   const describeVenv = (id: string) =>
     state.inventory?.venvs.find((x) => x.id === id)?.path ??
-    (id === "system" ? "sans venv (Python de l'image)" : undefined)
+    (id === "system" ? "no venv (image Python)" : undefined)
 
   return (
     <div
@@ -210,7 +208,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
-          // Échap ferme d'abord une liste ouverte (gérée par Kobalte), puis le brouillon.
+          // Escape first closes an open list (handled by Kobalte), then the draft.
           if (listOpenAtKeydown) return
           e.preventDefault()
           removeDraft(p().id, d().key)
@@ -222,9 +220,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
     >
       <div class="flex h-12 items-center gap-3">
         <StatusDot status={d().launching ? "launching" : "draft"} />
-        <span class="w-[68px] shrink-0 text-xs text-fg-weak">
-          {d().launching ? "lancement" : "brouillon"}
-        </span>
+        <span class="w-[68px] shrink-0 text-xs text-fg-weak">{d().launching ? "launching" : "draft"}</span>
         <div class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.7fr)_64px] items-center gap-1.5">
           <Field
             name="machine"
@@ -268,7 +264,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
             value={d().cuda}
             onInput={(e) => set({ cuda: e.currentTarget.value })}
             placeholder="GPU"
-            title="CUDA_VISIBLE_DEVICES (facultatif), ex. 0,1"
+            title="CUDA_VISIBLE_DEVICES (optional), e.g. 0,1"
             aria-label="CUDA_VISIBLE_DEVICES"
             data-gpu=""
             data-testid="field-gpu"
@@ -282,25 +278,25 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
             disabled={!canLaunch()}
             title={
               blocked()
-                ? "Commande invalide : {config} manquant"
+                ? "Invalid command: {config} missing"
                 : overridesError()
-                  ? `Overrides invalides : ${overridesError()}`
+                  ? `Invalid overrides: ${overridesError()}`
                   : Object.keys(paramErrors()).length
-                    ? `Paramètre invalide : {${Object.keys(paramErrors())[0]}}`
+                    ? `Invalid parameter: {${Object.keys(paramErrors())[0]}}`
                     : !sel()
-                      ? "Sélection incomplète"
-                      : "Lancer (Entrée)"
+                      ? "Incomplete selection"
+                      : "Launch (Enter)"
             }
             onClick={() => void launchDraft(p().id, d().key)}
             data-testid="draft-launch"
           >
-            Lancer
+            Launch
           </button>
           <button
             type="button"
             class="flex size-7 items-center justify-center rounded-md text-icon hover:bg-surface-hover hover:text-icon-hover"
-            aria-label="Annuler le brouillon (Échap)"
-            title="Annuler (Échap)"
+            aria-label="Cancel draft (Escape)"
+            title="Cancel (Escape)"
             onClick={() => removeDraft(p().id, d().key)}
             data-testid="draft-cancel"
           >
@@ -320,13 +316,13 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                 <input
                   value={d().params[name] ?? ""}
                   onInput={(e) => set({ params: { ...d().params, [name]: e.currentTarget.value } })}
-                  placeholder="vide = rien"
+                  placeholder="empty = nothing"
                   title={
                     paramErrors()[name]
-                      ? `Valeur invalide : ${paramErrors()[name]}`
-                      : `Valeur de {${name}} dans la commande ; découpée comme par un shell ("a b" = un seul argument), vide = rien d'inséré`
+                      ? `Invalid value: ${paramErrors()[name]}`
+                      : `Value of {${name}} in the command; split as a shell would ("a b" = a single argument), empty = nothing inserted`
                   }
-                  aria-label={`Paramètre ${name}`}
+                  aria-label={`Parameter ${name}`}
                   spellcheck={false}
                   data-testid={`field-param-${name}`}
                   class="h-7 w-56 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
@@ -346,10 +342,10 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                 onInput={(e) => set({ overrides: e.currentTarget.value })}
                 title={
                   overridesError()
-                    ? `Overrides invalides : ${overridesError()}`
-                    : "Overrides Hydra du run d'origine, ajoutés à la fin de la commande (videz le champ pour les retirer)"
+                    ? `Invalid overrides: ${overridesError()}`
+                    : "Hydra overrides of the original run, appended to the command (clear the field to remove them)"
                 }
-                aria-label="Overrides Hydra"
+                aria-label="Hydra overrides"
                 spellcheck={false}
                 data-testid="field-overrides"
                 class="h-7 w-72 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none focus:border-line"

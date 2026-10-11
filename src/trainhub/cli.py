@@ -1,7 +1,7 @@
-"""CLI minimale : ``trainhub launch|ps|logs|stop|pause|resume|rm|preview|serve|mcp``.
+"""Minimal CLI: ``trainhub launch|ps|logs|stop|pause|resume|rm|preview|serve|mcp``.
 
-Les commandes de gestion des runs s'appuient sur la classe :class:`trainhub.TrainHub`
-(même couche service que le serveur, même base SQLite). Elle sert aussi d'outil de débogage.
+The run management commands rely on the :class:`trainhub.TrainHub` class (same service
+layer as the server, same SQLite database). It also serves as a debugging tool.
 """
 
 from __future__ import annotations
@@ -57,14 +57,14 @@ def cmd_preview(args: argparse.Namespace) -> int:
 
 
 async def _refresh(hub: Any) -> None:
-    """Un tour de suivi sur chaque machine (statuts à jour)."""
+    """One monitoring round on every machine (up-to-date statuses)."""
     machines = [m.id for m in hub.service.inventory.machines]
     await asyncio.gather(*(hub.service.monitor.poll(m) for m in machines))
 
 
 def _print_runs(runs: list[Run]) -> None:
     if not runs:
-        print("aucun run")
+        print("no runs")
         return
     rows = [
         (
@@ -77,7 +77,7 @@ def _print_runs(runs: list[Run]) -> None:
         )
         for r in runs
     ]
-    header = ("ID", "STATUT", "DURÉE", "PROJET", "MACHINE · IMAGE · VENV · CONFIG", "CODE")
+    header = ("ID", "STATUS", "DURATION", "PROJECT", "MACHINE · IMAGE · VENV · CONFIG", "CODE")
     widths = [max(len(str(x)) for x in col) for col in zip(header, *rows, strict=False)]
     for row in (header, *rows):
         print("  ".join(str(v).ljust(w) for v, w in zip(row, widths, strict=False)).rstrip())
@@ -97,7 +97,7 @@ async def _launch(args: argparse.Namespace) -> int:
         )
         print(f"{run.id}  {run.status}  {run.container_name}", file=sys.stderr)
         if run.error:
-            print(f"erreur : {run.error}", file=sys.stderr)
+            print(f"error: {run.error}", file=sys.stderr)
             return 1
         if args.follow:
             await _follow(hub, run.id)
@@ -146,7 +146,7 @@ async def _action(args: argparse.Namespace) -> int:
         await _refresh(hub)
         if args.cmd == "rm":
             await hub.delete(args.run_id)
-            print(f"{args.run_id} supprimé")
+            print(f"{args.run_id} deleted")
             return 0
         fn = {"stop": hub.stop, "pause": hub.pause, "resume": hub.resume}[args.cmd]
         run = await fn(args.run_id)
@@ -179,7 +179,7 @@ def _params(args: argparse.Namespace) -> dict[str, str]:
     for item in args.param:
         name, sep, value = item.partition("=")
         if not sep or not name:
-            raise SystemExit(f"--param attend NOM=VALEUR : {item!r}")
+            raise SystemExit(f"--param expects NAME=VALUE: {item!r}")
         out[name] = value
     return out
 
@@ -190,76 +190,76 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
     p.add_argument("-i", "--image", required=True)
     p.add_argument("-e", "--venv", required=True)
     p.add_argument("-c", "--config", required=True)
-    p.add_argument("--gpus", help="CUDA_VISIBLE_DEVICES (ex. 0,1)")
+    p.add_argument("--gpus", help="CUDA_VISIBLE_DEVICES (e.g. 0,1)")
     p.add_argument(
         "-P",
         "--param",
         action="append",
         default=[],
-        metavar="NOM=VALEUR",
-        help="Paramètre libre de la commande ({nom}), répétable",
+        metavar="NAME=VALUE",
+        help="Free command parameter ({name}), repeatable",
     )
-    p.add_argument("overrides", nargs="*", help="Overrides Hydra (ex. trainer.max_epochs=5)")
+    p.add_argument("overrides", nargs="*", help="Hydra overrides (e.g. trainer.max_epochs=5)")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trainhub", description=__doc__.split("\n")[0])
-    parser.add_argument("--inventory", help="Chemin de inventory.yaml (TRAINHUB_INVENTORY)")
+    parser.add_argument("--inventory", help="Path of inventory.yaml (TRAINHUB_INVENTORY)")
     parser.add_argument(
-        "--executor", choices=["fake", "local", "ssh"], help="Exécuteur (TRAINHUB_EXECUTOR)"
+        "--executor", choices=["fake", "local", "ssh"], help="Executor (TRAINHUB_EXECUTOR)"
     )
-    parser.add_argument("--data-dir", help="Répertoire de la base SQLite (TRAINHUB_DATA_DIR)")
+    parser.add_argument("--data-dir", help="SQLite database directory (TRAINHUB_DATA_DIR)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("preview", help="Affiche la commande complète sans rien exécuter")
+    p = sub.add_parser("preview", help="Show the full command without running anything")
     _add_selection(p)
-    p.add_argument("--command", help="Surcharge de la commande générique du projet")
-    p.add_argument("--run-id", help="Identifiant du run (défaut : aléatoire)")
-    p.add_argument("--exact", action="store_true", help="Une ligne, copiable telle quelle")
+    p.add_argument("--command", help="Override of the project's generic command")
+    p.add_argument("--run-id", help="Run identifier (default: random)")
+    p.add_argument("--exact", action="store_true", help="One line, ready to paste as is")
     p.set_defaults(func=cmd_preview)
 
-    p = sub.add_parser("launch", help="Lance un run")
+    p = sub.add_parser("launch", help="Launch a run")
     _add_selection(p)
-    p.add_argument("-f", "--follow", action="store_true", help="Suit les logs jusqu'à la fin")
+    p.add_argument("-f", "--follow", action="store_true", help="Follow the logs until the end")
     p.set_defaults(func=lambda a: asyncio.run(_launch(a)))
 
-    p = sub.add_parser("ps", help="Liste les runs (actifs par défaut)")
-    p.add_argument("-a", "--all", action="store_true", help="Inclut les runs terminés")
+    p = sub.add_parser("ps", help="List runs (active ones by default)")
+    p.add_argument("-a", "--all", action="store_true", help="Include finished runs")
     p.add_argument("--project")
     p.add_argument("--status", choices=[s.value for s in RunStatus])
-    p.add_argument("--no-refresh", action="store_true", help="N'interroge pas les machines")
+    p.add_argument("--no-refresh", action="store_true", help="Do not query the machines")
     p.set_defaults(func=lambda a: asyncio.run(_ps(a)))
 
-    p = sub.add_parser("logs", help="Affiche les logs d'un run")
+    p = sub.add_parser("logs", help="Show the logs of a run")
     p.add_argument("run_id")
     p.add_argument("-f", "--follow", action="store_true")
     p.add_argument("--tail", type=int, default=None)
-    p.add_argument("--clean", action="store_true", help="Sans ANSI, \\r résolus")
+    p.add_argument("--clean", action="store_true", help="Without ANSI, \\r resolved")
     p.set_defaults(func=lambda a: asyncio.run(_logs(a)))
 
     for name, help_ in (
-        ("stop", "Arrête un run"),
-        ("pause", "Met un run en pause"),
-        ("resume", "Reprend un run en pause"),
-        ("rm", "Supprime un run terminé et son conteneur"),
+        ("stop", "Stop a run"),
+        ("pause", "Pause a run"),
+        ("resume", "Resume a paused run"),
+        ("rm", "Delete a finished run and its container"),
     ):
         p = sub.add_parser(name, help=help_)
         p.add_argument("run_id")
         p.set_defaults(func=lambda a: asyncio.run(_action(a)))
 
-    p = sub.add_parser("serve", help="Démarre le serveur web (API, WebSocket, MCP, front)")
-    p.add_argument("--host", default=None, help="TRAINHUB_HOST (défaut 127.0.0.1)")
-    p.add_argument("--port", type=int, default=None, help="TRAINHUB_PORT (défaut 8420)")
-    p.add_argument("--reload", action="store_true", help="Rechargement auto (développement)")
+    p = sub.add_parser("serve", help="Start the web server (API, WebSocket, MCP, front end)")
+    p.add_argument("--host", default=None, help="TRAINHUB_HOST (default 127.0.0.1)")
+    p.add_argument("--port", type=int, default=None, help="TRAINHUB_PORT (default 8420)")
+    p.add_argument("--reload", action="store_true", help="Auto reload (development)")
     p.set_defaults(func=cmd_serve)
 
-    p = sub.add_parser("mcp", help="Serveur MCP stdio relié au serveur TrainHub en cours")
+    p = sub.add_parser("mcp", help="Stdio MCP server connected to the running TrainHub server")
     p.add_argument(
         "--url",
         default=None,
-        help="URL du serveur (défaut http://TRAINHUB_HOST:TRAINHUB_PORT)",
+        help="Server URL (default http://TRAINHUB_HOST:TRAINHUB_PORT)",
     )
-    p.add_argument("--token", default=None, help="Jeton (défaut TRAINHUB_TOKEN)")
+    p.add_argument("--token", default=None, help="Token (default TRAINHUB_TOKEN)")
     p.set_defaults(func=cmd_mcp)
     return parser
 
@@ -275,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         code: int = args.func(args)
     except (InventoryError, UnknownResourceError, ServiceError, ValueError) as exc:
-        print(f"erreur : {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         return 130

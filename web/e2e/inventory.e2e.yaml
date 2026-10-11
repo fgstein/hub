@@ -1,10 +1,10 @@
-# Inventaire des tests Playwright (mode fake, simulation rapide et déterministe).
+# Playwright test inventory (fake mode, fast and deterministic simulation).
 machines:
   - id: gpu-01
     label: GPU 01
     host: gpu-01.lab
   - id: gpu-down
-    label: Machine hors ligne
+    label: Offline machine
     host: gpu-down.lab
 images:
   - id: torch
@@ -21,7 +21,7 @@ projects:
       root: /seg/configs
       exclude: ["hydra/*"]
   - id: det
-    label: Détection
+    label: Detection
     command: python -m det.train --config-name {config}
     machines: [gpu-01]
     configs:

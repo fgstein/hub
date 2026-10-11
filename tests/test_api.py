@@ -1,4 +1,4 @@
-"""API REST et WebSocket (client de test FastAPI) avec l'exécuteur fake."""
+"""REST API and WebSocket (FastAPI test client) with the fake executor."""
 
 from __future__ import annotations
 
@@ -37,11 +37,11 @@ def wait_status(client: TestClient, run_id: str, *statuses: str, timeout: float 
         if run["status"] in statuses:
             return run  # type: ignore[no-any-return]
         time.sleep(0.05)
-    raise AssertionError(f"statut {statuses} non atteint : {run['status']}")
+    raise AssertionError(f"status {statuses} not reached: {run['status']}")
 
 
 def recv_until(ws: WebSocketTestSession, pred: Any, limit: int = 2000) -> list[Any]:
-    """Lit les messages (JSON ou binaires) jusqu'à ce que ``pred`` soit vrai."""
+    """Read messages (JSON or binary) until ``pred`` is true."""
     seen = []
     for _ in range(limit):
         msg = ws.receive()
@@ -54,7 +54,7 @@ def recv_until(ws: WebSocketTestSession, pred: Any, limit: int = 2000) -> list[A
         seen.append(item)
         if pred(item):
             return seen
-    raise AssertionError("message attendu non reçu")
+    raise AssertionError("expected message not received")
 
 
 def test_inventory_health_openapi(client: TestClient) -> None:
@@ -76,7 +76,7 @@ def test_configs_and_preview(client: TestClient) -> None:
     p = client.post("/api/preview", json=SEL.model_dump()).json()
     assert p["argv"][0] == "ssh" and "docker run -d -t --init" in p["text"]
     bad = client.post("/api/preview", json={**SEL.model_dump(), "venv": "exp"})
-    assert bad.status_code == 422 and "disponibles : main" in bad.json()["detail"]
+    assert bad.status_code == 422 and "available: main" in bad.json()["detail"]
     missing = client.post("/api/preview", json={"project": "segmentation"})
     assert missing.status_code == 422 and "machine" in missing.json()["detail"]
 
@@ -127,7 +127,7 @@ def test_scenario_launch_logs_pause_resume_stop(client: TestClient) -> None:
         paused = client.post(f"/api/runs/{rid}/pause")
         assert paused.status_code == 200 and paused.json()["status"] == "paused"
         again = client.post(f"/api/runs/{rid}/pause")
-        assert again.status_code == 409 and "statut 'paused'" in again.json()["detail"]
+        assert again.status_code == 409 and "status 'paused'" in again.json()["detail"]
         assert client.post(f"/api/runs/{rid}/resume").json()["status"] == "running"
         stop = client.post(f"/api/runs/{rid}/stop").json()
         assert stop["status"] == "stopping"
@@ -166,7 +166,7 @@ def test_ws_snapshot_on_request(client: TestClient) -> None:
         assert "inventory" in snap and "seq" in snap
         ws.send_json({"type": "logs.subscribe", "run_id": "nope"})
         err = recv_until(ws, lambda m: isinstance(m, dict) and m.get("type") == "error")[-1]
-        assert "introuvable" in err["message"]
+        assert "not found" in err["message"]
 
 
 def test_token_auth(tmp_path: Path) -> None:
@@ -177,12 +177,12 @@ def test_token_auth(tmp_path: Path) -> None:
         assert c.post("/mcp", json={}).status_code == 401
         page = c.get("/", headers={"accept": "text/html"}, follow_redirects=False)
         assert page.status_code == 303 and page.headers["location"].startswith("/login")
-        assert "Jeton" in c.get("/login").text
+        assert "Token" in c.get("/login").text
         bad = c.post("/login", data={"token": "x", "next": "/"}, follow_redirects=False)
         assert "error=1" in bad.headers["location"]
         good = c.post("/login", data={"token": "s3cret", "next": "/p/x"}, follow_redirects=False)
         assert good.headers["location"] == "/p/x"
-        assert c.get("/api/inventory").status_code == 200  # cookie posé
+        assert c.get("/api/inventory").status_code == 200  # cookie set
         c.cookies.clear()
         from starlette.websockets import WebSocketDisconnect
 
@@ -215,4 +215,4 @@ def test_shell_websocket(client: TestClient) -> None:
 def test_shell_websocket_refused_for_unknown_run(client: TestClient) -> None:
     with client.websocket_connect("/ws/shell/nope") as ws:
         msg = ws.receive_json()
-        assert msg["type"] == "error" and "introuvable" in msg["message"]
+        assert msg["type"] == "error" and "not found" in msg["message"]

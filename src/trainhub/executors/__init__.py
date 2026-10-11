@@ -1,4 +1,4 @@
-"""Exécuteurs : ``fake`` (simulation), ``local`` (docker local) et ``ssh`` (production)."""
+"""Executors: ``fake`` (simulation), ``local`` (local docker) and ``ssh`` (production)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .base import (
 
 
 def create_executor(kind: str, inventory: Inventory | None = None) -> Executor:
-    """Instancie l'exécuteur demandé par ``TRAINHUB_EXECUTOR``."""
+    """Instantiate the executor requested by ``TRAINHUB_EXECUTOR``."""
     if kind == "fake":
         from .fake import FakeExecutor
 
@@ -29,7 +29,7 @@ def create_executor(kind: str, inventory: Inventory | None = None) -> Executor:
         from .ssh import SshExecutor
 
         return SshExecutor()
-    raise ValueError(f"exécuteur inconnu : {kind!r} (fake, local ou ssh)")
+    raise ValueError(f"unknown executor: {kind!r} (fake, local or ssh)")
 
 
 __all__ = [

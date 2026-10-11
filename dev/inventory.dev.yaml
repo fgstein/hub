@@ -1,12 +1,12 @@
-# Inventaire de développement — mode fake (TRAINHUB_EXECUTOR=fake).
-# Machines et conteneurs sont simulés en mémoire ; rien n'est exécuté.
+# Development inventory — fake mode (TRAINHUB_EXECUTOR=fake).
+# Machines and containers are simulated in memory; nothing is executed.
 #
-# Ce que montre la démo :
-#   - segmentation : arborescence de configs, paramètre libre {options}, conteneur conservé
-#     après la commande (shell simulé, « Fermer le conteneur »)
-#   - détection    : paramètres libres {seed} et {tags}, venv « system » (toujours proposé)
-#   - llm-finetune : paramètre {nproc}, conteneur supprimé à la fin (keep_alive: false)
-#   - gpu-03 instable, gpu-old hors ligne, image « broken » (échec au lancement)
+# What the demo shows:
+#   - segmentation: config tree, free parameter {options}, container kept after the
+#     command (simulated shell, “Close container”)
+#   - detection   : free parameters {seed} and {tags}, “system” venv (always offered)
+#   - llm-finetune: parameter {nproc}, container removed at the end (keep_alive: false)
+#   - gpu-03 flaky, gpu-old offline, “broken” image (launch failure)
 
 machines:
   - id: gpu-01
@@ -18,10 +18,10 @@ machines:
     host: gpu-02.lab.local
     user: alice
   - id: gpu-03
-    label: GPU 03 (instable)
+    label: GPU 03 (flaky)
     host: gpu-03.lab.local
   - id: gpu-old
-    label: Ancienne machine (hors ligne)
+    label: Old machine (offline)
     host: gpu-old.lab.local
 
 images:
@@ -31,7 +31,7 @@ images:
   - id: torch-nightly
     image: registry.lab/ml/torch:nightly
   - id: broken
-    label: Image absente (démo d'échec)
+    label: Missing image (failure demo)
     image: registry.lab/ml/missing:latest
 
 venvs:
@@ -44,7 +44,7 @@ venvs:
 projects:
   - id: segmentation
     label: Segmentation
-    # {options} : paramètre libre, un champ dans le brouillon (ex. trainer.max_epochs=5 +seed=1)
+    # {options}: free parameter, a field in the draft (e.g. trainer.max_epochs=5 +seed=1)
     command: python train.py --config-name {config} {options}
     workdir: /workspace/seg
     machines: [gpu-01, gpu-02, gpu-03, gpu-old]
@@ -58,13 +58,13 @@ projects:
         WANDB_MODE: offline
       extra_args: ["--ipc=host"]
     configs:
-      # racine des configs Hydra sur la machine : tous les *.yaml (récursif) sont proposés
+      # root of the Hydra configs on the machine: every *.yaml (recursive) is offered
       root: /home/alice/seg/configs
       pattern: "*.yaml"
       exclude: ["hydra/*", "*/_*"]
 
   - id: detection
-    label: Détection
+    label: Detection
     command: python -m det.train --config-name {config} run.id={run_id} seed={seed} --tags {tags}
     workdir: /workspace/det
     images: [torch-2.4, torch-nightly]
@@ -86,21 +86,21 @@ projects:
       gpus: all
       shm_size: 64g
       tty: false
-      keep_alive: false       # conteneur non conservé : il s'arrête avec la commande
+      keep_alive: false       # container not kept: it stops with the command
     configs:
       static: [llama_8b_lora]
 
 simulation:
-  duration_s: [60, 300]       # durée d'un entraînement simulé
-  log_rate: 6                 # mises à jour de la barre de progression par seconde
-  failure_prob: 0.15          # probabilité d'échec (traceback, code 1)
-  time_scale: 1.0             # > 1 accélère le temps simulé
-  latency_ms: [50, 300]       # latence SSH simulée
+  duration_s: [60, 300]       # duration of a simulated training
+  log_rate: 6                 # progress bar updates per second
+  failure_prob: 0.15          # failure probability (traceback, code 1)
+  time_scale: 1.0             # > 1 speeds up simulated time
+  latency_ms: [50, 300]       # simulated SSH latency
   flaky_period_s: 60
   machines:
-    gpu-03: flaky             # injoignable par intermittence
-    gpu-old: down             # toujours injoignable
-  configs:                    # arborescence simulée sous la racine, par projet
+    gpu-03: flaky             # intermittently unreachable
+    gpu-old: down             # always unreachable
+  configs:                    # simulated tree under the root, per project
     segmentation:
       - baseline
       - unet_large

@@ -6,7 +6,7 @@ import { draftSelection, resetCommand, saveCommand, setCommandErrors, state } fr
 import { toast } from "~/stores/toasts"
 import { IconCheck, IconChevronDown, IconCopy, IconReset, IconSpinner } from "./Icons"
 
-/** Champ de la commande générique d'un projet, avec aperçu de la commande complète. */
+/** Field for a project's generic command, with a preview of the full command. */
 export function CommandEditor(props: { project: ProjectView }) {
   const [text, setText] = createSignal(props.project.command)
   const [saved, setSaved] = createSignal<"idle" | "saving" | "saved">("idle")
@@ -18,7 +18,7 @@ export function CommandEditor(props: { project: ProjectView }) {
   createEffect(() => setCommandErrors(props.project.id, !!error()))
   onCleanup(() => setCommandErrors(props.project.id, false))
 
-  // Mise à jour externe (autre onglet, MCP, retour au YAML) quand l'utilisateur ne tape pas.
+  // External update (another tab, MCP, back to YAML) while the user is not typing.
   createEffect(
     on(
       () => props.project.command,
@@ -93,7 +93,7 @@ export function CommandEditor(props: { project: ProjectView }) {
             ref={textarea}
             rows={1}
             spellcheck={false}
-            aria-label="Commande générique"
+            aria-label="Generic command"
             aria-invalid={!!error()}
             data-testid="command-input"
             value={text()}
@@ -111,14 +111,14 @@ export function CommandEditor(props: { project: ProjectView }) {
             </Show>
             <Show when={saved() === "saved"}>
               <IconCheck size={11} class="text-fg-success" />
-              <span data-testid="command-saved">enregistré</span>
+              <span data-testid="command-saved">saved</span>
             </Show>
           </span>
           <button
             type="button"
             class="flex size-6 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover disabled:opacity-30"
-            title="Revenir à la commande du YAML"
-            aria-label="Revenir à la commande du YAML"
+            title="Back to the YAML command"
+            aria-label="Back to the YAML command"
             disabled={!props.project.command_overridden && text() === props.project.yaml_command}
             onClick={reset}
             data-testid="command-reset"
@@ -133,13 +133,13 @@ export function CommandEditor(props: { project: ProjectView }) {
             data-testid="preview-toggle"
           >
             <IconChevronDown size={12} class={`transition-transform ${showPreview() ? "rotate-180" : ""}`} />
-            aperçu
+            preview
           </button>
         </div>
       </div>
       <Show when={error()}>
         <div class="-mt-1.5 px-9 pb-2 text-xs text-fg-critical" data-testid="command-error">
-          {error()} — lancement désactivé
+          {error()} — launch disabled
         </div>
       </Show>
       <div class="th-collapse" data-open={showPreview() ? "" : undefined}>
@@ -153,7 +153,7 @@ export function CommandEditor(props: { project: ProjectView }) {
   )
 }
 
-/** Sélection utilisée pour l'aperçu : premier brouillon complet, sinon dernière sélection. */
+/** Selection used for the preview: first complete draft, else the last selection. */
 function previewSelection(p: ProjectView): Selection | null {
   for (const d of state.drafts[p.id] ?? []) {
     const sel = draftSelection(p.id, d)
@@ -188,7 +188,7 @@ function Preview(props: { project: ProjectView; command: string }) {
       async ([selJson]) => {
         const sel = JSON.parse(selJson) as Selection | null
         if (!sel) {
-          setErr("aucune machine, image ou venv disponible pour ce projet")
+          setErr("no machine, image or venv available for this project")
           return
         }
         setLoading(true)
@@ -209,9 +209,9 @@ function Preview(props: { project: ProjectView; command: string }) {
     if (!r) return
     try {
       await navigator.clipboard.writeText(r.exact)
-      toast("commande copiée", "success")
+      toast("command copied", "success")
     } catch {
-      toast("copie impossible (presse-papier indisponible)", "error")
+      toast("could not copy (clipboard unavailable)", "error")
     }
   }
 
@@ -221,8 +221,8 @@ function Preview(props: { project: ProjectView; command: string }) {
         type="button"
         class="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
         onClick={copy}
-        title="Copier la commande exacte"
-        aria-label="Copier la commande"
+        title="Copy the exact command"
+        aria-label="Copy command"
       >
         <IconCopy />
       </button>

@@ -1,5 +1,5 @@
-# Image de test TrainHub : Python léger, deux venvs (/opt/venvs/main et /opt/venvs/exp)
-# et un train.py qui utilise réellement Hydra et tqdm.
+# TrainHub test image: lightweight Python, two venvs (/opt/venvs/main and /opt/venvs/exp)
+# and a train.py that really uses Hydra and tqdm.
 FROM python:3.12-slim
 
 ARG PIP_INDEX_URL

@@ -1,4 +1,4 @@
-"""Configuration par variables d'environnement (section 10)."""
+"""Configuration through environment variables (section 10)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _bool(v: str | None) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    """Réglages du serveur, lus depuis ``TRAINHUB_*``."""
+    """Server settings, read from ``TRAINHUB_*``."""
 
     inventory: Path = Path("inventory.yaml")
     data_dir: Path = Path(".trainhub")
@@ -43,7 +43,7 @@ class Settings:
         e = dict(os.environ if env is None else env)
         executor = e.get("TRAINHUB_EXECUTOR", "ssh").strip().lower()
         if executor not in ("fake", "local", "ssh"):
-            raise ValueError(f"TRAINHUB_EXECUTOR invalide : {executor!r} (fake, local ou ssh)")
+            raise ValueError(f"invalid TRAINHUB_EXECUTOR: {executor!r} (fake, local or ssh)")
         static = e.get("TRAINHUB_STATIC_DIR")
         return cls(
             inventory=Path(e.get("TRAINHUB_INVENTORY", "inventory.yaml")),

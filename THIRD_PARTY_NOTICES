@@ -1,9 +1,9 @@
-Ce projet inclut des éléments dérivés des logiciels tiers suivants.
+This project includes material derived from the following third-party software.
 
 ================================================================================
 OpenCode — https://github.com/anomalyco/opencode
-Fichiers concernés : web/src/theme/theme.css (tokens de couleur, typographie et
-ombres repris de packages/ui/src/styles/theme.css).
+Files concerned: web/src/theme/theme.css (color, typography and shadow tokens
+taken from packages/ui/src/styles/theme.css).
 ================================================================================
 
 MIT License
@@ -29,7 +29,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Polices embarquées dans le front compilé (via les paquets npm @fontsource) :
+Fonts embedded in the built front end (through the @fontsource npm packages):
 - Inter — SIL Open Font License 1.1 — https://github.com/rsms/inter
 - IBM Plex Mono — SIL Open Font License 1.1 — https://github.com/IBM/plex
 ================================================================================

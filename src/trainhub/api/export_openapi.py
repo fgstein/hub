@@ -1,4 +1,4 @@
-"""Écrit le schéma OpenAPI dans un fichier (génération des types TypeScript)."""
+"""Write the OpenAPI schema to a file (TypeScript type generation)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def main() -> None:
     )
     app = create_app(Settings(), svc, enable_mcp=False)
     out.write_text(json.dumps(app.openapi(), indent=2, ensure_ascii=False) + "\n")
-    print(f"OpenAPI écrit dans {out}")
+    print(f"OpenAPI written to {out}")
 
 
 if __name__ == "__main__":

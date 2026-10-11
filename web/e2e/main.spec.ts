@@ -25,9 +25,9 @@ async function pick(page: Page, field: string, value: string) {
   await page.getByRole("option", { name: value, exact: true }).click()
 }
 
-test("créer un brouillon, lancer, déplier le terminal, plein écran, pause", async ({ page }) => {
+test("create a draft, launch, expand the terminal, fullscreen, pause", async ({ page }) => {
   const draft = await newDraft(page)
-  // un seul choix possible → label fixe
+  // a single possible choice → fixed label
   await expect(draft.getByTestId("field-image")).toHaveAttribute("data-fixed", "")
   await pick(page, "field-machine", "gpu-01")
   await pickConfig(page, "unet_large")
@@ -47,7 +47,7 @@ test("créer un brouillon, lancer, déplier le terminal, plein écran, pause", a
   await expect(term).toBeVisible()
   await expect(term.locator(".xterm-rows")).toContainText("Epoch", { timeout: 10_000 })
 
-  // plein écran sans rechargement : le même élément xterm est conservé
+  // fullscreen without reload: the same xterm element is kept
   const xtermBefore = await term.locator(".xterm").elementHandle()
   await term.getByTestId("terminal-fullscreen").click()
   await expect(page.getByTestId("fullscreen")).toBeVisible()
@@ -56,40 +56,40 @@ test("créer un brouillon, lancer, déplier le terminal, plein écran, pause", a
   await page.keyboard.press("Escape")
   await expect(page.getByTestId("fullscreen")).toHaveCount(0)
 
-  // pause optimiste puis confirmée
+  // optimistic then confirmed pause
   await row.getByTestId("run-primary").click()
   await expect(row).toHaveAttribute("data-status", "paused")
   await expect(row.getByTestId("run-primary")).toHaveAttribute("data-action", "resume")
   await row.getByTestId("run-primary").click()
   await expect(row).toHaveAttribute("data-status", "running")
 
-  // arrêt avec confirmation légère dans le menu
+  // stop with a light confirmation in the menu
   await row.getByTestId("run-menu").click()
   await page.getByTestId("menu-stop").click()
-  await expect(page.getByTestId("menu-stop")).toContainText("Confirmer")
+  await expect(page.getByTestId("menu-stop")).toContainText("Confirm")
   await page.getByTestId("menu-stop").click()
   const finished = page.getByTestId("finished-runs")
   await expect(finished.locator('[data-testid=run-row][data-status="stopped"]')).toHaveCount(1, {
     timeout: 15_000,
   })
-  await expect(page.getByTestId("finished-toggle")).toContainText("Terminés (1)")
+  await expect(page.getByTestId("finished-toggle")).toContainText("Finished (1)")
 })
 
-test("machine injoignable : découverte impossible, échec du lancement affiché", async ({ page }) => {
+test("unreachable machine: discovery fails, launch failure shown", async ({ page }) => {
   await newDraft(page)
   await pick(page, "field-machine", "gpu-01")
   await pickConfig(page, "baseline")
   await pick(page, "field-machine", "gpu-down")
   await page.getByTestId("draft-row").last().getByTestId("field-config").click()
-  await expect(page.getByTestId("config-picker")).toContainText("injoignable")
+  await expect(page.getByTestId("config-picker")).toContainText("unreachable")
   await page.keyboard.press("Escape")
   await page.getByTestId("draft-launch").click()
   const row = page.locator('[data-testid=run-row][data-status="failed"]').first()
   await expect(row).toBeVisible({ timeout: 10_000 })
-  await expect(row.getByTestId("run-error")).toContainText("injoignable")
+  await expect(row.getByTestId("run-error")).toContainText("unreachable")
 })
 
-test("commande générique : sauvegarde, validation et retour au YAML", async ({ page }) => {
+test("generic command: saving, validation and back to YAML", async ({ page }) => {
   await page.goto("/p/seg")
   const input = page.getByTestId("command-input")
   await input.fill("python train.py")
@@ -108,19 +108,19 @@ test("commande générique : sauvegarde, validation et retour au YAML", async ({
   await expect(page.getByTestId("preview")).toContainText("docker run -d -t --init")
 })
 
-test("onglets : fermer, rouvrir via +, URL et raccourcis", async ({ page }) => {
+test("tabs: close, reopen with +, URL and shortcuts", async ({ page }) => {
   await page.goto("/p/seg")
   await expect(page.getByTestId("tab-seg")).toHaveAttribute("aria-selected", "true")
   await page.keyboard.press("Control+Alt+ArrowRight")
   await expect(page).toHaveURL(/\/p\/det$/)
   await page.getByTestId("tab-det").hover()
-  await page.getByRole("button", { name: "Fermer Détection" }).click()
+  await page.getByRole("button", { name: "Close Detection" }).click()
   await expect(page.getByTestId("tab-det")).toHaveCount(0)
   await expect(page).toHaveURL(/\/p\/seg$/)
   await page.getByTestId("tab-add").click()
   await page.getByTestId("add-project-det").click()
   await expect(page.getByTestId("tab-det")).toHaveAttribute("aria-selected", "true")
-  // configs découvertes chargées pour le projet det
+  // discovered configs loaded for the det project
   await page.locator("body").press("n")
   await page.getByTestId("draft-row").last().getByTestId("field-config").click()
   await expect(page.locator('[data-testid=config-node][data-path="yolo_m"]')).toBeVisible()
@@ -131,7 +131,7 @@ test("onglets : fermer, rouvrir via +, URL et raccourcis", async ({ page }) => {
   await expect(page.getByTestId("draft-row")).toHaveCount(0)
 })
 
-test("mise en page à 900 px : rien ne déborde", async ({ page }) => {
+test("layout at 900 px: nothing overflows", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 700 })
   await page.goto("/p/seg")
   await expect(page.getByTestId("project-page")).toBeVisible()
@@ -139,17 +139,17 @@ test("mise en page à 900 px : rien ne déborde", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0)
 })
 
-test("configs : arborescence récursive, compteur de runs, recherche au clavier", async ({ page }) => {
+test("configs: recursive tree, run counter, keyboard search", async ({ page }) => {
   await newDraft(page)
   await pick(page, "field-machine", "gpu-01")
   await page.getByTestId("draft-row").last().getByTestId("field-config").click()
   const picker = page.getByTestId("config-picker")
-  // arborescence complète, dossiers d'abord, hydra/* exclu
+  // full tree, directories first, hydra/* excluded
   const nodes = picker.getByTestId("config-node")
   await expect(nodes).toHaveText([/exp\//, /sweep\//, /lr_big/, /lr_small/, /baseline/, /unet_large/])
   const node = (p: string) => picker.locator(`[data-testid=config-node][data-path="${p}"]`)
   const before = Number(await node("exp/sweep/lr_small").getByTestId("config-count").innerText())
-  // recherche + Entrée : sélectionne sans lancer
+  // search + Enter: selects without launching
   await page.getByTestId("config-search").fill("small")
   await page.keyboard.press("Enter")
   await expect(picker).toHaveCount(0)
@@ -159,7 +159,7 @@ test("configs : arborescence récursive, compteur de runs, recherche au clavier"
   await expect(
     page.locator("[data-testid=run-row]").filter({ hasText: "exp/sweep/lr_small" }).first(),
   ).toBeVisible()
-  // le compteur de la config augmente
+  // the config counter goes up
   await newDraft(page)
   await page.getByTestId("draft-row").last().getByTestId("field-config").click()
   await expect(node("exp/sweep/lr_small").getByTestId("config-count")).toContainText(String(before + 1))

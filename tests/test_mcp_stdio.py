@@ -1,4 +1,4 @@
-"""``trainhub mcp`` (stdio) relayé vers un serveur TrainHub réel (uvicorn, mode fake)."""
+"""``trainhub mcp`` (stdio) relayed to a real TrainHub server (uvicorn, fake mode)."""
 
 from __future__ import annotations
 

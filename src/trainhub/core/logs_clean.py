@@ -1,10 +1,10 @@
-"""Nettoyage des logs bruts pour un lecteur non-terminal (agent MCP).
+"""Cleaning raw logs for a non-terminal reader (MCP agent).
 
-- suppression des séquences ANSI (CSI, OSC, autres échappements) ;
-- résolution des ``\\r`` : seul le dernier état d'une ligne réécrite est conservé
-  (barres de progression tqdm) ;
-- gestion basique de ``\\b`` (retour arrière) ;
-- filtrage ``grep``, conservation des ``tail`` dernières lignes et troncature en caractères.
+- strips ANSI sequences (CSI, OSC, other escapes);
+- resolves ``\\r``: only the last state of a rewritten line is kept
+  (tqdm progress bars);
+- basic handling of ``\\b`` (backspace);
+- ``grep`` filtering, keeping the last ``tail`` lines and truncating to a character budget.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ _ANSI_RE = re.compile(
     \x1b\][^\x07\x1b]*(?:\x07|\x1b\\)   # OSC ... BEL | ST
     | \x1b\[[0-?]*[ -/]*[@-~]           # CSI
     | \x1b[PX^_][^\x1b]*\x1b\\          # DCS/SOS/PM/APC ... ST
-    | \x1b[@-Z\\-_]                     # échappements à 2 octets
-    | \x9b[0-?]*[ -/]*[@-~]             # CSI 8 bits
+    | \x1b[@-Z\\-_]                     # 2-byte escapes
+    | \x9b[0-?]*[ -/]*[@-~]             # 8-bit CSI
     """,
     re.VERBOSE,
 )
@@ -27,12 +27,12 @@ DEFAULT_MAX_CHARS = 20_000
 
 
 def strip_ansi(text: str) -> str:
-    """Supprime les séquences d'échappement ANSI."""
+    """Strip ANSI escape sequences."""
     return _ANSI_RE.sub("", text)
 
 
 def _render_line(segment: str) -> str:
-    """Applique ``\\r`` et ``\\b`` comme le ferait un terminal sur une ligne."""
+    """Apply ``\\r`` and ``\\b`` the way a terminal would on a line."""
     if "\r" not in segment and "\b" not in segment:
         return segment
     buf: list[str] = []
@@ -52,12 +52,12 @@ def _render_line(segment: str) -> str:
 
 
 def resolve_carriage_returns(text: str) -> str:
-    """Résout les ``\\r`` ligne par ligne (``\\r\\n`` est traité comme une fin de ligne)."""
+    """Resolve ``\\r`` line by line (``\\r\\n`` is treated as a line ending)."""
     text = text.replace("\r\n", "\n")
     lines = text.split("\n")
     out = []
     for line in lines:
-        # tqdm termine souvent par "\r" puis réécrit : on garde le dernier état non vide
+        # tqdm often ends with "\r" then rewrites: keep the last non-empty state
         if "\r" in line:
             parts = [p for p in line.split("\r")]
             while len(parts) > 1 and parts[-1] == "":
@@ -68,7 +68,7 @@ def resolve_carriage_returns(text: str) -> str:
 
 
 def clean_logs(raw: bytes | str) -> str:
-    """Bruts → texte lisible (ANSI supprimé, ``\\r`` résolus, caractères de contrôle retirés)."""
+    """Raw → readable text (ANSI stripped, ``\\r`` resolved, control characters removed)."""
     text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
     text = strip_ansi(text)
     text = resolve_carriage_returns(text)
@@ -84,7 +84,7 @@ def tail_lines(text: str, n: int | None) -> str:
 
 
 def grep_lines(text: str, pattern: str) -> str:
-    """Garde les lignes correspondant à ``pattern`` (regex, ou texte si regex invalide)."""
+    """Keep the lines matching ``pattern`` (regex, or plain text if the regex is invalid)."""
     try:
         rx = re.compile(pattern, re.IGNORECASE)
         keep = [ln for ln in text.split("\n") if rx.search(ln)]
@@ -95,14 +95,14 @@ def grep_lines(text: str, pattern: str) -> str:
 
 
 def truncate(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
-    """Tronque par le début (on garde la fin, la plus utile) avec une mention explicite."""
+    """Truncate from the start (the end, the most useful part, is kept) with an explicit note."""
     if len(text) <= max_chars:
         return text
     cut = text[-max_chars:]
     nl = cut.find("\n")
     if 0 <= nl < 200:
         cut = cut[nl + 1 :]
-    return f"[… {len(text) - len(cut)} caractères plus anciens tronqués …]\n{cut}"
+    return f"[… {len(text) - len(cut)} older characters truncated …]\n{cut}"
 
 
 def readable_logs(
@@ -112,7 +112,7 @@ def readable_logs(
     grep: str | None = None,
     max_chars: int = DEFAULT_MAX_CHARS,
 ) -> str:
-    """Pipeline complet utilisé par l'outil MCP ``get_logs``."""
+    """Full pipeline used by the ``get_logs`` MCP tool."""
     text = clean_logs(raw)
     if grep:
         text = grep_lines(text, grep)

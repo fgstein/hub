@@ -1,6 +1,6 @@
-"""Chemin complet SSH → docker → venv avec les machines simulées (make sim-up).
+"""Full SSH → docker → venv path with the simulated machines (make sim-up).
 
-Ignoré automatiquement si les machines simulées ne sont pas joignables.
+Skipped automatically if the simulated machines are not reachable.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _sim_ok() -> bool:
 
 pytestmark = [
     pytest.mark.docker,
-    pytest.mark.skipif(not _sim_ok(), reason="machines SSH simulées indisponibles (make sim-up)"),
+    pytest.mark.skipif(not _sim_ok(), reason="simulated SSH machines unavailable (make sim-up)"),
 ]
 
 
@@ -71,7 +71,7 @@ async def test_ssh_full_path(tmp_path: Path) -> None:
         created.append(run.container_name)
         assert run.status is RunStatus.RUNNING, run.error
         assert run.full_command[0] == "ssh"
-        # ControlMaster : un socket de connexion partagée existe
+        # ControlMaster: a shared connection socket exists
         assert glob.glob(os.path.expanduser("~/.ssh/th-*"))
 
         async def training() -> bool:
@@ -86,7 +86,7 @@ async def test_ssh_full_path(tmp_path: Path) -> None:
         stopped = await svc.stop(run.id, wait=True)
         assert stopped.status is RunStatus.STOPPED and stopped.exit_code == 143
 
-        # coupure d'une machine : unreachable, puis retour
+        # a machine goes down: unreachable, then back
         run2 = await svc.launch(sel.model_copy(update={"machine": "sim-gpu-02"}), wait=True)
         created.append(run2.container_name)
         _compose("stop", "sim-gpu-02")

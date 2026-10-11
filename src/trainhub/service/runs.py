@@ -1,7 +1,7 @@
-"""Couche service : cycle de vie des runs, persistance, réconciliation, bus d'événements.
+"""Service layer: run lifecycle, persistence, reconciliation, event bus.
 
-C'est le seul point d'entrée de la logique métier : l'API REST, le WebSocket, le serveur MCP,
-la classe :class:`trainhub.TrainHub` et la CLI l'appellent tous.
+This is the single entry point of the business logic: the REST API, the WebSocket, the MCP
+server, the :class:`trainhub.TrainHub` class and the CLI all call it.
 """
 
 from __future__ import annotations
@@ -72,11 +72,11 @@ CONFIG_CACHE_TTL_S = 60.0
 UI_STATE_KEY = "ui_state"
 
 
-# --------------------------------------------------------------------------- erreurs
+# --------------------------------------------------------------------------- errors
 
 
 class ServiceError(Exception):
-    """Erreur métier, affichée telle quelle à l'utilisateur."""
+    """Business error, shown as is to the user."""
 
     status_code = 400
 
@@ -110,7 +110,7 @@ class RunAction(StrEnum):
     CLOSE = "close"
 
 
-#: Statuts de départ autorisés pour chaque action (section 4.2).
+#: Allowed starting statuses for each action (section 4.2).
 ALLOWED_FROM: dict[str, frozenset[RunStatus]] = {
     RunAction.PAUSE: frozenset({RunStatus.RUNNING}),
     RunAction.RESUME: frozenset({RunStatus.PAUSED}),
@@ -122,18 +122,18 @@ ALLOWED_FROM: dict[str, frozenset[RunStatus]] = {
 }
 
 _ACTION_LABELS = {
-    RunAction.PAUSE: "mettre en pause",
-    RunAction.RESUME: "reprendre",
-    RunAction.STOP: "arrêter",
-    RunAction.RESTART: "redémarrer",
-    RunAction.RELAUNCH: "relancer",
-    RunAction.CLOSE: "fermer le conteneur du",
-    "delete": "supprimer",
+    RunAction.PAUSE: "pause",
+    RunAction.RESUME: "resume",
+    RunAction.STOP: "stop",
+    RunAction.RESTART: "restart",
+    RunAction.RELAUNCH: "relaunch",
+    RunAction.CLOSE: "close the container of",
+    "delete": "delete",
 }
 
 
 def allowed_actions(status: RunStatus, *, container_alive: bool = False) -> list[str]:
-    """Actions possibles pour un statut donné (``close`` : conteneur conservé encore démarré)."""
+    """Possible actions for a given status (``close``: kept container still started)."""
     return [
         str(a)
         for a, statuses in ALLOWED_FROM.items()
@@ -145,7 +145,7 @@ def allowed_actions(status: RunStatus, *, container_alive: bool = False) -> list
 
 
 class RunService:
-    """Façade métier de TrainHub."""
+    """TrainHub business facade."""
 
     def __init__(
         self,
@@ -186,14 +186,14 @@ class RunService:
         self.executor.update_inventory(self.inventory)
         self.inv_mgr.on_change(self._on_inventory_change)
 
-    # -- cycle de vie -----------------------------------------------------------------
+    # -- lifecycle ---------------------------------------------------------------------
 
     @property
     def inventory(self) -> Inventory:
         return self.inv_mgr.inventory
 
     async def start(self, *, monitor: bool = True, watch_inventory: bool = True) -> None:
-        """Ouvre la base, démarre le suivi des machines et la surveillance de l'inventaire."""
+        """Open the database, start machine monitoring and inventory watching."""
         if self._started:
             return
         self._started = True
@@ -232,7 +232,7 @@ class RunService:
             "inventory.updated", {"inventory": self.inventory_view().model_dump(mode="json")}
         )
 
-    # -- inventaire et projets ----------------------------------------------------------
+    # -- inventory and projects ---------------------------------------------------------
 
     def _project(self, project_id: str) -> Project:
         try:
@@ -247,7 +247,7 @@ class RunService:
             raise NotFoundError(str(exc)) from exc
 
     def project_command(self, project_id: str) -> str:
-        """Commande générique effective (surcharge persistée, sinon YAML)."""
+        """Effective generic command (persisted override, else YAML)."""
         return self._project_commands.get(project_id) or self._project(project_id).command
 
     def project_view(self, p: Project) -> ProjectView:
@@ -301,14 +301,14 @@ class RunService:
         )
 
     async def set_project_command(self, project_id: str, command: str | None) -> ProjectView:
-        """Surcharge la commande du projet (``None`` : revenir à la valeur du YAML)."""
+        """Override the project command (``None``: back to the YAML value)."""
         p = self._project(project_id)
         if command is not None:
             command = command.strip()
             try:
                 validate_command_template(command)
             except ValueError as exc:
-                raise InvalidRequestError(f"commande invalide : {exc}") from exc
+                raise InvalidRequestError(f"invalid command: {exc}") from exc
             if command == p.command:
                 command = None
         await self.store.set_project_command(project_id, command)
@@ -325,7 +325,7 @@ class RunService:
     async def get_configs(
         self, project_id: str, machine_id: str | None = None, *, refresh: bool = False
     ) -> ConfigList:
-        """Configs disponibles : liste statique et/ou découverte (cache 60 s)."""
+        """Available configs: static list and/or discovery (60 s cache)."""
         p = self._project(project_id)
         static = list(p.configs.static or [])
         discovered: list[str] | None = None
@@ -367,13 +367,13 @@ class RunService:
         except (MachineUnreachableError, ExecutorError) as exc:
             return None, str(exc)
         names = cmd.parse_config_listing(res.out, discover)
-        # find renvoie un code non nul si un sous-dossier est illisible : on garde ce qui a
-        # été trouvé et on ne signale une erreur que si rien n'a pu être listé.
+        # find returns a non-zero code if a subdirectory is unreadable: keep what was
+        # found and only report an error if nothing could be listed.
         if not res.ok and not names:
-            return None, f"découverte des configs impossible : {res.error_message()}"
+            return None, f"config discovery failed: {res.error_message()}"
         return names, None
 
-    # -- état d'interface ------------------------------------------------------------
+    # -- UI state --------------------------------------------------------------------
 
     async def get_ui_state(self) -> UiState:
         raw = await self.store.get_kv(UI_STATE_KEY)
@@ -406,7 +406,7 @@ class RunService:
         await self.store.set_kv(UI_STATE_KEY, state.model_dump(mode="json"))
         self.bus.publish("ui_state.updated", {"ui_state": state.model_dump(mode="json")})
 
-    # -- aperçu et lancement -------------------------------------------------------------
+    # -- preview and launch --------------------------------------------------------------
 
     def _spec(self, sel: Selection, run_id: str) -> RunSpec:
         try:
@@ -431,7 +431,7 @@ class RunService:
         return spec
 
     async def preview(self, sel: Selection, run_id: str = "rxxxxx") -> PreviewResult:
-        """Commande complète pour une sélection, sans rien exécuter."""
+        """Full command for a selection, without running anything."""
         spec = self._spec(sel, run_id)
         remote = cmd.docker_run(spec)
         argv = self.executor.full_argv(spec.machine, remote)
@@ -447,8 +447,8 @@ class RunService:
         cl = await self.get_configs(sel.project, sel.machine)
         if cl.configs and sel.config not in cl.configs:
             raise InvalidRequestError(
-                f"config '{sel.config}' inconnue pour le projet '{sel.project}' ; "
-                f"configs disponibles : {', '.join(cl.configs)}"
+                f"unknown config '{sel.config}' for project '{sel.project}'; "
+                f"available configs: {', '.join(cl.configs)}"
             )
 
     async def _new_run_id(self) -> str:
@@ -456,7 +456,7 @@ class RunService:
             rid = new_run_id()
             if await self.store.get_run(rid) is None:
                 return rid
-        raise ServiceError("impossible de générer un identifiant de run unique")
+        raise ServiceError("could not generate a unique run identifier")
 
     async def launch(
         self,
@@ -465,10 +465,10 @@ class RunService:
         source: RunSource = RunSource.UI,
         wait: bool | float = False,
     ) -> Run:
-        """Crée un run et lance son conteneur (``docker run -d``).
+        """Create a run and launch its container (``docker run -d``).
 
-        Avec ``wait=False`` le run est renvoyé immédiatement en statut ``launching`` ;
-        ``wait=True`` attend la fin du ``docker run`` ; un nombre attend au plus ce délai.
+        With ``wait=False`` the run is returned immediately with status ``launching``;
+        ``wait=True`` waits for the ``docker run`` to finish; a number waits at most that long.
         """
         run_id = await self._new_run_id()
         spec = self._spec(sel, run_id)
@@ -522,7 +522,7 @@ class RunService:
                 await self._update(
                     run,
                     status=RunStatus.FAILED,
-                    error=f"échec du lancement : {res.error_message()}",
+                    error=f"launch failed: {res.error_message()}",
                     finished_at=utcnow(),
                     exit_code=None,
                 )
@@ -535,12 +535,12 @@ class RunService:
         finally:
             lock.release()
 
-    # -- lecture ------------------------------------------------------------------------
+    # -- reading -------------------------------------------------------------------------
 
     async def get_run(self, run_id: str) -> Run:
         run = await self.store.get_run(run_id)
         if run is None:
-            raise NotFoundError(f"run '{run_id}' introuvable")
+            raise NotFoundError(f"run '{run_id}' not found")
         return run
 
     async def list_runs(
@@ -600,14 +600,14 @@ class RunService:
             label = _ACTION_LABELS.get(action, action)
             possible = ", ".join(allowed_actions(run.status, container_alive=run.container_alive))
             raise ActionNotAllowedError(
-                f"impossible de {label} le run {run.id} : statut '{run.status}' "
-                f"(actions possibles : {possible or 'aucune'})"
+                f"cannot {label} run {run.id}: status '{run.status}' "
+                f"(possible actions: {possible or 'none'})"
             )
 
     async def _acquire(self, run: Run) -> asyncio.Lock:
         lock = self._lock(run.id)
         if lock.locked():
-            raise ActionNotAllowedError(f"une action est déjà en cours sur le run {run.id}")
+            raise ActionNotAllowedError(f"an action is already in progress on run {run.id}")
         await lock.acquire()
         return lock
 
@@ -628,13 +628,12 @@ class RunService:
         source: RunSource = RunSource.UI,
         wait: bool | float = False,
     ) -> Run:
-        """Applique une action (pause, resume, stop, restart, relaunch)."""
+        """Apply an action (pause, resume, stop, restart, relaunch)."""
         try:
             act = RunAction(action)
         except ValueError as exc:
             raise InvalidRequestError(
-                f"action inconnue : {action!r} "
-                f"(possibles : {', '.join(a.value for a in RunAction)})"
+                f"unknown action: {action!r} (possible: {', '.join(a.value for a in RunAction)})"
             ) from exc
         if act is RunAction.PAUSE:
             return await self.pause(run_id)
@@ -657,7 +656,7 @@ class RunService:
                 run, cmd.docker_pause(run.container_name), ACTION_TIMEOUT_S
             )
             if not res.ok:
-                raise ServiceError(f"pause impossible : {res.error_message()}")
+                raise ServiceError(f"pause failed: {res.error_message()}")
             return await self._update(run, status=RunStatus.PAUSED, paused_at=utcnow())
         finally:
             lock.release()
@@ -671,13 +670,13 @@ class RunService:
                 run, cmd.docker_unpause(run.container_name), ACTION_TIMEOUT_S
             )
             if not res.ok:
-                raise ServiceError(f"reprise impossible : {res.error_message()}")
+                raise ServiceError(f"resume failed: {res.error_message()}")
             return await self._update(run, status=RunStatus.RUNNING, **_close_pause(run))
         finally:
             lock.release()
 
     async def stop(self, run_id: str, *, wait: bool | float = False) -> Run:
-        """Arrête le run (``docker stop -t <stop_timeout>``, après ``unpause`` si en pause)."""
+        """Stop the run (``docker stop -t <stop_timeout>``, after ``unpause`` if paused)."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.STOP)
         lock = await self._acquire(run)
@@ -704,18 +703,18 @@ class RunService:
                     run, cmd.docker_stop(run.container_name, timeout), timeout + ACTION_TIMEOUT_S
                 )
             except ServiceError as exc:
-                # L'arrêt n'a pas eu lieu : on l'oublie pour que le suivi ne reste pas bloqué
-                # en « stopping » au retour de la machine ; l'utilisateur pourra réessayer.
+                # The stop did not happen: forget it so that monitoring does not stay stuck
+                # in “stopping” when the machine comes back; the user can try again.
                 await self._update(
                     run,
                     status=RunStatus.UNREACHABLE if isinstance(exc, UnreachableError) else previous,
-                    error=f"arrêt impossible : {exc.message}",
+                    error=f"stop failed: {exc.message}",
                     stop_requested=False,
                 )
                 return
             if not res.ok:
                 await self._update(
-                    run, status=previous, error=f"arrêt impossible : {res.error_message()}",
+                    run, status=previous, error=f"stop failed: {res.error_message()}",
                     stop_requested=False,
                 )  # fmt: skip
                 return
@@ -740,8 +739,8 @@ class RunService:
             return 30
 
     async def restart(self, run_id: str) -> Run:
-        """Relance le même conteneur (``docker start``, ou ``docker restart`` s'il est conservé
-        démarré) : la commande repart du début."""
+        """Restart the same container (``docker start``, or ``docker restart`` if it was kept
+        started): the command starts over."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.RESTART)
         lock = await self._acquire(run)
@@ -755,7 +754,7 @@ class RunService:
                     run, cmd.docker_start(run.container_name), ACTION_TIMEOUT_S
                 )
             if not res.ok:
-                raise ServiceError(f"redémarrage impossible : {res.error_message()}")
+                raise ServiceError(f"restart failed: {res.error_message()}")
             run = await self._update(
                 run,
                 status=RunStatus.RUNNING,
@@ -774,31 +773,31 @@ class RunService:
             lock.release()
 
     async def close_container(self, run_id: str) -> Run:
-        """Arrête le conteneur conservé d'un run terminé (le statut du run ne change pas)."""
+        """Stop the kept container of a finished run (the run status does not change)."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.CLOSE)
         if not run.container_alive:
-            raise ActionNotAllowedError(f"le conteneur du run {run.id} est déjà arrêté")
+            raise ActionNotAllowedError(f"the container of run {run.id} is already stopped")
         lock = await self._acquire(run)
         try:
             res = await self._exec_action(
                 run, cmd.docker_stop(run.container_name, 10), 10 + ACTION_TIMEOUT_S
             )
             if not res.ok and "no such container" not in res.err.lower():
-                raise ServiceError(f"fermeture impossible : {res.error_message()}")
+                raise ServiceError(f"close failed: {res.error_message()}")
             return await self._update(run, container_alive=False)
         finally:
             lock.release()
 
     async def open_shell(self, run_id: str) -> ShellSession:
-        """Shell interactif dans le conteneur d'un run (venv activé, dans le workdir)."""
+        """Interactive shell in a run's container (venv activated, in the workdir)."""
         run = await self.get_run(run_id)
         if run.status is RunStatus.PAUSED:
-            raise ActionNotAllowedError(f"le run {run.id} est en pause : reprenez-le d'abord")
+            raise ActionNotAllowedError(f"run {run.id} is paused: resume it first")
         if not (run.container_alive or run.status in (RunStatus.RUNNING, RunStatus.STOPPING)):
             raise ActionNotAllowedError(
-                f"le conteneur du run {run.id} n'est pas démarré "
-                "(« redémarrer » le relance, commande comprise)"
+                f"the container of run {run.id} is not started "
+                "(“restart” starts it again, command included)"
             )
         machine = self._machine(run.machine_id)
         try:
@@ -822,7 +821,7 @@ class RunService:
     async def relaunch(
         self, run_id: str, *, source: RunSource = RunSource.UI, wait: bool | float = False
     ) -> Run:
-        """Nouveau run avec les mêmes paramètres (commande actuelle du projet)."""
+        """New run with the same parameters (current project command)."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.RELAUNCH)
         sel = Selection(
@@ -833,7 +832,7 @@ class RunService:
             config=run.config,
             overrides=run.overrides,
             cuda_visible_devices=run.cuda_visible_devices,
-            # paramètres encore présents dans la commande actuelle du projet
+            # parameters still present in the current project command
             params={
                 k: v
                 for k, v in run.params.items()
@@ -843,7 +842,7 @@ class RunService:
         return await self.launch(sel, source=source, wait=wait)
 
     async def delete(self, run_id: str) -> None:
-        """Supprime le conteneur (``docker rm``) puis le run."""
+        """Delete the container (``docker rm``) then the run."""
         run = await self.get_run(run_id)
         self._check_allowed(run, "delete")
         lock = await self._acquire(run)
@@ -859,7 +858,7 @@ class RunService:
                     ACTION_TIMEOUT_S + 10,
                 )
                 if not res.ok and "no such container" not in res.err.lower():
-                    raise ServiceError(f"suppression impossible : {res.error_message()}")
+                    raise ServiceError(f"delete failed: {res.error_message()}")
             await self.store.delete_run(run.id)
             self.logs.discard(run.id)
             self.bus.publish("run.deleted", {"id": run.id, "project_id": run.project_id})
@@ -870,8 +869,8 @@ class RunService:
     # -- logs ---------------------------------------------------------------------------
 
     async def _open_log_stream(self, run_id: str) -> LogStream:
-        """``docker logs`` complet (suivi si le run est actif) ; lève :class:`LogsGoneError`
-        si le conteneur n'existe plus."""
+        """Full ``docker logs`` (followed if the run is active); raises :class:`LogsGoneError`
+        if the container no longer exists."""
         run = await self.get_run(run_id)
         machine = self._machine(run.machine_id)
         res = await self.executor.exec(machine, cmd.docker_inspect(run.container_name))
@@ -883,7 +882,7 @@ class RunService:
         )
 
     async def _is_finished(self, run_id: str) -> bool:
-        """Le run est-il terminé ? Vérifie l'état réel du conteneur si la base dit « actif »."""
+        """Is the run finished? Checks the actual container state if the database says “active”."""
         run = await self.store.get_run(run_id)
         if run is None or run.status in FINISHED_STATUSES:
             return True
@@ -904,17 +903,17 @@ class RunService:
         self.logs.unsubscribe(sub)
 
     async def stream_logs(self, run_id: str, *, until_end: bool = True) -> AsyncIterator[bytes]:
-        """Logs bruts d'un run : tampon puis flux direct (s'arrête à la fin du run)."""
+        """Raw logs of a run: buffer then live stream (stops when the run ends)."""
         await self.get_run(run_id)
         async for chunk in self.logs.stream(run_id, until_end=until_end):
             yield chunk
 
     def log_path(self, run_id: str) -> Path | None:
-        """Fichier de sauvegarde des logs d'un run (peut ne pas exister)."""
+        """Log backup file of a run (may not exist)."""
         return self.logs.log_path(run_id)
 
     async def read_logs(self, run_id: str, tail: int | None = None) -> bytes:
-        """Logs bruts : fichier de sauvegarde, sinon ``docker logs --tail``, sinon le tampon."""
+        """Raw logs: backup file, else ``docker logs --tail``, else the buffer."""
         run = await self.get_run(run_id)
         saved = self.logs.read_file(run_id)
         if saved:
@@ -932,11 +931,11 @@ class RunService:
             buf = self.logs.buffer(run_id)
             if buf is not None:
                 return buf
-            raise ServiceError(f"logs indisponibles : {res.error_message()}")
-        # Sans TTY, docker logs sépare stdout et stderr : on les concatène.
+            raise ServiceError(f"logs unavailable: {res.error_message()}")
+        # Without a TTY, docker logs separates stdout and stderr: concatenate them.
         return res.stdout + res.stderr
 
-    # -- mises à jour et suivi -----------------------------------------------------------
+    # -- updates and monitoring ----------------------------------------------------------
 
     async def _inspect(self, run: Run) -> ContainerState | None:
         try:
@@ -951,7 +950,7 @@ class RunService:
         self.bus.publish(type_, {"run": RunView.of(run).model_dump(mode="json")})
 
     async def _update(self, run: Run, **changes: Any) -> Run:
-        """Applique des changements, persiste et publie ``run.updated`` si besoin."""
+        """Apply changes, persist and publish ``run.updated`` if needed."""
         fresh = await self.store.get_run(run.id)
         if fresh is None:
             return run
@@ -961,7 +960,7 @@ class RunService:
             self._publish_run("run.updated", updated)
             if updated.status != fresh.status:
                 log.info(
-                    "run %s : %s → %s",
+                    "run %s: %s → %s",
                     run.id,
                     fresh.status,
                     updated.status,
@@ -993,7 +992,7 @@ class RunService:
         return st
 
     async def mark_machine_unreachable(self, machine_id: str, reason: str) -> None:
-        """Passe les runs actifs de la machine en ``unreachable``."""
+        """Switch the machine's active runs to ``unreachable``."""
         self.set_machine_status(machine_id, reachable=False, error=reason)
         for run in await self.store.list_runs(machine=machine_id):
             if run.status in FINISHED_STATUSES or run.status is RunStatus.LAUNCHING:
@@ -1001,13 +1000,13 @@ class RunService:
             if self.is_busy(run.id):
                 continue
             await self._update(
-                run, status=RunStatus.UNREACHABLE, error=f"machine injoignable : {reason}"
+                run, status=RunStatus.UNREACHABLE, error=f"machine unreachable: {reason}"
             )
 
     async def apply_container_states(
         self, machine_id: str, containers: list[ContainerState], *, reconcile: bool = False
     ) -> None:
-        """Rapproche les runs en base des conteneurs vus sur la machine."""
+        """Reconcile the runs in the database with the containers seen on the machine."""
         by_name = {c.name: c for c in containers}
         runs = await self.store.list_runs(machine=machine_id)
         known = {r.container_name for r in runs}
@@ -1027,8 +1026,7 @@ class RunService:
                     await self._update(
                         run,
                         status=RunStatus.FAILED,
-                        error="conteneur introuvable sur la machine "
-                        "(supprimé en dehors de TrainHub ?)",
+                        error="container not found on the machine (deleted outside TrainHub?)",
                         finished_at=run.finished_at or utcnow(),
                         **_close_pause(run),
                     )
@@ -1048,18 +1046,18 @@ class RunService:
             return
         if new.is_finished:
             if run.status.is_finished:
-                # déjà terminé (évite d'écraser un statut stopped) : seul l'état du conteneur
-                # peut changer (conteneur conservé fermé en dehors de TrainHub…).
+                # already finished (avoid overwriting a stopped status): only the container
+                # state may change (kept container closed outside TrainHub…).
                 if "container_alive" in changes:
                     await self._update(run, container_alive=c.alive)
                 return
             st = await self._inspect(run)
             if st is not None:
-                # docker ps ne donne pas le code d'un conteneur conservé : inspect le donne.
+                # docker ps does not give the code of a kept container: inspect does.
                 new = status_from_container(st, stop_requested=run.stop_requested)
                 changes["container_alive"] = st.alive
             elif c.command_done:
-                return  # code de sortie inconnu : on attend le prochain tour
+                return  # unknown exit code: wait for the next round
             if new.is_finished:
                 changes.update(
                     status=new,
@@ -1080,7 +1078,7 @@ class RunService:
         elif new is RunStatus.RUNNING:
             changes.update(_close_pause(run))
         if run.status.is_finished:
-            # Redémarré en dehors de TrainHub.
+            # Restarted outside TrainHub.
             st = await self._inspect(run)
             changes.update(
                 started_at=st.started_at if st and st.started_at else utcnow(),
@@ -1116,7 +1114,7 @@ class RunService:
             image_id=labels.get(cmd.LABEL_IMAGE, c.image),
             venv_id=labels.get(cmd.LABEL_VENV, "?"),
             config=labels.get(cmd.LABEL_CONFIG, "?"),
-            command="(importé depuis un conteneur existant)",
+            command="(imported from an existing container)",
             full_command=[],
             container_name=c.name,
             status=status,
@@ -1130,11 +1128,11 @@ class RunService:
         )
         await self.store.save_run(run)
         self._publish_run("run.created", run)
-        log.info("conteneur importé", extra={"run_id": run_id, "machine": machine_id})
+        log.info("container imported", extra={"run_id": run_id, "machine": machine_id})
 
 
 def _tail_lines(data: bytes, tail: int | None) -> bytes:
-    """Les ``tail`` dernières lignes de ``data`` (tout si ``None``)."""
+    """The last ``tail`` lines of ``data`` (everything if ``None``)."""
     if tail is None:
         return data
     if tail <= 0:
@@ -1148,7 +1146,7 @@ def _tail_lines(data: bytes, tail: int | None) -> bytes:
 
 
 def _close_pause(run: Run) -> dict[str, Any]:
-    """Champs à mettre à jour pour clore une pause en cours."""
+    """Fields to update to close an ongoing pause."""
     if run.paused_at is None:
         return {}
     extra = max(0.0, (utcnow() - run.paused_at).total_seconds())

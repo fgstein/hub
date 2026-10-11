@@ -22,7 +22,7 @@ export function TabBar() {
   return (
     <nav
       class="flex h-10 shrink-0 items-stretch border-b border-line-weak bg-bg-stronger"
-      aria-label="Projets"
+      aria-label="Projects"
       data-testid="tabbar"
     >
       <div class="flex min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]" role="tablist">
@@ -92,7 +92,7 @@ export function TabBar() {
                 </Show>
                 <button
                   type="button"
-                  aria-label={`Fermer ${p()?.label ?? id}`}
+                  aria-label={`Close ${p()?.label ?? id}`}
                   class="flex size-4 items-center justify-center rounded text-icon opacity-0 hover:bg-surface-hover hover:text-icon-hover focus-visible:opacity-100 group-hover:opacity-100"
                   classList={{ "opacity-60": active() }}
                   onClick={(e) => onClose(e, id)}
@@ -141,7 +141,7 @@ function AddTabMenu(props: { onPick: (id: string) => void }) {
     >
       <Popover.Trigger
         class="flex w-9 shrink-0 items-center justify-center text-icon hover:bg-surface-hover hover:text-icon-hover"
-        aria-label="Ouvrir un projet"
+        aria-label="Open a project"
         data-testid="tab-add"
       >
         <IconPlus />
@@ -168,7 +168,7 @@ function AddTabMenu(props: { onPick: (id: string) => void }) {
                 if (p) pick(p.id)
               }
             }}
-            placeholder="Rechercher un projet…"
+            placeholder="Search projects…"
             class="mb-1 h-7 w-full rounded bg-input px-2 text-sm text-fg-strong outline-none placeholder:text-fg-weaker"
           />
           <Show
@@ -176,8 +176,8 @@ function AddTabMenu(props: { onPick: (id: string) => void }) {
             fallback={
               <div class="px-2 py-1.5 text-sm text-fg-weak">
                 {(state.inventory?.projects.length ?? 0) === state.ui.open_tabs.length
-                  ? "Tous les projets sont ouverts"
-                  : "Aucun projet"}
+                  ? "All projects are open"
+                  : "No projects"}
               </div>
             }
           >
@@ -205,7 +205,7 @@ function AddTabMenu(props: { onPick: (id: string) => void }) {
 
 function ThemeButton() {
   const label = () =>
-    themePref() === "system" ? "Thème : système" : themePref() === "dark" ? "Thème : sombre" : "Thème : clair"
+    themePref() === "system" ? "Theme: system" : themePref() === "dark" ? "Theme: dark" : "Theme: light"
   return (
     <button
       type="button"

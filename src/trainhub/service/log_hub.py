@@ -1,18 +1,18 @@
-"""Hub de logs : un seul ``docker logs`` par run, partagé entre abonnés et sauvegardé sur disque.
+"""Log hub: a single ``docker logs`` per run, shared between subscribers and saved to disk.
 
-- tous les runs actifs sont suivis en permanence (même sans terminal ouvert) et leurs logs
-  sont écrits au fil de l'eau dans ``<log_dir>/<run_id>.log`` : le fichier reste lisible quand
-  le conteneur est supprimé, que la machine est injoignable ou que TrainHub redémarre ;
-- tampon circulaire (2 Mo par défaut) envoyé à chaque nouvel abonné, puis le flux direct ;
-  pour un run dont le suivi n'est pas actif, le tampon est rechargé depuis le fichier ;
-- quand le suivi redémarre (relance du conteneur, retour d'une machine), ``docker logs``
-  renvoie tout l'historique : le tampon est vidé, un message ``reset`` est envoyé aux abonnés
-  et le fichier est réécrit (voir :class:`_LogFile`) ;
-- le suivi d'un run terminé dont le conteneur reste démarré est arrêté par :meth:`finish` ;
-  un fichier ``<run_id>.done`` indique alors que la sauvegarde est complète ;
-- un canal sans abonné est oublié ``idle_timeout`` secondes (30 s) après la fin du run.
+- every active run is followed permanently (even with no terminal open) and its logs are
+  written as they come into ``<log_dir>/<run_id>.log``: the file stays readable when the
+  container is deleted, the machine is unreachable or TrainHub restarts;
+- ring buffer (2 MB by default) sent to every new subscriber, then the live stream;
+  for a run that is not being followed, the buffer is reloaded from the file;
+- when following restarts (container restarted, machine back), ``docker logs`` returns
+  the whole history: the buffer is cleared, a ``reset`` message is sent to subscribers
+  and the file is rewritten (see :class:`_LogFile`);
+- following a finished run whose container stays started is stopped by :meth:`finish`;
+  a ``<run_id>.done`` file then indicates that the backup is complete;
+- a channel without subscribers is forgotten ``idle_timeout`` seconds (30 s) after the run ends.
 
-Les logs restent des octets bruts (ANSI et ``\\r`` compris).
+Logs stay raw bytes (ANSI and ``\\r`` included).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ log = logging.getLogger("trainhub.logs")
 BUFFER_SIZE = 2 * 1024 * 1024
 IDLE_TIMEOUT_S = 30.0
 RETRY_DELAY_S = 3.0
-#: Délai laissé au flux pour livrer les dernières lignes quand un run se termine.
+#: Time given to the stream to deliver the last lines when a run finishes.
 FINISH_GRACE_S = 1.5
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -43,7 +43,7 @@ LogKind = Literal["data", "reset", "end"]
 
 
 class LogsGoneError(Exception):
-    """Les logs ne sont plus disponibles côté Docker (conteneur supprimé)."""
+    """Logs are no longer available on the Docker side (container deleted)."""
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class LogMessage:
 
 @dataclass(eq=False)
 class LogSubscriber:
-    """Abonné à un flux de logs ; itérable de façon asynchrone."""
+    """Subscriber to a log stream; asynchronously iterable."""
 
     run_id: str
     queue: asyncio.Queue[LogMessage] = field(default_factory=asyncio.Queue)
@@ -66,7 +66,7 @@ class LogSubscriber:
             yield msg
 
     async def chunks(self, *, until_end: bool = True) -> AsyncIterator[bytes]:
-        """Octets bruts ; s'arrête à la fin du conteneur si ``until_end``."""
+        """Raw bytes; stops when the container ends if ``until_end``."""
         async for msg in self.messages():
             if msg.kind == "data":
                 yield msg.data
@@ -75,14 +75,14 @@ class LogSubscriber:
 
 
 class _LogFile:
-    """Sauvegarde d'un run sur disque, réécrite à chaque session de suivi.
+    """On-disk backup of a run, rewritten on every following session.
 
-    Une session écrit d'abord dans ``<id>.log.part`` ; dès qu'elle a rattrapé la taille de
-    l'ancien fichier, elle le remplace (renommage atomique) et l'écriture continue au même
-    endroit, sans tampon. Si la session se termine plus courte que l'ancien fichier (logs
-    Docker tronqués par une rotation, conteneur recréé…), l'ancien est conservé sous
-    ``<id>.prev.log``. Une session interrompue avant d'avoir rattrapé l'ancien fichier est
-    abandonnée : l'ancien reste la référence.
+    A session first writes to ``<id>.log.part``; as soon as it has caught up with the size of
+    the old file, it replaces it (atomic rename) and writing goes on in the same place,
+    unbuffered. If the session ends shorter than the old file (Docker logs truncated by a
+    rotation, container recreated…), the old one is kept as ``<id>.prev.log``. A session
+    interrupted before catching up with the old file is abandoned: the old one remains the
+    reference.
     """
 
     def __init__(self, path: Path) -> None:
@@ -120,7 +120,7 @@ class _LogFile:
             self.old_size = self.path.stat().st_size if self.path.exists() else 0
             self.fh = self.part.open("wb", buffering=0)
         except OSError as exc:
-            self._warn("sauvegarde des logs impossible", exc)
+            self._warn("cannot save logs", exc)
             self.fh = None
             return
         self.size = 0
@@ -139,14 +139,14 @@ class _LogFile:
         try:
             self.fh.write(data)
         except OSError as exc:
-            self._warn("écriture des logs impossible", exc)
+            self._warn("cannot write logs", exc)
             return
         self.size += len(data)
         if not self.promoted and self.size >= self.old_size:
             self._promote()
 
     def close(self, *, final: bool) -> None:
-        """Termine la session ; ``final`` : le run est fini, la sauvegarde est complète."""
+        """End the session; ``final``: the run is over, the backup is complete."""
         if self.fh is None:
             return
         with contextlib.suppress(OSError):
@@ -162,7 +162,7 @@ class _LogFile:
             if final:
                 self.done_marker.touch()
         except OSError as exc:
-            self._warn("finalisation des logs impossible", exc)
+            self._warn("cannot finalize logs", exc)
 
 
 @dataclass(eq=False)
@@ -191,7 +191,7 @@ IsFinished = Callable[[str], Awaitable[bool]]
 
 
 class LogHub:
-    """Partage les flux ``docker logs`` entre abonnés et les sauvegarde dans ``log_dir``."""
+    """Share ``docker logs`` streams between subscribers and save them in ``log_dir``."""
 
     def __init__(
         self,
@@ -213,10 +213,10 @@ class LogHub:
         self.finish_grace = finish_grace
         self._channels: dict[str, _Channel] = {}
 
-    # -- fichiers -------------------------------------------------------------------
+    # -- files ----------------------------------------------------------------------
 
     def log_path(self, run_id: str) -> Path | None:
-        """Fichier de sauvegarde d'un run (``None`` sans répertoire ou id non sûr)."""
+        """Backup file of a run (``None`` without a directory or with an unsafe id)."""
         if self.log_dir is None or not _SAFE_ID.match(run_id):
             return None
         return self.log_dir / f"{run_id}.log"
@@ -241,7 +241,7 @@ class LogHub:
                 ch.complete = ch.file.complete
         return ch
 
-    # -- abonnements -------------------------------------------------------------
+    # -- subscriptions -----------------------------------------------------------
 
     async def subscribe(self, run_id: str) -> LogSubscriber:
         ch = self._channel(run_id)
@@ -268,7 +268,7 @@ class LogHub:
         self._schedule_idle(ch)
 
     async def stream(self, run_id: str, *, until_end: bool = True) -> AsyncIterator[bytes]:
-        """Itère sur les logs d'un run (tampon puis direct)."""
+        """Iterate over a run's logs (buffer then live)."""
         sub = await self.subscribe(run_id)
         try:
             async for chunk in sub.chunks(until_end=until_end):
@@ -276,10 +276,10 @@ class LogHub:
         finally:
             self.unsubscribe(sub)
 
-    # -- contrôle ------------------------------------------------------------------
+    # -- control -------------------------------------------------------------------
 
     def follow(self, run_id: str) -> None:
-        """Suit (et sauvegarde) les logs d'un run actif, abonnés ou non."""
+        """Follow (and save) the logs of an active run, with or without subscribers."""
         ch = self._channel(run_id)
         if ch.finish_task is not None and not ch.finish_task.done():
             return
@@ -288,7 +288,7 @@ class LogHub:
             self._start(ch)
 
     def restart(self, run_id: str) -> None:
-        """Nouvelle exécution du conteneur (``docker start``) : reprend le suivi depuis le début."""
+        """New execution of the container (``docker start``): follow again from the start."""
         ch = self._channel(run_id)
         if ch.finish_task is not None:
             ch.finish_task.cancel()
@@ -297,9 +297,9 @@ class LogHub:
         self._start(ch)
 
     def finish(self, run_id: str) -> None:
-        """Le run est terminé : arrête le suivi après un court délai et clôt la sauvegarde.
+        """The run is finished: stop following after a short delay and close the backup.
 
-        Nécessaire quand le conteneur reste démarré (``docker logs -f`` ne se termine pas).
+        Needed when the container stays started (``docker logs -f`` does not end).
         """
         ch = self._channels.get(run_id)
         if ch is None or ch.complete:
@@ -308,7 +308,7 @@ class LogHub:
             ch.finish_task = asyncio.get_running_loop().create_task(self._finish_later(ch))
 
     def discard(self, run_id: str) -> None:
-        """Oublie un run (supprimé) : termine les abonnés. Le fichier de logs est conservé."""
+        """Forget a (deleted) run: end the subscribers. The log file is kept."""
         ch = self._channels.pop(run_id, None)
         if ch is None:
             return
@@ -341,7 +341,7 @@ class LogHub:
             if ch.file is not None:
                 ch.file.close(final=False)
 
-    # -- interne -------------------------------------------------------------------
+    # -- internals -----------------------------------------------------------------
 
     def _start(self, ch: _Channel) -> None:
         self._stop_follower(ch)
@@ -370,10 +370,10 @@ class LogHub:
         if not ch.subscribers and ch.complete:
             ch.idle_task = None
             self._drop(ch)
-            log.debug("canal de logs oublié", extra={"run_id": ch.run_id})
+            log.debug("log channel forgotten", extra={"run_id": ch.run_id})
 
     def _complete(self, ch: _Channel, *, saved: bool) -> None:
-        """Fin du suivi d'un run terminé ; ``saved`` : la sauvegarde est complète."""
+        """End of following a finished run; ``saved``: the backup is complete."""
         if ch.file is not None:
             if ch.file.fh is not None:
                 ch.file.close(final=saved)
@@ -410,7 +410,7 @@ class LogHub:
             try:
                 stream = await self._open(ch.run_id)
                 ch.stream = stream
-                # docker logs renvoie tout l'historique : on repart de zéro.
+                # docker logs returns the whole history: start over from scratch.
                 ch.buffer.clear()
                 ch.broadcast(LogMessage("reset"))
                 if ch.file is not None:
@@ -423,11 +423,11 @@ class LogHub:
                     await stream.close()
                 raise
             except LogsGoneError:
-                # Conteneur supprimé : le fichier (s'il existe) est tout ce qui reste.
+                # Container deleted: the file (if any) is all that is left.
                 self._complete(ch, saved=True)
                 return
             except Exception as exc:
-                log.info("flux de logs interrompu", extra={"run_id": ch.run_id, "error": str(exc)})
+                log.info("log stream interrupted", extra={"run_id": ch.run_id, "error": str(exc)})
             finally:
                 ch.stream = None
             if stream is not None:
@@ -437,10 +437,10 @@ class LogHub:
             except Exception:
                 finished = True
             if finished:
-                # Sauvegarde complète seulement si le flux est allé au bout.
+                # Complete backup only if the stream went all the way.
                 self._complete(ch, saved=ended)
                 return
-            # Run toujours actif (machine injoignable, connexion coupée) : on réessaie.
+            # Run still active (machine unreachable, connection lost): try again.
             if ch.file is not None:
                 ch.file.close(final=False)
             await asyncio.sleep(self.retry_delay)

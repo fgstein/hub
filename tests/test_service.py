@@ -1,4 +1,4 @@
-"""Couche service avec l'exécuteur fake : cycle de vie complet."""
+"""Service layer with the fake executor: full lifecycle."""
 
 from __future__ import annotations
 
@@ -70,10 +70,10 @@ async def test_pause_freezes_logs_and_resume(svc: RunService) -> None:
     size = len(svc.logs.buffer(run.id) or b"")
     await asyncio.sleep(0.4)
     assert len(svc.logs.buffer(run.id) or b"") == size
-    # le monitor ne change pas le statut d'un run en pause
+    # the monitor does not change the status of a paused run
     await svc.monitor.poll("gpu-01")
     assert (await svc.get_run(run.id)).status is RunStatus.PAUSED
-    with pytest.raises(ActionNotAllowedError, match="actions possibles : resume, stop"):
+    with pytest.raises(ActionNotAllowedError, match="possible actions: resume, stop"):
         await svc.pause(run.id)
     resumed = await svc.resume(run.id)
     assert resumed.status is RunStatus.RUNNING and resumed.paused_total_s >= 0.4
@@ -107,9 +107,9 @@ async def test_forbidden_transitions(svc: RunService) -> None:
     for action in ("resume", "restart", "relaunch"):
         with pytest.raises(ActionNotAllowedError):
             await svc.action(run.id, action)
-    with pytest.raises(ActionNotAllowedError, match="supprimer"):
+    with pytest.raises(ActionNotAllowedError, match="delete"):
         await svc.delete(run.id)
-    with pytest.raises(InvalidRequestError, match="action inconnue"):
+    with pytest.raises(InvalidRequestError, match="unknown action"):
         await svc.action(run.id, "explode")
 
 
@@ -139,7 +139,7 @@ async def test_launch_failure_image_missing(tmp_path: Path) -> None:
         assert run.status is RunStatus.FAILED
         assert run.error and "pull access denied" in run.error
         assert run.finished_at is not None
-        await svc.delete(run.id)  # aucun conteneur : suppression quand même possible
+        await svc.delete(run.id)  # no container: deleting is still possible
     finally:
         await svc.close()
 
@@ -168,9 +168,9 @@ async def test_unreachable_then_back(svc: RunService) -> None:
     fake.forced_state["gpu-01"] = "down"
     await svc.monitor.poll("gpu-01")
     r = await svc.get_run(run.id)
-    assert r.status is RunStatus.UNREACHABLE and r.error and "injoignable" in r.error
+    assert r.status is RunStatus.UNREACHABLE and r.error and "unreachable" in r.error
     assert svc.machine_state("gpu-01").reachable is False
-    # les autres machines ne sont pas affectées
+    # the other machines are not affected
     await svc.monitor.poll("gpu-02")
     assert svc.machine_state("gpu-02").reachable is True
     with pytest.raises(ActionNotAllowedError):
@@ -201,12 +201,12 @@ async def test_reconciliation_after_restart(tmp_path: Path) -> None:
     await svc1.start(monitor=False)
     kept = await svc1.launch(SEL, wait=True)
     lost = await svc1.launch(SEL, wait=True)
-    # Conteneur lancé par une autre instance (absent de la base)
+    # Container launched by another instance (not in the database)
     other = make_service(executor=fake, db=":memory:")
     await other.start(monitor=False)
     orphan = await other.launch(SEL.model_copy(update={"config": "unet_large"}), wait=True)
     await other.store.close()
-    # Arrêt du serveur, conteneur supprimé à la main entre-temps
+    # Server stopped, container deleted by hand in the meantime
     await svc1.store.close()
     fake.machines["gpu-01"].containers.pop(lost.container_name)
 
@@ -216,7 +216,7 @@ async def test_reconciliation_after_restart(tmp_path: Path) -> None:
         await svc2.monitor.poll("gpu-01")
         assert (await svc2.get_run(kept.id)).status is RunStatus.RUNNING
         gone = await svc2.get_run(lost.id)
-        assert gone.status is RunStatus.FAILED and gone.error and "introuvable" in gone.error
+        assert gone.status is RunStatus.FAILED and gone.error and "not found" in gone.error
         imported = await svc2.get_run(orphan.id)
         assert imported.source is RunSource.IMPORT
         assert imported.config == "unet_large" and imported.project_id == "segmentation"
@@ -241,17 +241,17 @@ async def test_shared_log_stream(svc: RunService) -> None:
     a = await svc.subscribe_logs(run.id)
     await asyncio.sleep(0.3)
     b = await svc.subscribe_logs(run.id)
-    # le second abonné reçoit d'abord le tampon complet
+    # the second subscriber first receives the full buffer
     first = await asyncio.wait_for(b.queue.get(), 1)
     assert first.kind == "data" and b"[HYDRA]" in first.data
     assert opened == 1 and svc.logs.subscriber_count(run.id) == 2
     svc.unsubscribe_logs(a)
     svc.unsubscribe_logs(b)
-    # un run actif reste suivi (et sauvegardé) sans abonné
-    await asyncio.sleep(0.4)  # délai d'inactivité (0.2 s en test)
+    # an active run stays followed (and saved) without subscribers
+    await asyncio.sleep(0.4)  # idle timeout (0.2 s in tests)
     assert svc.logs.is_following(run.id)
     await svc.stop(run.id, wait=True)
-    await asyncio.sleep(0.6)  # délai de fin + délai d'inactivité
+    await asyncio.sleep(0.6)  # finish delay + idle timeout
     assert not svc.logs.is_following(run.id)
     assert opened == 1
 
@@ -284,14 +284,14 @@ async def test_configs_static_and_discovered(svc: RunService) -> None:
     counts = (await svc.get_configs("detection", "gpu-02")).run_counts
     assert counts["exp/sweep/yolo_l"].total == 2 and counts["exp/sweep/yolo_l"].active == 1
     assert "yolo_s" not in counts
-    with pytest.raises(InvalidRequestError, match="configs disponibles : baseline, unet_large"):
+    with pytest.raises(InvalidRequestError, match="available configs: baseline, unet_large"):
         await svc.launch(SEL.model_copy(update={"config": "foo"}))
 
 
 async def test_selection_errors(svc: RunService) -> None:
     with pytest.raises(InvalidRequestError, match="machine 'gpu-09'"):
         await svc.preview(SEL.model_copy(update={"machine": "gpu-09"}))
-    with pytest.raises(InvalidRequestError, match="disponibles : main"):
+    with pytest.raises(InvalidRequestError, match="available: main"):
         await svc.preview(SEL.model_copy(update={"venv": "exp"}))
 
 
@@ -347,7 +347,7 @@ async def test_inventory_hot_reload(tmp_path: Path) -> None:
         path.write_text("machines: [")
         os.utime(path, (2, 2))
         assert not mgr.check()
-        assert mgr.error and "YAML invalide" in mgr.error
+        assert mgr.error and "invalid YAML" in mgr.error
         assert svc.inventory.project("segmentation").label == "Seg 2"
     finally:
         await svc.close()
@@ -361,7 +361,7 @@ async def test_stop_on_unreachable_machine_can_be_retried(svc: RunService) -> No
     fake.forced_state["gpu-01"] = "down"
     failed = await svc.stop(run.id, wait=True)
     assert failed.status is RunStatus.UNREACHABLE and not failed.stop_requested
-    assert failed.error and "arrêt impossible" in failed.error
+    assert failed.error and "stop failed" in failed.error
     fake.forced_state["gpu-01"] = "ok"
     await svc.monitor.poll("gpu-01")
     assert (await svc.get_run(run.id)).status is RunStatus.RUNNING
@@ -378,8 +378,8 @@ async def test_container_kept_after_command(svc: RunService) -> None:
     assert done.exit_code == 0 and done.container_alive and done.finished_at is not None
     assert fake.machines["gpu-01"].containers[run.container_name].state == "running"
     logs = await svc.read_logs(run.id)
-    assert b"conteneur conserv" in logs
-    # le suivi des logs s'arrête bien malgré le conteneur toujours démarré
+    assert b"container kept" in logs
+    # log following does stop even though the container is still started
     text = b"".join([c async for c in svc.stream_logs(run.id)])
     assert b"Training finished" in text
 
@@ -398,7 +398,7 @@ async def test_container_kept_after_command(svc: RunService) -> None:
     assert (await svc.get_run(run.id)).status is RunStatus.SUCCEEDED
     with pytest.raises(ActionNotAllowedError):
         await svc.close_container(run.id)
-    with pytest.raises(ActionNotAllowedError, match="pas démarré"):
+    with pytest.raises(ActionNotAllowedError, match="not started"):
         await svc.open_shell(run.id)
 
 
@@ -410,11 +410,11 @@ async def test_failed_command_keeps_container_and_restart(tmp_path: Path) -> Non
         await wait_for(lambda: status_is(svc, run.id, RunStatus.FAILED))
         failed = await svc.get_run(run.id)
         assert failed.exit_code == 1 and failed.container_alive
-        # docker restart sur un conteneur conservé : la commande repart du début
+        # docker restart on a kept container: the command starts over
         again = await svc.restart(run.id)
         assert again.status is RunStatus.RUNNING and again.container_alive
         await wait_for(lambda: status_is(svc, run.id, RunStatus.FAILED))
-        # suppression d'un conteneur encore démarré : docker rm -f
+        # deleting a container that is still started: docker rm -f
         await svc.delete(run.id)
         fake = svc.executor
         assert isinstance(fake, FakeExecutor)
@@ -431,15 +431,15 @@ async def test_logs_saved_to_file_and_kept(tmp_path: Path) -> None:
     run = await svc1.launch(SEL, wait=True)
     path = svc1.log_path(run.id)
     assert path is not None
-    # sauvegarde au fil de l'eau, sans abonné
+    # saved as it comes, without subscribers
     await wait_for(lambda: _async(path.exists() and b"[HYDRA]" in path.read_bytes()))
     await wait_for(lambda: status_is(svc1, run.id, RunStatus.SUCCEEDED))
     await wait_for(lambda: _async(path.with_suffix(".done").exists()))
     saved = path.read_bytes()
-    assert b"Training finished" in saved and b"conteneur conserv" in saved
+    assert b"Training finished" in saved and b"container kept" in saved
     await svc1.close()
 
-    # conteneur supprimé en dehors de TrainHub, puis redémarrage de TrainHub
+    # container deleted outside TrainHub, then TrainHub restarts
     fake.machines["gpu-01"].containers.pop(run.container_name)
     svc2 = make_service(tmp_path, executor=fake)
     await svc2.start(monitor=False)
@@ -452,7 +452,7 @@ async def test_logs_saved_to_file_and_kept(tmp_path: Path) -> None:
         svc2.unsubscribe_logs(sub)
         assert await svc2.read_logs(run.id) == saved
         assert (await svc2.read_logs(run.id, tail=1)).startswith(b"[trainhub]")
-        # supprimer le run conserve le fichier de sauvegarde
+        # deleting the run keeps the backup file
         await svc2.delete(run.id)
         assert path.read_bytes() == saved
     finally:
@@ -466,18 +466,18 @@ async def test_log_file_not_truncated_by_shorter_session(tmp_path: Path) -> None
     f.begin()
     f.write(b"0123456789")
     f.close(final=False)
-    # session interrompue avant d'avoir rattrapé l'ancien fichier : abandonnée
+    # session interrupted before catching up with the old file: abandoned
     f.begin()
     f.write(b"abc")
     f.close(final=False)
     assert f.path.read_bytes() == b"0123456789" and not f.part.exists()
-    # session terminée plus courte (logs Docker tronqués) : l'ancien fichier est gardé à part
+    # session ended shorter (Docker logs truncated): the old file is kept aside
     f.begin()
     f.write(b"xyz")
     f.close(final=True)
     assert f.path.read_bytes() == b"xyz" and f.prev.read_bytes() == b"0123456789"
     assert f.complete
-    # session qui rattrape l'ancien fichier : le remplace au fil de l'eau
+    # session catching up with the old file: replaces it as it goes
     f.begin()
     assert not f.complete
     f.write(b"xyz+more")

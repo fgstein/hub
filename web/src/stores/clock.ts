@@ -1,6 +1,6 @@
 import { createRoot, createSignal } from "solid-js"
 
-/** Horloge partagée (une mise à jour par seconde), corrigée du décalage avec le serveur. */
+/** Shared clock (one update per second), corrected for the skew with the server. */
 const clock = createRoot(() => {
   const [now, setNow] = createSignal(Date.now())
   const [skew, setSkew] = createSignal(0)

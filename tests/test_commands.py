@@ -1,4 +1,4 @@
-"""Construction des commandes et échappement à chaque niveau d'imbrication."""
+"""Command building and escaping at every nesting level."""
 
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def _wait_output(proc: subprocess.Popen[str], needle: str) -> str:
         seen += line
         if needle in line:
             return seen
-    raise AssertionError(f"{needle!r} absent de la sortie : {seen!r}")
+    raise AssertionError(f"{needle!r} missing from the output: {seen!r}")
 
 
 @pytest.mark.parametrize("code", [0, 3])
@@ -126,11 +126,11 @@ def test_keep_alive_script_keeps_container_and_returns_code(
     script, exit_file = _keep_alive_script(tmp_path, inventory, f"sh -c 'echo hi; exit {code}' --")
     proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, text=True)
     try:
-        out = _wait_output(proc, "[trainhub] commande terminée")
+        out = _wait_output(proc, "[trainhub] command finished")
         assert "hi" in out and f"(code {code})" in out
         assert exit_file.read_text().strip() == str(code)
-        assert proc.poll() is None  # conteneur conservé
-        proc.send_signal(signal.SIGTERM)  # fermeture : sort avec le code de la commande
+        assert proc.poll() is None  # container kept
+        proc.send_signal(signal.SIGTERM)  # closing: exits with the command's code
         assert proc.wait(5) == code
     finally:
         proc.kill()
@@ -144,7 +144,7 @@ def test_keep_alive_script_forwards_sigterm(tmp_path: Path, inventory: Inventory
     proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, text=True)
     try:
         _wait_output(proc, "ready")
-        proc.send_signal(signal.SIGTERM)  # docker stop pendant la commande
+        proc.send_signal(signal.SIGTERM)  # docker stop during the command
         assert proc.wait(5) == 7
         assert not exit_file.exists()
     finally:
@@ -252,7 +252,7 @@ def test_config_name_placeholder(inventory: Inventory) -> None:
     assert c.resolved_command(spec) == (
         "python t.py --config-path /cfg/exp/sweep/unet --config-name unet"
     )
-    with pytest.raises(ValueError, match="chemin relatif"):
+    with pytest.raises(ValueError, match="relative path"):
         c.docker_run(spec_for(inventory, config="../etc/passwd"))
 
 
@@ -281,7 +281,7 @@ def test_invalid_config_rejected(inventory: Inventory, bad: str) -> None:
         c.build_run(spec_for(inventory, config=bad))
 
 
-# --- échappement : exécution réelle des deux niveaux de shell ----------------------
+# --- escaping: actually running both shell levels ----------------------------------
 
 TRICKY = [
     "baseline",
@@ -324,7 +324,7 @@ def _make_stubs(tmp: Path) -> dict[str, str]:
 
 
 def _run_remote(remote_string: str, env: dict[str, str], cwd: Path) -> list[str]:
-    """Simule le shell de connexion distant : ``sh -c "<chaîne reçue par ssh>"``."""
+    """Simulate the remote login shell: ``sh -c "<string received by ssh>"``."""
     out = subprocess.run(
         ["sh", "-c", remote_string], env=env, cwd=cwd, capture_output=True, text=True, check=True
     )
@@ -361,14 +361,14 @@ def test_escaping_roundtrip(
         overrides=overrides,
     )
     argv = c.build_run(spec)
-    # Niveau 1 : la chaîne passée à ssh, ré-interprétée par le shell distant.
+    # Level 1: the string passed to ssh, re-interpreted by the remote shell.
     docker_argv = _run_remote(argv[-1], env, tmp_path)
     assert docker_argv == c.docker_run(spec)[1:]
-    # Niveau 2 : bash -lc SCRIPT dans le conteneur (bash -c ici pour garder le PATH).
+    # Level 2: bash -lc SCRIPT in the container (bash -c here to keep the PATH).
     assert docker_argv[-3:-1] == ["bash", "-lc"]
     script = docker_argv[-1]
     if keep_alive:
-        # Le conteneur resterait démarré : on s'arrête juste après la commande.
+        # The container would stay started: stop right after the command.
         script = script.replace(c.EXIT_FILE, str(tmp_path / "exit"))
         script = script.split("; trap 'exit $code'")[0]
     out = subprocess.run(
@@ -387,12 +387,12 @@ def test_make_spec_restrictions(inventory: Inventory) -> None:
         image="torch-nightly", venv="exp", config=" baseline ", cuda_visible_devices=" ",
     )  # fmt: skip
     assert ok.config == "baseline" and ok.cuda_visible_devices is None
-    with pytest.raises(SelectionError, match="autorisées : gpu-01, gpu-02"):
+    with pytest.raises(SelectionError, match="allowed: gpu-01, gpu-02"):
         make_spec(
             inventory, run_id="r1", project="segmentation", machine="local",
             image="torch-2.4", venv="main", config="b",
         )  # fmt: skip
-    with pytest.raises(SelectionError, match="disponibles : main"):
+    with pytest.raises(SelectionError, match="available: main"):
         make_spec(
             inventory, run_id="r1", project="segmentation", machine="gpu-01",
             image="torch-2.4", venv="exp", config="b",
@@ -418,7 +418,7 @@ def test_free_params_substitution() -> None:
     tpl = "python t.py --config-name {config} {options} --my_option {option2}"
     out = c.resolve_command(tpl, **kw, params={"options": "a=1 'b c' $HOME", "option2": "x;y"})
     assert out == "python t.py --config-name base a=1 'b c' '$HOME' --my_option 'x;y'"
-    # paramètre vide ou absent : rien n'est inséré
+    # empty or missing parameter: nothing is inserted
     assert c.resolve_command(tpl, **kw) == "python t.py --config-name base  --my_option "
     with pytest.raises(ValueError, match="option2"):
         c.resolve_command(tpl, **kw, params={"option2": "'oops"})

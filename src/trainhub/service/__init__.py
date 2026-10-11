@@ -1,4 +1,4 @@
-"""Couche service partagée par l'API, le WebSocket, le MCP, la classe TrainHub et la CLI."""
+"""Service layer shared by the API, the WebSocket, MCP, the TrainHub class and the CLI."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .store import Store
 
 
 def create_service(settings: Settings, *, version: str = "0.1.0") -> RunService:
-    """Assemble inventaire, exécuteur et base SQLite selon la configuration."""
+    """Wire up inventory, executor and SQLite database according to the settings."""
     inv = InventoryManager(settings.inventory)
     executor = create_executor(settings.executor, inv.inventory)
     store = Store(Path(settings.db_path))

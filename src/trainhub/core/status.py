@@ -1,4 +1,4 @@
-"""Parsing des sorties ``docker ps`` / ``docker inspect`` et calcul des statuts et durées."""
+"""Parsing ``docker ps`` / ``docker inspect`` output and computing statuses and durations."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _HEALTH_RE = re.compile(r"\((healthy|unhealthy|health: starting)\)")
 
 @dataclass(frozen=True)
 class ContainerState:
-    """État d'un conteneur tel que rapporté par Docker."""
+    """State of a container as reported by Docker."""
 
     name: str
     state: str
@@ -30,16 +30,16 @@ class ContainerState:
     finished_at: datetime | None = None
     created_at: datetime | None = None
     health: str | None = None
-    """``starting``, ``healthy`` ou ``unhealthy`` (healthcheck de fin de commande)."""
+    """``starting``, ``healthy`` or ``unhealthy`` (end-of-command healthcheck)."""
 
     @property
     def alive(self) -> bool:
-        """Conteneur démarré (y compris en pause)."""
+        """Container started (including paused)."""
         return self.state in ("running", "paused", "restarting")
 
     @property
     def command_done(self) -> bool:
-        """Conteneur conservé dont la commande est terminée (healthcheck ``unhealthy``)."""
+        """Kept container whose command has finished (``unhealthy`` healthcheck)."""
         return self.alive and self.health == "unhealthy"
 
     @property
@@ -52,7 +52,7 @@ class ContainerState:
 
 
 def parse_labels(text: str) -> dict[str, str]:
-    """Parse ``a=b,c=d`` (format de ``docker ps``)."""
+    """Parse ``a=b,c=d`` (``docker ps`` format)."""
     out: dict[str, str] = {}
     if not text:
         return out
@@ -61,14 +61,14 @@ def parse_labels(text: str) -> dict[str, str]:
             k, v = part.split("=", 1)
             out[k.strip()] = v
         elif part.strip() and out:
-            # virgule à l'intérieur d'une valeur : on la recolle à la précédente
+            # comma inside a value: glue it back to the previous one
             last = next(reversed(out))
             out[last] += "," + part
     return out
 
 
 def parse_docker_time(value: str | None) -> datetime | None:
-    """Parse les horodatages Docker (RFC 3339 nanosecondes ou ``2024-01-01 10:00:00 +0000 UTC``)."""
+    """Parse Docker timestamps (RFC 3339 nanoseconds or ``2024-01-01 10:00:00 +0000 UTC``)."""
     if not value or value.startswith("0001-01-01"):
         return None
     v = value.strip()
@@ -87,7 +87,7 @@ def parse_docker_time(value: str | None) -> datetime | None:
 
 
 def parse_ps(output: str) -> list[ContainerState]:
-    """Parse la sortie de ``docker ps -a --format '{{json .}}'`` (une ligne JSON par conteneur)."""
+    """Parse the output of ``docker ps -a --format '{{json .}}'`` (one JSON line per container)."""
     states: list[ContainerState] = []
     for line in output.splitlines():
         line = line.strip()
@@ -138,7 +138,7 @@ def _state_from_status(status: str) -> str:
 
 
 def parse_inspect(output: str) -> ContainerState | None:
-    """Parse la sortie JSON de ``docker inspect`` (premier conteneur)."""
+    """Parse the JSON output of ``docker inspect`` (first container)."""
     try:
         data = json.loads(output)
     except json.JSONDecodeError:
@@ -162,7 +162,7 @@ def parse_inspect(output: str) -> ContainerState | None:
     health_info = st.get("Health") or {}
     health = str(health_info.get("Status", "")).lower() or None
     if health == "unhealthy" and code is None:
-        # Conteneur conservé : le healthcheck affiche le code de sortie de la commande.
+        # Kept container: the healthcheck prints the exit code of the command.
         for entry in reversed(health_info.get("Log") or []):
             out = str(entry.get("Output", "")).strip()
             if re.fullmatch(r"-?\d+", out):
@@ -183,7 +183,7 @@ def parse_inspect(output: str) -> ContainerState | None:
 
 
 def status_from_container(c: ContainerState, *, stop_requested: bool) -> RunStatus:
-    """Statut TrainHub correspondant à l'état Docker d'un conteneur."""
+    """TrainHub status matching the Docker state of a container."""
     if c.command_done:
         if stop_requested:
             return RunStatus.STOPPED
@@ -201,7 +201,7 @@ def status_from_container(c: ContainerState, *, stop_requested: bool) -> RunStat
     return RunStatus.FAILED
 
 
-# -- durées --------------------------------------------------------------------
+# -- durations -----------------------------------------------------------------
 
 
 def utcnow() -> datetime:
@@ -209,9 +209,9 @@ def utcnow() -> datetime:
 
 
 def elapsed_seconds(run: Run, now: datetime | None = None) -> float:
-    """Temps écoulé : ``now - started_at`` si actif, figé à ``finished_at - started_at`` sinon.
+    """Elapsed time: ``now - started_at`` while active, else ``finished_at - started_at``.
 
-    Le temps de pause est inclus.
+    Pause time is included.
     """
     if run.started_at is None:
         return 0.0
@@ -220,7 +220,7 @@ def elapsed_seconds(run: Run, now: datetime | None = None) -> float:
 
 
 def paused_seconds(run: Run, now: datetime | None = None) -> float:
-    """Durée cumulée en pause, pause en cours comprise."""
+    """Cumulative paused duration, including the current pause."""
     total = run.paused_total_s
     if run.paused_at is not None:
         total += max(0.0, ((now or utcnow()) - run.paused_at).total_seconds())
@@ -228,7 +228,7 @@ def paused_seconds(run: Run, now: datetime | None = None) -> float:
 
 
 def format_duration(seconds: float) -> str:
-    """Formate une durée : ``12s``, ``4m 05s``, ``3h 12m``, ``2j 04h``."""
+    """Format a duration: ``12s``, ``4m 05s``, ``3h 12m``, ``2d 04h``."""
     s = int(max(0, seconds))
     if s < 60:
         return f"{s}s"
@@ -239,4 +239,4 @@ def format_duration(seconds: float) -> str:
     if h < 24:
         return f"{h}h {m:02d}m"
     d, h = divmod(h, 24)
-    return f"{d}j {h:02d}h"
+    return f"{d}d {h:02d}h"

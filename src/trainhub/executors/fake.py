@@ -1,16 +1,16 @@
-"""Exécuteur ``fake`` : machines et conteneurs simulés en mémoire.
+"""``fake`` executor: machines and containers simulated in memory.
 
-Il interprète l'argv docker réellement construit par :mod:`trainhub.core.commands`
-(``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm`` et ``find``), ce qui teste aussi
-la construction des commandes. Chaque conteneur produit des logs réalistes : bannière Hydra,
-config résolue, lignes ANSI colorées, barres tqdm réécrites avec ``\\r``, métriques par époque,
-warnings, et éventuellement un traceback avec code de sortie 1.
+It interprets the docker argv actually built by :mod:`trainhub.core.commands`
+(``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm`` and ``find``), which also
+tests command building. Each container produces realistic logs: Hydra banner, resolved
+config, colored ANSI lines, tqdm bars rewritten with ``\\r``, per-epoch metrics, warnings,
+and possibly a traceback with exit code 1.
 
-Un conteneur lancé avec un healthcheck (``keep_alive``) reste démarré après la commande,
-comme le vrai script : healthcheck ``unhealthy`` et code de la commande dans ``inspect``.
-``open_shell`` simule un shell minimal dans ce conteneur.
+A container launched with a healthcheck (``keep_alive``) stays started after the command,
+like the real script: ``unhealthy`` healthcheck and the command's code in ``inspect``.
+``open_shell`` simulates a minimal shell in that container.
 
-Paramètres : section ``simulation`` de l'inventaire (voir ``dev/inventory.dev.yaml``).
+Settings: ``simulation`` section of the inventory (see ``dev/inventory.dev.yaml``).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from .base import (
     ShellSession,
 )
 
-# Options ``docker run`` prenant une valeur séparée.
+# ``docker run`` options taking a separate value.
 _RUN_VALUE_OPTS = frozenset(
     {
         "--name",
@@ -78,7 +78,7 @@ _RUN_VALUE_OPTS = frozenset(
     }
 )
 
-_LOG_LIMIT = 8 * 1024 * 1024  # octets conservés par conteneur simulé
+_LOG_LIMIT = 8 * 1024 * 1024  # bytes kept per simulated container
 
 
 def _now() -> datetime:
@@ -91,7 +91,7 @@ def _iso(dt: datetime | None) -> str:
 
 @dataclass
 class FakeContainer:
-    """Conteneur simulé."""
+    """Simulated container."""
 
     name: str
     image: str
@@ -221,7 +221,7 @@ class FakeMachine:
 
 
 class FakeExecutor(Executor):
-    """Simule Docker sur des machines en mémoire."""
+    """Simulate Docker on in-memory machines."""
 
     kind = "fake"
 
@@ -233,7 +233,7 @@ class FakeExecutor(Executor):
         self.machines: dict[str, FakeMachine] = {}
         self._rng = random.Random(self.settings.seed)
         self._t0 = time.monotonic()
-        #: états forcés par les tests : machine -> "ok" | "down"
+        #: states forced by tests: machine -> "ok" | "down"
         self.forced_state: dict[str, str] = {}
         if inventory is not None:
             self.update_inventory(inventory)
@@ -249,7 +249,7 @@ class FakeExecutor(Executor):
         return transport(machine, remote)
 
     def machine_state(self, machine_id: str) -> str:
-        """``ok``, ``flaky`` ou ``down`` pour une machine."""
+        """``ok``, ``flaky`` or ``down`` for a machine."""
         return self.forced_state.get(machine_id) or self.settings.machines.get(machine_id, "ok")
 
     def is_reachable(self, machine_id: str) -> bool:
@@ -257,7 +257,7 @@ class FakeExecutor(Executor):
         if state == "down":
             return False
         if state == "flaky":
-            # Injoignable pendant ~30 % de chaque période, décalé selon la machine.
+            # Unreachable during ~30 % of each period, shifted per machine.
             period = self.settings.flaky_period_s
             h = int(hashlib.sha1(machine_id.encode()).hexdigest()[:6], 16)
             phase = ((time.monotonic() - self._t0) / period + (h % 1000) / 1000) % 1.0
@@ -268,7 +268,7 @@ class FakeExecutor(Executor):
         lo, hi = self.settings.latency_ms
         await asyncio.sleep(self._rng.uniform(lo, hi) / 1000.0)
 
-    # -- exécution -------------------------------------------------------------
+    # -- execution -------------------------------------------------------------
 
     async def _exec(self, machine: Machine, remote: list[str], *, timeout: float) -> ExecResult:
         t0 = time.monotonic()
@@ -289,7 +289,7 @@ class FakeExecutor(Executor):
 
     def _dispatch(self, machine: Machine, m: FakeMachine, argv: list[str]) -> tuple[int, str, str]:
         if not argv:
-            return 127, "", "commande vide"
+            return 127, "", "empty command"
         if argv[0] == "find":
             return self._find(argv)
         if argv[0] != "docker" or len(argv) < 2:
@@ -312,7 +312,7 @@ class FakeExecutor(Executor):
         return handler(machine, m, args)
 
     def _find(self, argv: list[str]) -> tuple[int, str, str]:
-        """Simule ``find -L ROOT -maxdepth N -type f -name PATTERN`` sur les racines de configs."""
+        """Simulate ``find -L ROOT -maxdepth N -type f -name PATTERN`` on the configs roots."""
         root = next((a for a in argv[1:] if not a.startswith("-")), "")
         pattern = argv[argv.index("-name") + 1] if "-name" in argv else "*"
         inv = self.inventory
@@ -325,7 +325,7 @@ class FakeExecutor(Executor):
                 if names is None:
                     names = list(p.configs.static or ["default"])
                 ext = d.pattern.rsplit("*", 1)[-1] if "*" in d.pattern else ".yaml"
-                # bruit réaliste : fichiers cachés et non-YAML (filtrés par TrainHub / -name)
+                # realistic noise: hidden and non-YAML files (filtered by TrainHub / -name)
                 files = [f"{n}{ext}" for n in names] + [".hydra/config.yaml", "README.md"]
                 prefix = "" if root == "/" else root
                 out = [
@@ -409,7 +409,7 @@ class FakeExecutor(Executor):
         c.running.set()
         c.end_followers()
 
-    # autres commandes ------------------------------------------------------------
+    # other commands --------------------------------------------------------------
 
     def _get(self, m: FakeMachine, name: str) -> FakeContainer | None:
         return m.containers.get(name)
@@ -495,7 +495,7 @@ class FakeExecutor(Executor):
                 "Error response from daemon: cannot stop a paused container; unpause it first",
             )
         if c.state == "running" and c.command_done:
-            # Conteneur conservé : le script sort avec le code de la commande.
+            # Kept container: the script exits with the command's code.
             self._finish(c, c.command_code)
         elif c.state == "running":
             if c.task is not None:
@@ -547,7 +547,7 @@ class FakeExecutor(Executor):
         del m.containers[c.name]
         return 0, c.name + "\n", ""
 
-    # -- flux ------------------------------------------------------------------
+    # -- streams ---------------------------------------------------------------
 
     async def stream(self, machine: Machine, remote: Sequence[str]) -> LogStream:
         await self._latency()
@@ -580,7 +580,7 @@ class FakeExecutor(Executor):
             raise MachineUnreachableError(machine.id, "Connection timed out")
         argv = list(remote)
         if argv[:2] != ["docker", "exec"]:
-            raise ExecutorError("shell simulé : seul docker exec est pris en charge")
+            raise ExecutorError("simulated shell: only docker exec is supported")
         name = next((a for a in argv[2:] if not a.startswith("-") and "=" not in a), "")
         c = self._get(self.machines.setdefault(machine.id, FakeMachine()), name)
         if c is None or c.state not in ("running", "paused"):
@@ -595,10 +595,10 @@ class FakeExecutor(Executor):
                     c.task.cancel()
                 c.end_followers()
 
-    # -- simulation d'un entraînement -----------------------------------------
+    # -- training simulation ---------------------------------------------------
 
     async def _sleep(self, c: FakeContainer, seconds: float) -> None:
-        """Attend ``seconds`` (temps simulé), en gelant pendant les pauses."""
+        """Wait ``seconds`` (simulated time), freezing during pauses."""
         remaining = seconds / self.settings.time_scale
         while remaining > 0:
             await c.running.wait()
@@ -613,7 +613,7 @@ class FakeExecutor(Executor):
             code = await self._training(c)
         except asyncio.CancelledError:
             return
-        except Exception as exc:  # pragma: no cover - filet de sécurité
+        except Exception as exc:  # pragma: no cover - safety net
             c.write(f"simulation error: {exc}\n".encode())
             code = 1
         if c.keep_alive:
@@ -621,8 +621,8 @@ class FakeExecutor(Executor):
             c.command_code = code
             nl = "\r\n" if c.tty else "\n"
             c.write(
-                f"{nl}[trainhub] commande terminée (code {code}) : conteneur conservé, "
-                f"shell disponible depuis TrainHub{nl}".encode()
+                f"{nl}[trainhub] command finished (code {code}): container kept, "
+                f"shell available from TrainHub{nl}".encode()
             )
             return
         self._finish(c, code)
@@ -760,7 +760,7 @@ class FakeExecutor(Executor):
 
 
 class _FakeShell(ShellSession):
-    """Shell simulé : écho local, quelques commandes, ``exit``."""
+    """Simulated shell: local echo, a few commands, ``exit``."""
 
     def __init__(self, container: str, *, error: str | None = None) -> None:
         self._q: asyncio.Queue[bytes] = asyncio.Queue()
@@ -774,7 +774,7 @@ class _FakeShell(ShellSession):
             return
         self._prompt = f"\x1b[1;32mroot@{container[:12]}\x1b[0m:\x1b[1;34m/workspace\x1b[0m# "
         self._q.put_nowait(
-            "\x1b[2m(shell simulé : mode fake, aucune commande n'est exécutée)\x1b[0m\r\n".encode()
+            b"\x1b[2m(simulated shell: fake mode, no command is executed)\x1b[0m\r\n"
             + self._prompt.encode()
         )
 
@@ -794,8 +794,8 @@ class _FakeShell(ShellSession):
         if cmd.startswith("echo "):
             return cmd[5:] + "\r\n"
         if cmd == "nvidia-smi":
-            return "GPU 0: NVIDIA A100-SXM4-80GB (simulé)  | 0MiB / 81920MiB\r\n"
-        return f"{cmd.split()[0]}: commande simulée\r\n"
+            return "GPU 0: NVIDIA A100-SXM4-80GB (simulated)  | 0MiB / 81920MiB\r\n"
+        return f"{cmd.split()[0]}: simulated command\r\n"
 
     def write(self, data: bytes) -> None:
         if self._closed:

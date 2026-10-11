@@ -1,8 +1,8 @@
-"""Transport stdio : ``trainhub mcp``.
+"""Stdio transport: ``trainhub mcp``.
 
-Ce processus ne crée pas de seconde instance de TrainHub avec son propre état : il relaie
-les requêtes MCP (liste et appel des outils) vers le serveur en cours d'exécution, via son
-point d'accès Streamable HTTP ``/mcp``.
+This process does not create a second TrainHub instance with its own state: it relays
+MCP requests (tool listing and calls) to the running server, through its Streamable HTTP
+endpoint ``/mcp``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def default_url() -> str:
 
 
 async def run_stdio_proxy(url: str | None = None, *, token: str | None = None) -> None:
-    """Sert MCP sur stdin/stdout en relayant vers ``url`` (``http://…/mcp``)."""
+    """Serve MCP on stdin/stdout, relaying to ``url`` (``http://…/mcp``)."""
     url = url or default_url()
     if not url.rstrip("/").endswith("/mcp"):
         url = url.rstrip("/") + "/mcp"

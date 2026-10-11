@@ -1,12 +1,12 @@
-# Inventaire TrainHub : ressources disponibles (lecture seule).
-# Chemin fourni par TRAINHUB_INVENTORY (défaut ./inventory.yaml), rechargé à chaud.
+# TrainHub inventory: available resources (read-only).
+# Path given by TRAINHUB_INVENTORY (default ./inventory.yaml), hot-reloaded.
 
 machines:
   - id: gpu-01
     label: GPU 01 (4×A100)
-    host: gpu-01.lab.local      # ou un alias de ~/.ssh/config
-    user: alice                 # optionnel
-    port: 22                    # optionnel
+    host: gpu-01.lab.local      # or an alias from ~/.ssh/config
+    user: alice                 # optional
+    port: 22                    # optional
   - id: gpu-02
     host: gpu-02
 
@@ -18,17 +18,17 @@ images:
 
 venvs:
   - id: main
-    path: /opt/venvs/main        # chemin DANS le conteneur
+    path: /opt/venvs/main        # path INSIDE the container
   - id: exp
     path: /opt/venvs/exp
-    images: [torch-nightly]      # optionnel : restreint aux images listées
+    images: [torch-nightly]      # optional: restricted to the listed images
 
 projects:
   - id: segmentation
     label: Segmentation
     command: python train.py --config-name {config}
-    workdir: /workspace/seg      # cd avant la commande, dans le conteneur
-    machines: [gpu-01, gpu-02]   # optionnel : sous-ensemble autorisé (défaut : tout)
+    workdir: /workspace/seg      # cd before the command, in the container
+    machines: [gpu-01, gpu-02]   # optional: allowed subset (default: all)
     images: [torch-2.4]
     venvs: [main, exp]
     docker:
@@ -40,16 +40,16 @@ projects:
       env:
         WANDB_MODE: online
       extra_args: ["--ipc=host"]
-      # tty: false               # désactive -t (couleurs/barres de progression)
-      # stop_timeout: 30         # délai de docker stop -t
-      # keep_alive: false        # défaut true : le conteneur reste démarré quand la commande
-      #                          # se termine (shell depuis TrainHub, « Fermer le conteneur »)
+      # tty: false               # disables -t (colors/progress bars)
+      # stop_timeout: 30         # docker stop -t timeout
+      # keep_alive: false        # default true: the container stays started when the command
+      #                          # finishes (shell from TrainHub, “Close container”)
     configs:
-      # Racine des configs Hydra sur la machine choisie (côté hôte). Tous les fichiers
-      # *.yaml sous cette racine (récursivement) sont proposés sous forme d'arborescence.
-      # Une config = chemin relatif sans extension, ex. experiments/unet_large
+      # Root of the Hydra configs on the chosen machine (host side). Every *.yaml file
+      # under this root (recursively) is offered as a tree.
+      # A config = relative path without extension, e.g. experiments/unet_large
       # → {config} = experiments/unet_large, {config_name} = unet_large.
       root: /home/alice/seg/configs
-      pattern: "*.yaml"          # optionnel
-      exclude: ["hydra/*"]       # optionnel : chemins relatifs à ignorer (glob)
-      # static: [baseline]       # optionnel : configs ajoutées à la liste
+      pattern: "*.yaml"          # optional
+      exclude: ["hydra/*"]       # optional: relative paths to ignore (glob)
+      # static: [baseline]       # optional: configs added to the list

@@ -8,8 +8,8 @@ import { loadXterm, xtermTheme } from "./LogTerminal"
 type ShellState = "connecting" | "open" | "closed"
 
 /**
- * Shell interactif dans le conteneur d'un run (``docker exec -it`` via ``/ws/shell/<id>``).
- * La session vit tant que le composant est monté ; « Reconnecter » en ouvre une nouvelle.
+ * Interactive shell in a run's container (``docker exec -it`` through ``/ws/shell/<id>``).
+ * The session lives as long as the component is mounted; “Reconnect” opens a new one.
  */
 export function ShellTerminal(props: {
   runId: string
@@ -38,7 +38,7 @@ export function ShellTerminal(props: {
     try {
       fit?.fit()
     } catch {
-      /* terminal masqué */
+      /* terminal hidden */
     }
   }
 
@@ -61,9 +61,9 @@ export function ShellTerminal(props: {
       if (typeof msg.data === "string") {
         try {
           const data = JSON.parse(msg.data) as { type: string; message?: string }
-          if (data.type === "error") term?.write(`\r\n\x1b[31m${data.message ?? "erreur"}\x1b[0m\r\n`)
+          if (data.type === "error") term?.write(`\r\n\x1b[31m${data.message ?? "error"}\x1b[0m\r\n`)
         } catch {
-          /* message non JSON */
+          /* non-JSON message */
         }
         return
       }
@@ -72,7 +72,7 @@ export function ShellTerminal(props: {
     sock.onclose = () => {
       if (ws !== sock) return
       setState("closed")
-      term?.write("\r\n\x1b[2m[session terminée]\x1b[0m\r\n")
+      term?.write("\r\n\x1b[2m[session ended]\x1b[0m\r\n")
     }
   }
 
@@ -163,7 +163,7 @@ export function ShellTerminal(props: {
         <span class="mr-auto truncate font-mono">
           shell · {props.containerName}
           <Show when={state() === "closed"}>
-            <span class="ml-2 text-fg-weaker">déconnecté</span>
+            <span class="ml-2 text-fg-weaker">disconnected</span>
           </Show>
         </span>
         <Show when={state() === "connecting"}>
@@ -179,14 +179,14 @@ export function ShellTerminal(props: {
             }}
             data-testid="shell-reconnect"
           >
-            <IconRefresh size={11} /> Reconnecter
+            <IconRefresh size={11} /> Reconnect
           </button>
         </Show>
         <button
           type="button"
           class={toolBtn}
-          title={props.fullscreen ? "Quitter le plein écran" : "Plein écran"}
-          aria-label={props.fullscreen ? "Quitter le plein écran" : "Plein écran"}
+          title={props.fullscreen ? "Exit fullscreen" : "Fullscreen"}
+          aria-label={props.fullscreen ? "Exit fullscreen" : "Fullscreen"}
           onClick={props.onToggleFullscreen}
         >
           <Show when={props.fullscreen} fallback={<IconMaximize size={12} />}>
@@ -199,7 +199,7 @@ export function ShellTerminal(props: {
         <div
           class="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-line-weak"
           onPointerDown={startResize}
-          title="Redimensionner"
+          title="Resize"
         />
       </Show>
     </div>

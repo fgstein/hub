@@ -1,7 +1,7 @@
-"""Interface commune des exécuteurs.
+"""Common executor interface.
 
-Un exécuteur reçoit l'argv **distant** (``docker …``, ``ls …``) et une machine ; il se charge
-du transport (SSH, exécution locale directe, ou simulation) et renvoie la sortie.
+An executor receives the **remote** argv (``docker …``, ``ls …``) and a machine; it handles
+the transport (SSH, direct local execution, or simulation) and returns the output.
 """
 
 from __future__ import annotations
@@ -16,30 +16,30 @@ from ..core.models import Inventory, Machine
 
 log = logging.getLogger("trainhub.exec")
 
-#: Délai maximal d'une action (pause, stop…), hors délai de ``docker stop``.
+#: Maximum duration of an action (pause, stop…), excluding the ``docker stop`` timeout.
 ACTION_TIMEOUT_S = 10.0
-#: Délai maximal d'une commande de suivi (``docker ps``).
+#: Maximum duration of a monitoring command (``docker ps``).
 MONITOR_TIMEOUT_S = 5.0
-#: Délai maximal de ``docker run -d`` (peut inclure un ``pull`` d'image).
+#: Maximum duration of ``docker run -d`` (may include an image ``pull``).
 LAUNCH_TIMEOUT_S = 600.0
 
 
 class ExecutorError(Exception):
-    """Erreur d'exécution générique."""
+    """Generic execution error."""
 
 
 class MachineUnreachableError(ExecutorError):
-    """Transport impossible : machine injoignable, SSH refusé, délai dépassé."""
+    """Transport failed: machine unreachable, SSH refused, timeout."""
 
     def __init__(self, machine: str, reason: str) -> None:
         self.machine = machine
         self.reason = reason
-        super().__init__(f"machine '{machine}' injoignable : {reason}")
+        super().__init__(f"machine '{machine}' unreachable: {reason}")
 
 
 @dataclass(frozen=True)
 class ExecResult:
-    """Résultat d'une commande exécutée sur une machine."""
+    """Result of a command run on a machine."""
 
     argv: list[str]
     returncode: int
@@ -60,24 +60,24 @@ class ExecResult:
         return self.stderr.decode("utf-8", errors="replace")
 
     def error_message(self) -> str:
-        """Message d'erreur lisible (dernière ligne non vide de stderr, sinon stdout)."""
+        """Readable error message (last non-empty line of stderr, else stdout)."""
         for text in (self.err, self.out):
             lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
             if lines:
                 msg = lines[-1]
                 return msg.removeprefix("docker: ").removeprefix("Error response from daemon: ")
-        return f"code de retour {self.returncode}"
+        return f"exit code {self.returncode}"
 
 
 class LogStream(abc.ABC):
-    """Flux d'octets d'un ``docker logs -f`` (itérable de façon asynchrone)."""
+    """Byte stream of a ``docker logs -f`` (asynchronously iterable)."""
 
     @abc.abstractmethod
     def __aiter__(self) -> AsyncIterator[bytes]: ...
 
     @abc.abstractmethod
     async def close(self) -> None:
-        """Arrête le processus sous-jacent."""
+        """Stop the underlying process."""
 
     @property
     def returncode(self) -> int | None:
@@ -85,50 +85,50 @@ class LogStream(abc.ABC):
 
 
 class ShellSession(abc.ABC):
-    """Session interactive dans un conteneur (``docker exec -it``), derrière un PTY."""
+    """Interactive session in a container (``docker exec -it``), behind a PTY."""
 
     @abc.abstractmethod
     async def read(self) -> bytes:
-        """Prochains octets de sortie ; ``b""`` quand la session est terminée."""
+        """Next output bytes; ``b""`` once the session is over."""
 
     @abc.abstractmethod
     def write(self, data: bytes) -> None:
-        """Envoie des octets (frappes clavier) au shell."""
+        """Send bytes (keystrokes) to the shell."""
 
     @abc.abstractmethod
     def resize(self, cols: int, rows: int) -> None:
-        """Change la taille du terminal."""
+        """Change the terminal size."""
 
     @abc.abstractmethod
     async def close(self) -> None:
-        """Termine la session."""
+        """End the session."""
 
 
 class Executor(abc.ABC):
-    """Exécute des commandes sur les machines de l'inventaire."""
+    """Run commands on the inventory machines."""
 
     kind: str = "base"
 
     def update_inventory(self, inventory: Inventory) -> None:  # noqa: B027
-        """Appelé à chaque (re)chargement de l'inventaire."""
+        """Called on every inventory (re)load."""
 
     @abc.abstractmethod
     def full_argv(self, machine: Machine, remote: Sequence[str]) -> list[str]:
-        """argv local complet effectivement exécuté (audit, aperçu)."""
+        """Full local argv actually executed (audit, preview)."""
 
     async def exec(
         self, machine: Machine, remote: Sequence[str], *, timeout: float = ACTION_TIMEOUT_S
     ) -> ExecResult:
-        """Exécute ``remote`` sur ``machine`` ; journalise argv, durée et code de retour.
+        """Run ``remote`` on ``machine``; log argv, duration and exit code.
 
-        Lève :class:`MachineUnreachableError` si la machine n'est pas joignable.
+        Raises :class:`MachineUnreachableError` if the machine cannot be reached.
         """
         t0 = time.monotonic()
         try:
             res = await self._exec(machine, list(remote), timeout=timeout)
         except MachineUnreachableError as exc:
             log.warning(
-                "commande échouée (injoignable)",
+                "command failed (unreachable)",
                 extra={
                     "machine": machine.id,
                     "argv": list(remote),
@@ -140,7 +140,7 @@ class Executor(abc.ABC):
         level = logging.DEBUG if list(remote[:2]) == ["docker", "ps"] else logging.INFO
         log.log(
             level,
-            "commande exécutée",
+            "command executed",
             extra={
                 "machine": machine.id,
                 "argv": list(remote),
@@ -155,11 +155,11 @@ class Executor(abc.ABC):
 
     @abc.abstractmethod
     async def stream(self, machine: Machine, remote: Sequence[str]) -> LogStream:
-        """Démarre une commande longue (``docker logs -f``) et renvoie son flux de sortie."""
+        """Start a long-running command (``docker logs -f``) and return its output stream."""
 
     async def open_shell(self, machine: Machine, remote: Sequence[str]) -> ShellSession:
-        """Ouvre un shell interactif (``docker exec -it …``) sur ``machine``."""
-        raise ExecutorError(f"shell interactif non disponible avec l'exécuteur {self.kind}")
+        """Open an interactive shell (``docker exec -it …``) on ``machine``."""
+        raise ExecutorError(f"interactive shell not available with the {self.kind} executor")
 
     async def close(self) -> None:  # noqa: B027
-        """Libère les ressources (processus, connexions)."""
+        """Release resources (processes, connections)."""

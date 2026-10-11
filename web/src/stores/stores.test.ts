@@ -90,7 +90,7 @@ const inventory = {
   executor: "fake",
 } as unknown as InventoryView
 
-describe("store principal", async () => {
+describe("main store", async () => {
   const app = await import("./app")
   const logs = await import("./logs")
   app.connect()
@@ -106,32 +106,32 @@ describe("store principal", async () => {
   }
   ws.emit(snapshot)
 
-  it("applique le snapshot et trie les runs", () => {
+  it("applies the snapshot and sorts runs", () => {
     expect(app.state.ready).toBe(true)
     expect(app.activeRunIds("seg")).toEqual(["r1", "r3"])
     expect(app.finishedRunIds("seg")).toEqual(["r2"])
     expect(app.activeCount("seg")).toBe(2)
   })
 
-  it("ignore les événements plus anciens que le snapshot", () => {
+  it("ignores events older than the snapshot", () => {
     ws.emit({ type: "run.updated", seq: 5, run: run("r1", { status: "paused" }) })
     expect(app.state.runs.r1?.status).toBe("running")
     ws.emit({ type: "run.updated", seq: 11, run: run("r1", { status: "paused" }) })
     expect(app.state.runs.r1?.status).toBe("paused")
   })
 
-  it("met à jour finement : l'objet d'un autre run n'est pas remplacé", () => {
+  it("updates finely: another run's object is not replaced", () => {
     const before = app.state.runs.r3
     ws.emit({ type: "run.updated", seq: 12, run: run("r1", { status: "running" }) })
     expect(app.state.runs.r3).toBe(before)
   })
 
-  it("supprime un run", () => {
+  it("deletes a run", () => {
     ws.emit({ type: "run.deleted", seq: 13, id: "r3", project_id: "seg" })
     expect(app.state.runs.r3).toBeUndefined()
   })
 
-  it("brouillon : valeurs par défaut et compatibilité venv/image", () => {
+  it("draft: default values and venv/image compatibility", () => {
     app.addDraft("seg")
     const d = app.state.drafts.seg![0]!
     expect(d.image).toBe("i2")
@@ -144,7 +144,7 @@ describe("store principal", async () => {
     expect(app.state.drafts.seg).toEqual([])
   })
 
-  it("relancer ouvre un brouillon pré-rempli sans rien lancer", () => {
+  it("relaunch opens a prefilled draft without launching anything", () => {
     const done = run("r9", {
       status: "failed",
       image_id: "i2",
@@ -166,7 +166,7 @@ describe("store principal", async () => {
     app.removeDraft("seg", d.key)
   })
 
-  it("abonnements aux logs comptés par référence", () => {
+  it("log subscriptions are reference counted", () => {
     const chunks: string[] = []
     const off1 = logs.subscribeLogs("r1", {
       data: (c) => chunks.push(new TextDecoder().decode(c)),

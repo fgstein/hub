@@ -8,7 +8,7 @@ function read(): ThemePref {
     const v = localStorage.getItem(KEY)
     if (v === "dark" || v === "light" || v === "system") return v
   } catch {
-    /* stockage indisponible */
+    /* storage unavailable */
   }
   return "dark"
 }
@@ -23,7 +23,7 @@ const theme = createRoot(() => {
 })
 
 export const themePref = theme.pref
-/** Thème effectif : "dark" ou "light". */
+/** Effective theme: "dark" or "light". */
 export const resolvedTheme = theme.resolved
 
 export function applyTheme(): void {

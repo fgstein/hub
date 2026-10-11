@@ -1,6 +1,6 @@
-# Machines SSH simulées (make sim-up) : sim-gpu-01 (port 2201) et sim-gpu-02 (port 2202).
-# Chaque machine a sshd et le client Docker, avec le socket Docker de l'hôte monté.
-# Clé de test : ./dev/gen-ssh-key.sh (dev/ssh/id_ed25519).
+# Simulated SSH machines (make sim-up): sim-gpu-01 (port 2201) and sim-gpu-02 (port 2202).
+# Each machine has sshd and the Docker client, with the host's Docker socket mounted.
+# Test key: ./dev/gen-ssh-key.sh (dev/ssh/id_ed25519).
 services:
   sim-gpu-01:
     build: ./sim-machine

@@ -17,7 +17,7 @@ export function ProjectPage(props: { project: ProjectView }) {
   return (
     <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" data-testid="project-page" data-project={id()}>
       <CommandEditor project={props.project} />
-      <section aria-label="Runs actifs" data-testid="active-runs">
+      <section aria-label="Active runs" data-testid="active-runs">
         <For each={active()}>{(rid) => <RunRow id={rid} />}</For>
         <For each={drafts()}>
           {(d, i) => <DraftRow project={props.project} draft={d} autofocus={i() === drafts().length - 1} />}
@@ -27,14 +27,14 @@ export function ProjectPage(props: { project: ProjectView }) {
         when={!empty()}
         fallback={
           <div class="flex flex-col items-center gap-3 px-4 py-14 text-center" data-testid="empty-state">
-            <p class="text-sm text-fg-weak">Aucun run actif sur ce projet.</p>
+            <p class="text-sm text-fg-weak">No active run in this project.</p>
             <button
               type="button"
               class="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-fg"
               onClick={() => addDraft(id())}
               data-testid="add-draft"
             >
-              <IconPlus size={12} /> Nouveau run
+              <IconPlus size={12} /> New run
               <kbd class="ml-1 rounded border border-current/30 px-1 font-mono text-[10px] opacity-60">N</kbd>
             </button>
           </div>
@@ -45,8 +45,8 @@ export function ProjectPage(props: { project: ProjectView }) {
             type="button"
             class="flex size-7 items-center justify-center rounded-md border border-line-weak text-icon transition-colors hover:border-line hover:bg-surface-hover hover:text-icon-hover"
             onClick={() => addDraft(id())}
-            title="Nouveau run (N)"
-            aria-label="Nouveau run"
+            title="New run (N)"
+            aria-label="New run"
             data-testid="add-draft"
           >
             <IconPlus size={12} />
@@ -56,7 +56,7 @@ export function ProjectPage(props: { project: ProjectView }) {
       <Show when={finished().length}>
         <section
           class="mt-2 border-t border-line-weak"
-          aria-label="Runs terminés"
+          aria-label="Finished runs"
           data-testid="finished-runs"
         >
           <button
@@ -70,7 +70,7 @@ export function ProjectPage(props: { project: ProjectView }) {
               size={11}
               class={`transition-transform duration-150 ${showFinished() ? "rotate-90" : ""}`}
             />
-            Terminés ({finished().length})
+            Finished ({finished().length})
           </button>
           <div class="th-collapse" data-open={showFinished() ? "" : undefined}>
             <div>

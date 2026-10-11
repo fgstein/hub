@@ -1,7 +1,7 @@
-"""Authentification optionnelle par jeton (``TRAINHUB_TOKEN``).
+"""Optional token authentication (``TRAINHUB_TOKEN``).
 
-Si un jeton est défini, toutes les routes, le WebSocket et ``/mcp`` l'exigent : en-tête
-``Authorization: Bearer <jeton>``, ou cookie ``trainhub_token`` posé par la page ``/login``.
+If a token is set, every route, the WebSocket and ``/mcp`` require it: header
+``Authorization: Bearer <token>``, or the ``trainhub_token`` cookie set by the ``/login`` page.
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ def websocket_authorized(ws: WebSocket) -> bool:
 
 
 class TokenMiddleware:
-    """Middleware ASGI : refuse les requêtes HTTP sans jeton valide.
+    """ASGI middleware: rejects HTTP requests without a valid token.
 
-    Le WebSocket est vérifié dans son handler (fermeture avec le code 4401).
+    The WebSocket is checked in its handler (closed with code 4401).
     """
 
     def __init__(self, app: ASGIApp, token: str | None) -> None:
@@ -67,13 +67,13 @@ class TokenMiddleware:
         if path.startswith(("/api", "/mcp")) or "text/html" not in request.headers.get(
             "accept", ""
         ):
-            response = JSONResponse({"detail": "jeton requis"}, status_code=401)
+            response = JSONResponse({"detail": "token required"}, status_code=401)
         else:
             response = RedirectResponse(f"/login?next={quote(path)}", status_code=303)
         await response(scope, receive, send)
 
 
-_LOGIN = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
+_LOGIN = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>TrainHub</title>
 <style>
 :root{{color-scheme:dark light}}body{{margin:0;min-height:100vh;display:grid;place-items:center;
@@ -86,14 +86,14 @@ input{{padding:8px 10px;border:1px solid #333;border-radius:6px;background:#1414
 font:inherit}}button{{padding:8px;border:0;border-radius:6px;background:#eee;color:#111;
 font:inherit;cursor:pointer}}.err{{color:#f87171}}</style></head><body>
 <form method="post" action="/login"><h1>TrainHub</h1>{error}
-<input type="password" name="token" placeholder="Jeton" autofocus required>
-<input type="hidden" name="next" value="{next}"><button type="submit">Se connecter</button>
+<input type="password" name="token" placeholder="Token" autofocus required>
+<input type="hidden" name="next" value="{next}"><button type="submit">Sign in</button>
 </form></body></html>"""
 
 
 @router.get("/login", response_class=HTMLResponse, include_in_schema=False)
 async def login_page(next: str = "/", error: int = 0) -> HTMLResponse:
-    err = '<div class="err">Jeton invalide.</div>' if error else ""
+    err = '<div class="err">Invalid token.</div>' if error else ""
     return HTMLResponse(_LOGIN.format(error=err, next=html.escape(next)))
 
 

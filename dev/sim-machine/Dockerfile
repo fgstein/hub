@@ -1,6 +1,6 @@
-# Machine GPU simulée pour tester le chemin SSH complet : sshd + client Docker.
-# Le socket Docker de l'hôte est monté (Docker outside of Docker) : les conteneurs
-# d'entraînement tournent sur le Docker de l'hôte.
+# Simulated GPU machine to test the full SSH path: sshd + Docker client.
+# The host's Docker socket is mounted (Docker outside of Docker): the training
+# containers run on the host's Docker.
 FROM docker:27-cli AS dockercli
 
 FROM ubuntu:24.04

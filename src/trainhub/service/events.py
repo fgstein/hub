@@ -1,4 +1,4 @@
-"""Bus d'événements interne (publication/abonnement asynchrone, numéros de séquence)."""
+"""Internal event bus (asynchronous publish/subscribe, sequence numbers)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ log = logging.getLogger("trainhub.events")
 
 @dataclass(frozen=True)
 class Event:
-    """Événement publié : ``type`` (ex. ``run.updated``), ``data`` sérialisable, ``seq``."""
+    """Published event: ``type`` (e.g. ``run.updated``), serializable ``data``, ``seq``."""
 
     type: str
     data: dict[str, Any]
@@ -25,7 +25,7 @@ class Event:
 
 @dataclass(eq=False)
 class Subscription:
-    """Abonnement au bus ; ``overflowed`` passe à ``True`` si l'abonné est trop lent."""
+    """Bus subscription; ``overflowed`` becomes ``True`` if the subscriber is too slow."""
 
     queue: asyncio.Queue[Event | None] = field(default_factory=lambda: asyncio.Queue(10_000))
     overflowed: bool = False
@@ -39,7 +39,7 @@ class Subscription:
 
 
 class EventBus:
-    """Diffuse les événements à tous les abonnés."""
+    """Broadcast events to every subscriber."""
 
     def __init__(self) -> None:
         self._subs: set[Subscription] = set()
@@ -52,8 +52,8 @@ class EventBus:
             try:
                 sub.queue.put_nowait(ev)
             except asyncio.QueueFull:
-                # Abonné trop lent : on le coupe, il devra se resynchroniser (snapshot).
-                log.warning("abonné trop lent, désinscrit")
+                # Subscriber too slow: drop it, it will have to resync (snapshot).
+                log.warning("subscriber too slow, unsubscribed")
                 sub.overflowed = True
                 self._subs.discard(sub)
                 while not sub.queue.empty():

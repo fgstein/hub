@@ -1,6 +1,6 @@
 /**
- * Abonnements aux logs : comptage de références par run, envoi de logs.subscribe /
- * logs.unsubscribe sur le WebSocket, redistribution des trames aux terminaux ouverts.
+ * Log subscriptions: reference counting per run, sending logs.subscribe /
+ * logs.unsubscribe on the WebSocket, dispatching frames to the open terminals.
  */
 
 export interface LogListener {
@@ -49,7 +49,7 @@ export function dispatchEnd(runId: string): void {
   for (const l of listeners.get(runId) ?? []) l.end?.()
 }
 
-/** Après une reconnexion : on vide les terminaux puis on se réabonne (le serveur renvoie le tampon). */
+/** After a reconnection: clear the terminals then resubscribe (the server resends the buffer). */
 export function resubscribeAll(): void {
   for (const [runId, set] of listeners) {
     for (const l of set) l.reset()

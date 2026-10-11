@@ -25,7 +25,7 @@ function Shell(props: { children?: unknown }) {
   const navigate = useNavigate()
 
   const onKey = (e: KeyboardEvent) => {
-    // Échap appartient au shell interactif (vim…) quand il a le focus.
+    // Escape belongs to the interactive shell (vim…) when it has focus.
     const inShell = !!(e.target as HTMLElement | null)?.closest?.('[data-testid="shell-terminal"]')
     if (e.key === "Escape" && fullscreenRun() && !inShell) {
       e.preventDefault()
@@ -56,7 +56,10 @@ function Shell(props: { children?: unknown }) {
     <div class="flex h-full flex-col">
       <TabBar />
       <main class="flex min-h-0 flex-1 flex-col">
-        <Show when={state.ready} fallback={<div class="p-6 text-sm text-fg-weak">Connexion au serveur…</div>}>
+        <Show
+          when={state.ready}
+          fallback={<div class="p-6 text-sm text-fg-weak">Connecting to the server…</div>}
+        >
           {props.children as never}
         </Show>
       </main>
@@ -98,8 +101,8 @@ function Home() {
           class="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-fg-weak"
           data-testid="no-tab"
         >
-          <p>Aucun projet ouvert.</p>
-          <p class="text-xs">Utilisez « + » dans la barre d'onglets pour en ouvrir un.</p>
+          <p>No project open.</p>
+          <p class="text-xs">Use “+” in the tab bar to open one.</p>
         </div>
       }
     >

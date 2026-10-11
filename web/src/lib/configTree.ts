@@ -1,6 +1,6 @@
 /**
- * Arborescence des configs Hydra : une config est un chemin relatif à la racine, sans
- * extension (ex. "experiments/sweep/unet"). Fonctions pures, testées.
+ * Hydra config tree: a config is a path relative to the root, without extension
+ * (e.g. "experiments/sweep/unet"). Pure, tested functions.
  */
 
 export interface RunCounts {
@@ -9,7 +9,7 @@ export interface RunCounts {
 }
 
 export interface TreeNode {
-  /** Chemin complet (identifiant de config pour un fichier, préfixe pour un dossier). */
+  /** Full path (config identifier for a file, prefix for a directory). */
   path: string
   name: string
   kind: "dir" | "file"
@@ -35,7 +35,7 @@ export function buildTree(paths: readonly string[]): TreeNode[] {
   }
   const sort = (n: TreeNode) => {
     n.children.sort((a, b) =>
-      a.kind !== b.kind ? (a.kind === "dir" ? -1 : 1) : a.name.localeCompare(b.name, "fr", { numeric: true }),
+      a.kind !== b.kind ? (a.kind === "dir" ? -1 : 1) : a.name.localeCompare(b.name, "en", { numeric: true }),
     )
     n.children.forEach(sort)
   }
@@ -43,7 +43,7 @@ export function buildTree(paths: readonly string[]): TreeNode[] {
   return root.children
 }
 
-/** Garde les fichiers dont le chemin contient la requête (et leurs dossiers parents). */
+/** Keep the files whose path contains the query (and their parent directories). */
 export function filterTree(nodes: TreeNode[], query: string): TreeNode[] {
   const q = query.trim().toLowerCase()
   if (!q) return nodes
@@ -59,7 +59,7 @@ export function filterTree(nodes: TreeNode[], query: string): TreeNode[] {
   return out
 }
 
-/** Lignes visibles (parcours en profondeur), en tenant compte des dossiers repliés. */
+/** Visible rows (depth-first walk), taking collapsed directories into account. */
 export function visibleRows(
   nodes: TreeNode[],
   collapsed: ReadonlySet<string>,
@@ -76,7 +76,7 @@ export function visibleRows(
   return rows
 }
 
-/** Totaux d'un dossier (somme des fichiers qu'il contient). */
+/** Totals of a directory (sum of the files it contains). */
 export function aggregate(node: TreeNode, counts: Readonly<Record<string, RunCounts>>): RunCounts {
   if (node.kind === "file") return counts[node.path] ?? { total: 0, active: 0 }
   const acc = { total: 0, active: 0 }
@@ -88,7 +88,7 @@ export function aggregate(node: TreeNode, counts: Readonly<Record<string, RunCou
   return acc
 }
 
-/** Dossiers ancêtres d'un chemin (pour déplier jusqu'à la config sélectionnée). */
+/** Ancestor directories of a path (to expand down to the selected config). */
 export function ancestors(path: string): string[] {
   const parts = path.split("/")
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"))

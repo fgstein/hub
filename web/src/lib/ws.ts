@@ -6,7 +6,7 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting"
 const HEADER = 8
 const decoder = new TextDecoder("ascii")
 
-/** Décode une trame binaire de logs : 8 octets d'id de run + données. */
+/** Decode a binary log frame: 8 bytes of run id + data. */
 export function parseLogFrame(buf: ArrayBuffer): { runId: string; data: Uint8Array } {
   const bytes = new Uint8Array(buf)
   return { runId: decoder.decode(bytes.subarray(0, HEADER)).trimEnd(), data: bytes.subarray(HEADER) }
@@ -18,7 +18,7 @@ export interface SocketHandlers {
   onOpen: () => void
 }
 
-/** WebSocket unique avec reconnexion automatique (backoff exponentiel plafonné). */
+/** Single WebSocket with automatic reconnection (capped exponential backoff). */
 export class Socket {
   private ws: WebSocket | null = null
   private attempt = 0
@@ -51,7 +51,7 @@ export class Socket {
         try {
           this.handlers.onEvent(JSON.parse(msg.data) as ServerEvent)
         } catch (e) {
-          console.error("message WebSocket invalide", e)
+          console.error("invalid WebSocket message", e)
         }
       } else {
         const { runId, data } = parseLogFrame(msg.data as ArrayBuffer)

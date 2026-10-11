@@ -1,8 +1,8 @@
-"""Client WebSocket minimal pour piloter/observer TrainHub en ligne de commande.
+"""Minimal WebSocket client to drive/observe TrainHub from the command line.
 
-Usage :
-    uv run python dev/ws_client.py                 # événements (snapshot, run.*, …)
-    uv run python dev/ws_client.py --logs r7f3k2   # + logs bruts d'un run
+Usage:
+    uv run python dev/ws_client.py                 # events (snapshot, run.*, …)
+    uv run python dev/ws_client.py --logs r7f3k2   # + raw logs of a run
     TRAINHUB_TOKEN=… uv run python dev/ws_client.py --url ws://host:8420/ws
 """
 
@@ -20,7 +20,7 @@ import websockets
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="ws://127.0.0.1:8420/ws")
-    ap.add_argument("--logs", action="append", default=[], help="run_id à suivre")
+    ap.add_argument("--logs", action="append", default=[], help="run_id to follow")
     args = ap.parse_args()
     headers = {}
     if os.environ.get("TRAINHUB_TOKEN"):

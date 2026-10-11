@@ -8,7 +8,7 @@ export type InventoryView = S["InventoryView"]
 export type ProjectView = S["ProjectView"]
 export type MachineView = S["MachineView"]
 export type MachineStatus = S["MachineStatus"]
-/** État d'interface (champs toujours présents dans les réponses du serveur). */
+/** UI state (fields always present in server responses). */
 export type UiState = Required<S["UiState"]>
 export type LastSelection = S["LastSelection"]
 export type Selection = S["Selection"]
@@ -51,7 +51,7 @@ export const FINISHED_STATUSES: readonly RunStatus[] = ["succeeded", "failed", "
 export const isActive = (s: RunStatus) => ACTIVE_STATUSES.includes(s)
 export const isFinished = (s: RunStatus) => FINISHED_STATUSES.includes(s)
 
-/** Statuts de départ autorisés pour chaque action (section 4.2 de la spec). */
+/** Allowed starting statuses for each action (section 4.2 of the spec). */
 export const ALLOWED_FROM: Record<MenuAction, readonly RunStatus[]> = {
   pause: ["running"],
   resume: ["paused"],
@@ -62,14 +62,14 @@ export const ALLOWED_FROM: Record<MenuAction, readonly RunStatus[]> = {
   delete: FINISHED_STATUSES,
 }
 
-/** Actions possibles ; ``close`` exige un conteneur conservé encore démarré. */
+/** Possible actions; ``close`` requires a kept container that is still started. */
 export function allowedActions(status: RunStatus, containerAlive = false): MenuAction[] {
   return (Object.keys(ALLOWED_FROM) as MenuAction[]).filter(
     (a) => ALLOWED_FROM[a].includes(status) && (a !== "close" || containerAlive),
   )
 }
 
-/** Un shell peut-il être ouvert dans le conteneur du run ? */
+/** Can a shell be opened in the run's container? */
 export function shellAvailable(run: Pick<RunView, "status" | "container_alive">): boolean {
   if (run.status === "paused") return false
   return !!run.container_alive || run.status === "running" || run.status === "stopping"

@@ -1,8 +1,8 @@
-"""Suivi des machines : une boucle par machine exécute ``docker ps`` toutes les 3 s.
+"""Machine monitoring: one loop per machine runs ``docker ps`` every 3 s.
 
-Une seule commande par machine, quel que soit le nombre de runs. Au premier contact, et
-quand une machine redevient joignable, les conteneurs trouvés par label sont réconciliés avec
-la base (import des conteneurs inconnus, échec explicite des runs sans conteneur).
+A single command per machine, whatever the number of runs. On first contact, and when a
+machine becomes reachable again, containers found by label are reconciled with the
+database (unknown containers are imported, runs without a container explicitly fail).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ log = logging.getLogger("trainhub.monitor")
 
 
 class Monitor:
-    """Boucles de suivi, une par machine de l'inventaire."""
+    """Monitoring loops, one per inventory machine."""
 
     def __init__(self, service: RunService, interval: float = 3.0) -> None:
         self.svc = service
@@ -38,7 +38,7 @@ class Monitor:
         self.sync_machines()
 
     def sync_machines(self) -> None:
-        """Ajoute/retire des boucles selon les machines de l'inventaire."""
+        """Add/remove loops according to the inventory machines."""
         if not self._running:
             return
         wanted = {m.id for m in self.svc.inventory.machines}
@@ -66,11 +66,11 @@ class Monitor:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception("erreur dans la boucle de suivi", extra={"machine": machine_id})
+                log.exception("error in the monitoring loop", extra={"machine": machine_id})
             await asyncio.sleep(max(0.2, self.interval - (time.monotonic() - t0)))
 
     async def poll(self, machine_id: str) -> None:
-        """Un tour de suivi pour une machine (utilisable directement dans les tests)."""
+        """One monitoring round for a machine (usable directly in tests)."""
         try:
             machine = self.svc.inventory.machine(machine_id)
         except UnknownResourceError:
@@ -86,7 +86,7 @@ class Monitor:
             return
         if not res.ok:
             await self.svc.mark_machine_unreachable(
-                machine_id, f"docker indisponible : {res.error_message()}"
+                machine_id, f"docker unavailable: {res.error_message()}"
             )
             return
         was_reachable = self.svc.machine_state(machine_id).reachable

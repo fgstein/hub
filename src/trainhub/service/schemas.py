@@ -1,4 +1,4 @@
-"""Schémas Pydantic échangés par la couche service (réutilisés par l'API et le MCP)."""
+"""Pydantic schemas exchanged by the service layer (reused by the API and MCP)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from ..core.status import elapsed_seconds, paused_seconds
 
 
 class Selection(BaseModel):
-    """Choix d'un run : projet, machine, image, venv, config (+ options)."""
+    """Choice of a run: project, machine, image, venv, config (+ options)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -21,14 +21,14 @@ class Selection(BaseModel):
     image: str
     venv: str
     config: str
-    overrides: list[str] = Field(default_factory=list, description="Overrides Hydra facultatifs")
+    overrides: list[str] = Field(default_factory=list, description="Optional Hydra overrides")
     cuda_visible_devices: str | None = Field(
-        default=None, description="Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')"
+        default=None, description="Value of CUDA_VISIBLE_DEVICES (e.g. '0,1')"
     )
     params: dict[str, str] = Field(
         default_factory=dict,
-        description="Valeurs des paramètres libres de la commande ({nom} non réservés) ; "
-        "chaque valeur est découpée comme par un shell, vide = rien d'inséré",
+        description="Values of the free command parameters (non-reserved {name}); "
+        "each value is split as a shell would, empty = nothing inserted",
     )
 
 
@@ -42,7 +42,7 @@ class LastSelection(BaseModel):
 
 
 class UiState(BaseModel):
-    """État d'interface persisté côté serveur."""
+    """UI state persisted on the server."""
 
     open_tabs: list[str] = Field(default_factory=list)
     active_tab: str | None = None
@@ -50,15 +50,15 @@ class UiState(BaseModel):
 
 
 class PreviewResult(BaseModel):
-    text: str = Field(description="Commande lisible, sur plusieurs lignes")
-    exact: str = Field(description="Commande exacte sur une ligne, copiable dans un terminal")
+    text: str = Field(description="Readable command, over several lines")
+    exact: str = Field(description="Exact command on one line, ready to paste into a terminal")
     argv: list[str]
-    command: str = Field(description="Commande générique résolue")
+    command: str = Field(description="Resolved generic command")
     container_name: str
 
 
 class RunCount(BaseModel):
-    """Nombre de runs lancés sur une config (tous statuts) et, parmi eux, actifs."""
+    """Number of runs launched on a config (all statuses) and, among them, active ones."""
 
     total: int
     active: int
@@ -68,11 +68,11 @@ class ConfigList(BaseModel):
     project: str
     machine: str | None
     configs: list[str] = Field(
-        description="Identifiants de configs : chemin relatif à la racine, sans extension"
+        description="Config identifiers: path relative to the root, without extension"
     )
-    root: str | None = Field(default=None, description="Racine des configs (découverte)")
+    root: str | None = Field(default=None, description="Configs root (discovery)")
     run_counts: dict[str, RunCount] = Field(
-        default_factory=dict, description="Runs existants par config (absent : aucun)"
+        default_factory=dict, description="Existing runs per config (missing: none)"
     )
     static: list[str] = Field(default_factory=list)
     discovered: list[str] | None = None
@@ -82,7 +82,7 @@ class ConfigList(BaseModel):
 
 class MachineStatus(BaseModel):
     id: str
-    reachable: bool | None = Field(default=None, description="None : pas encore vérifié")
+    reachable: bool | None = Field(default=None, description="None: not checked yet")
     last_check: datetime | None = None
     last_ok: datetime | None = None
     error: str | None = None
@@ -114,19 +114,19 @@ class VenvView(BaseModel):
 class ProjectView(BaseModel):
     id: str
     label: str
-    command: str = Field(description="Commande générique effective (surcharge ou YAML)")
+    command: str = Field(description="Effective generic command (override or YAML)")
     yaml_command: str
     command_overridden: bool
     params: list[str] = Field(
         default_factory=list,
-        description="Paramètres libres de la commande effective, à renseigner au lancement",
+        description="Free parameters of the effective command, to fill in at launch",
     )
     workdir: str | None
     machines: list[str]
     images: list[str]
     venvs: list[str]
     venv_images: dict[str, list[str] | None] = Field(
-        description="Pour chaque venv autorisé, images compatibles (None : toutes)"
+        description="For each allowed venv, compatible images (None: all)"
     )
     static_configs: list[str] | None
     discover: bool
@@ -138,12 +138,12 @@ class InventoryView(BaseModel):
     images: list[ImageView]
     venvs: list[VenvView]
     projects: list[ProjectView]
-    error: str | None = Field(default=None, description="Erreur du dernier rechargement")
+    error: str | None = Field(default=None, description="Error of the last reload")
     executor: str
 
 
 class RunView(Run):
-    """Run enrichi des valeurs calculées."""
+    """Run enriched with computed values."""
 
     active: bool
     elapsed_s: float

@@ -1,6 +1,6 @@
 import type { RunView } from "./types"
 
-/** Formate une durée : 12s, 4m 05s, 3h 12m, 2j 04h (identique au cœur Python). */
+/** Format a duration: 12s, 4m 05s, 3h 12m, 2d 04h (same as the Python core). */
 export function formatDuration(seconds: number): string {
   let s = Math.floor(Math.max(0, seconds))
   if (s < 60) return `${s}s`
@@ -12,12 +12,12 @@ export function formatDuration(seconds: number): string {
   if (h < 24) return `${h}h ${String(m).padStart(2, "0")}m`
   const d = Math.floor(h / 24)
   h %= 24
-  return `${d}j ${String(h).padStart(2, "0")}h`
+  return `${d}d ${String(h).padStart(2, "0")}h`
 }
 
 const ts = (iso: string | null | undefined) => (iso ? Date.parse(iso) : Number.NaN)
 
-/** Temps écoulé : now - started_at si actif, figé à finished_at - started_at sinon. */
+/** Elapsed time: now - started_at while active, else finished_at - started_at. */
 export function elapsedSeconds(run: Pick<RunView, "started_at" | "finished_at">, nowMs: number): number {
   const start = ts(run.started_at)
   if (Number.isNaN(start)) return 0
@@ -25,7 +25,7 @@ export function elapsedSeconds(run: Pick<RunView, "started_at" | "finished_at">,
   return Math.max(0, (end - start) / 1000)
 }
 
-/** Durée cumulée en pause, pause en cours comprise. */
+/** Cumulative paused duration, including the current pause. */
 export function pausedSeconds(run: Pick<RunView, "paused_total_s" | "paused_at">, nowMs: number): number {
   let total = run.paused_total_s ?? 0
   const p = ts(run.paused_at)
@@ -36,7 +36,7 @@ export function pausedSeconds(run: Pick<RunView, "paused_total_s" | "paused_at">
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—"
   const d = new Date(iso)
-  return d.toLocaleString("fr-FR", {
+  return d.toLocaleString("en-GB", {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",

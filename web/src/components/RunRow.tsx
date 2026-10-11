@@ -39,7 +39,7 @@ function Tip(props: { content: JSX.Element; children: JSX.Element; class?: strin
   )
 }
 
-/** Partie gauche + centrale + droite d'un run (réutilisée dans l'en-tête plein écran). */
+/** Left + middle + right part of a run (reused in the fullscreen header). */
 function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; header?: boolean }) {
   const run = () => state.runs[props.id]!
   const status = () => displayStatus(props.id)
@@ -66,15 +66,15 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
             <div>
               {statusLabel(status())} · {run().id}
             </div>
-            <div>démarré : {formatDateTime(run().started_at)}</div>
+            <div>started: {formatDateTime(run().started_at)}</div>
             <Show when={run().finished_at}>
-              <div>terminé : {formatDateTime(run().finished_at)}</div>
+              <div>finished: {formatDateTime(run().finished_at)}</div>
             </Show>
             <Show when={paused() > 0}>
-              <div>dont en pause : {formatDuration(paused())}</div>
+              <div>of which paused: {formatDuration(paused())}</div>
             </Show>
             <Show when={run().exit_code != null}>
-              <div>code de sortie : {run().exit_code}</div>
+              <div>exit code: {run().exit_code}</div>
             </Show>
           </div>
         }
@@ -109,7 +109,7 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
       <Show when={run().container_alive && isFinished(run().status)}>
         <Tip
           class="shrink-0"
-          content="La commande est terminée mais le conteneur est conservé : shell disponible. « Fermer le conteneur » dans le menu l'arrête."
+          content="The command has finished but the container is kept: shell available. “Close container” in the menu stops it."
         >
           <button
             type="button"
@@ -120,18 +120,18 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
             }}
             data-testid="run-container-alive"
           >
-            <IconTerminal size={11} /> conteneur actif
+            <IconTerminal size={11} /> container alive
           </button>
         </Tip>
       </Show>
       <Show when={run().source === "mcp"}>
-        <Tip class="shrink-0 text-icon" content="Lancé par un agent (MCP)">
+        <Tip class="shrink-0 text-icon" content="Launched by an agent (MCP)">
           <IconAgent size={14} />
         </Tip>
       </Show>
       <Show when={run().source === "import"}>
-        <Tip class="shrink-0 text-xs text-fg-weak" content="Conteneur retrouvé sur la machine et importé">
-          importé
+        <Tip class="shrink-0 text-xs text-fg-weak" content="Container found on the machine and imported">
+          imported
         </Tip>
       </Show>
       <ActionButton run={run()} />
@@ -139,7 +139,7 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
   )
 }
 
-/** Commande du run : générique résolue, ou commande complète (ssh + docker run). */
+/** Command of the run: resolved generic command, or full command (ssh + docker run). */
 function CommandBar(props: { run: RunView }) {
   const [full, setFull] = createSignal(false)
   const fullText = () =>
@@ -148,11 +148,11 @@ function CommandBar(props: { run: RunView }) {
     full() && props.run.full_command?.length ? prettyCommand(props.run.full_command) : props.run.command
   const copy = async () => {
     try {
-      // Copie exacte (une ligne) ; l'affichage multi-ligne n'échappe qu'un niveau.
+      // Exact copy (one line); the multi-line display only escapes one level.
       await navigator.clipboard.writeText(full() ? fullText() : props.run.command)
-      toast(full() ? "commande complète copiée" : "commande copiée", "success")
+      toast(full() ? "full command copied" : "command copied", "success")
     } catch {
-      toast("copie impossible", "error")
+      toast("could not copy", "error")
     }
   }
   const tab = (active: boolean) =>
@@ -168,18 +168,18 @@ function CommandBar(props: { run: RunView }) {
           type="button"
           class={tab(!full())}
           onClick={() => setFull(false)}
-          title="Commande générique résolue"
+          title="Resolved generic command"
         >
-          commande
+          command
         </button>
         <button
           type="button"
           class={tab(full())}
           onClick={() => setFull(true)}
-          title="Commande exacte exécutée par TrainHub (ssh + docker run + script), options Docker du projet comprises (inventaire YAML)"
+          title="Exact command run by TrainHub (ssh + docker run + script), including the project's Docker options (YAML inventory)"
           data-testid="run-command-full"
         >
-          complète
+          full
         </button>
       </div>
       <code
@@ -193,8 +193,8 @@ function CommandBar(props: { run: RunView }) {
       <button
         type="button"
         class="flex size-5 shrink-0 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
-        title="Copier"
-        aria-label="Copier la commande"
+        title="Copy"
+        aria-label="Copy command"
         onClick={copy}
       >
         <IconCopy size={11} />
@@ -215,7 +215,7 @@ export function RunRow(props: { id: string }) {
     on(open, (o) => {
       clearTimeout(unmountTimer)
       if (o) setMounted(true)
-      // Replier un terminal se désabonne du flux après 10 s.
+      // Collapsing a terminal unsubscribes from the stream after 10 s.
       else unmountTimer = setTimeout(() => setMounted(false), UNSUBSCRIBE_DELAY_MS)
     }),
   )
@@ -225,7 +225,7 @@ export function RunRow(props: { id: string }) {
   const view = () => panelViews[props.id] ?? "logs"
   const canShell = () =>
     shellAvailable({ status: displayStatus(props.id), container_alive: run()?.container_alive ?? false })
-  // Le shell reste monté (session conservée) quand on revient aux logs.
+  // The shell stays mounted (session kept) when going back to the logs.
   const [shellMounted, setShellMounted] = createSignal(false)
   createEffect(() => {
     if (view() === "shell" && mounted()) setShellMounted(true)
@@ -248,7 +248,7 @@ export function RunRow(props: { id: string }) {
             <button
               type="button"
               class="absolute bottom-0 left-1/2 flex h-3 w-10 -translate-x-1/2 items-center justify-center text-fg-weaker opacity-40 transition-opacity group-hover:opacity-100"
-              aria-label={open() ? "Replier les logs" : "Déplier les logs"}
+              aria-label={open() ? "Collapse logs" : "Expand logs"}
               aria-expanded={open()}
               onClick={toggle}
               data-testid="run-toggle"
@@ -304,8 +304,8 @@ export function RunRow(props: { id: string }) {
                       disabled={!canShell() && !shellMounted()}
                       title={
                         canShell()
-                          ? "Shell interactif dans le conteneur (docker exec -it), venv activé"
-                          : "Conteneur arrêté (ou en pause) : pas de shell"
+                          ? "Interactive shell in the container (docker exec -it), venv activated"
+                          : "Container stopped (or paused): no shell"
                       }
                       onClick={() => setPanelView(props.id, "shell")}
                       data-testid="panel-shell"

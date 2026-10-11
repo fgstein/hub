@@ -1,6 +1,6 @@
-"""Modèles de données : inventaire (YAML, lecture seule) et runs (SQLite).
+"""Data models: inventory (YAML, read-only) and runs (SQLite).
 
-Ces modèles ne font aucune I/O ; ils sont validés par Pydantic v2.
+These models do no I/O; they are validated by Pydantic v2.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from pydantic import (
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 
-#: Placeholders remplis par TrainHub. Tout autre ``{nom}`` est un paramètre libre du run,
-#: saisi avant le lancement (champ texte du brouillon).
+#: Placeholders filled in by TrainHub. Any other ``{name}`` is a free run parameter,
+#: entered before launch (text field of the draft).
 ALLOWED_PLACEHOLDERS = frozenset({"config", "config_name", "run_id", "machine", "project"})
-#: Identifiant du venv toujours disponible : pas d'activation (Python de l'image).
+#: Identifier of the always-available venv: no activation (the image's Python).
 SYSTEM_VENV_ID = "system"
-#: Un placeholder est ``{nom}`` non précédé de ``$`` (pour laisser passer ``${VAR}`` et les
-#: interpolations Hydra/OmegaConf ``${oc.env:X}``).
+#: A placeholder is ``{name}`` not preceded by ``$`` (to let ``${VAR}`` and Hydra/OmegaConf
+#: interpolations ``${oc.env:X}`` through).
 PLACEHOLDER_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "local"})
@@ -38,26 +38,26 @@ class _Strict(BaseModel):
 
 
 def command_params(command: str) -> list[str]:
-    """Paramètres libres d'une commande (placeholders non réservés), dans l'ordre d'apparition."""
+    """Free parameters of a command (non-reserved placeholders), in order of appearance."""
     names = PLACEHOLDER_RE.findall(command)
     return list(dict.fromkeys(n for n in names if n not in ALLOWED_PLACEHOLDERS))
 
 
 def validate_command_template(command: str) -> str:
-    """Valide une commande générique ; lève ``ValueError`` avec un message lisible."""
+    """Validate a generic command; raise ``ValueError`` with a readable message."""
     if not command.strip():
-        raise ValueError("la commande est vide")
+        raise ValueError("the command is empty")
     names = PLACEHOLDER_RE.findall(command)
     if "config" not in names:
-        raise ValueError("la commande doit contenir le placeholder {config}")
+        raise ValueError("the command must contain the {config} placeholder")
     return command
 
 
-# --------------------------------------------------------------------------- inventaire
+# --------------------------------------------------------------------------- inventory
 
 
 class Machine(_Strict):
-    """Machine distante joignable en SSH (ou ``localhost``)."""
+    """Remote machine reachable over SSH (or ``localhost``)."""
 
     id: str = Field(pattern=ID_PATTERN)
     label: str | None = None
@@ -71,7 +71,7 @@ class Machine(_Strict):
 
     @property
     def is_local(self) -> bool:
-        """``True`` si les commandes s'exécutent sans SSH sur l'hôte de TrainHub."""
+        """``True`` if commands run without SSH on the TrainHub host."""
         return self.host in LOCAL_HOSTS and self.user is None and self.port is None
 
     @property
@@ -80,7 +80,7 @@ class Machine(_Strict):
 
 
 class Image(_Strict):
-    """Image Docker disponible sur les machines."""
+    """Docker image available on the machines."""
 
     id: str = Field(pattern=ID_PATTERN)
     image: str = Field(min_length=1)
@@ -88,29 +88,29 @@ class Image(_Strict):
 
 
 class Venv(_Strict):
-    """Environnement virtuel Python présent dans les images."""
+    """Python virtual environment present in the images."""
 
     id: str = Field(pattern=ID_PATTERN)
-    path: str = Field(min_length=1, description="Chemin du venv dans le conteneur")
+    path: str = Field(min_length=1, description="Path of the venv in the container")
     label: str | None = None
     images: list[str] | None = Field(
-        default=None, description="Restreint le venv à ces images (défaut : toutes)"
+        default=None, description="Restrict the venv to these images (default: all)"
     )
 
     @property
     def is_system(self) -> bool:
-        """Pas de venv à activer (Python de l'image)."""
+        """No venv to activate (the image's Python)."""
         return self.path == ""
 
 
-#: Venv implicite ``system`` : aucune activation.
+#: Implicit ``system`` venv: no activation.
 SYSTEM_VENV = Venv.model_construct(
-    id=SYSTEM_VENV_ID, path="", label="sans venv (Python de l'image)", images=None
+    id=SYSTEM_VENV_ID, path="", label="no venv (image Python)", images=None
 )
 
 
 class DockerOptions(_Strict):
-    """Options ``docker run`` propres à un projet."""
+    """Project-specific ``docker run`` options."""
 
     gpus: str | None = None
     shm_size: str | None = None
@@ -121,7 +121,7 @@ class DockerOptions(_Strict):
     stop_timeout: int = Field(default=30, ge=0)
     keep_alive: bool = Field(
         default=True,
-        description="Conserver le conteneur (shell disponible) quand la commande se termine",
+        description="Keep the container (shell available) when the command finishes",
     )
 
     @field_validator("env", mode="before")
@@ -133,22 +133,22 @@ class DockerOptions(_Strict):
 
 
 class ConfigDiscover(_Strict):
-    """Découverte récursive des configs Hydra (``find``) sous une racine, sur la machine choisie.
+    """Recursive discovery of Hydra configs (``find``) under a root, on the chosen machine.
 
-    Une config est identifiée par son chemin relatif à la racine, sans extension
-    (ex. ``experiments/unet_large``), ce qui correspond à ``--config-name`` de Hydra quand
-    ``config_path`` pointe sur la racine. ``{config_name}`` donne le seul basename.
+    A config is identified by its path relative to the root, without extension
+    (e.g. ``experiments/unet_large``), which matches Hydra's ``--config-name`` when
+    ``config_path`` points to the root. ``{config_name}`` gives the basename only.
     """
 
     path: str = Field(
         min_length=1,
         validation_alias=AliasChoices("path", "root"),
-        description="Racine des configs côté hôte (absolue, ou relative au home si ~/…)",
+        description="Root of the configs on the host (absolute, or relative to home if ~/…)",
     )
-    pattern: str = Field(default="*.yaml", description="Motif des noms de fichiers")
+    pattern: str = Field(default="*.yaml", description="File name pattern")
     exclude: list[str] = Field(
         default_factory=list,
-        description="Motifs (glob) de chemins relatifs à ignorer, ex. hydra/*, outputs/*",
+        description="Glob patterns of relative paths to ignore, e.g. hydra/*, outputs/*",
     )
     max_depth: int = Field(default=10, ge=1, le=50)
 
@@ -156,12 +156,12 @@ class ConfigDiscover(_Strict):
     @classmethod
     def _check_path(cls, v: str) -> str:
         if v.startswith("-") or "\n" in v:
-            raise ValueError("racine des configs invalide")
+            raise ValueError("invalid configs root")
         return v
 
 
 class ConfigSource(_Strict):
-    """Liste statique de configs et/ou découverte sur la machine."""
+    """Static list of configs and/or discovery on the machine."""
 
     static: list[str] | None = None
     discover: ConfigDiscover | None = None
@@ -169,7 +169,7 @@ class ConfigSource(_Strict):
     @model_validator(mode="before")
     @classmethod
     def _shorthand(cls, data: object) -> object:
-        """Forme courte : ``configs: {root: …, pattern: …, exclude: […]}``."""
+        """Short form: ``configs: {root: …, pattern: …, exclude: […]}``."""
         if isinstance(data, dict) and "discover" not in data and ("root" in data or "path" in data):
             data = dict(data)
             keys = ("root", "path", "pattern", "exclude", "max_depth")
@@ -179,12 +179,12 @@ class ConfigSource(_Strict):
     @model_validator(mode="after")
     def _one_source(self) -> ConfigSource:
         if self.static is None and self.discover is None:
-            raise ValueError("configs : définir 'static' et/ou 'discover'")
+            raise ValueError("configs: define 'static' and/or 'discover'")
         return self
 
 
 class Project(_Strict):
-    """Projet = un onglet de l'interface, avec sa commande générique."""
+    """Project = one tab of the interface, with its generic command."""
 
     id: str = Field(pattern=ID_PATTERN)
     label: str | None = None
@@ -210,23 +210,23 @@ MachineState = Literal["ok", "flaky", "down"]
 
 
 class SimulationSettings(_Strict):
-    """Paramètres du mode ``fake`` (section ``simulation`` de ``inventory.dev.yaml``)."""
+    """Settings of the ``fake`` mode (``simulation`` section of ``inventory.dev.yaml``)."""
 
     duration_s: tuple[float, float] = (60.0, 300.0)
-    log_rate: float = Field(default=8.0, gt=0, description="Lignes de log par seconde")
+    log_rate: float = Field(default=8.0, gt=0, description="Log lines per second")
     failure_prob: float = Field(default=0.1, ge=0, le=1)
-    time_scale: float = Field(default=1.0, gt=0, description="Facteur d'accélération du temps")
+    time_scale: float = Field(default=1.0, gt=0, description="Time acceleration factor")
     latency_ms: tuple[float, float] = (50.0, 300.0)
     machines: dict[str, MachineState] = Field(default_factory=dict)
     configs: dict[str, list[str]] = Field(
-        default_factory=dict, description="Configs « découvertes » simulées, par projet"
+        default_factory=dict, description="Simulated “discovered” configs, per project"
     )
     flaky_period_s: float = Field(default=40.0, gt=0)
     seed: int | None = None
 
 
 class Inventory(_Strict):
-    """Contenu validé de ``inventory.yaml``."""
+    """Validated content of ``inventory.yaml``."""
 
     machines: list[Machine] = Field(default_factory=list)
     images: list[Image] = Field(default_factory=list)
@@ -240,7 +240,7 @@ class Inventory(_Strict):
             seen: set[str] = set()
             for item in getattr(self, kind):
                 if item.id in seen:
-                    raise ValueError(f"{kind} : id '{item.id}' dupliqué")
+                    raise ValueError(f"{kind}: duplicate id '{item.id}'")
                 seen.add(item.id)
         machines = {m.id for m in self.machines}
         images = {i.id for i in self.images}
@@ -248,15 +248,15 @@ class Inventory(_Strict):
         for v in self.venvs:
             for ref in v.images or []:
                 if ref not in images:
-                    raise ValueError(f"venv '{v.id}' : image '{ref}' inconnue")
+                    raise ValueError(f"venv '{v.id}': unknown image '{ref}'")
         for p in self.projects:
             for field, known in (("machines", machines), ("images", images), ("venvs", venvs)):
                 for ref in getattr(p, field) or []:
                     if ref not in known:
-                        raise ValueError(f"projet '{p.id}' : {field[:-1]} '{ref}' inconnue")
+                        raise ValueError(f"project '{p.id}': unknown {field[:-1]} '{ref}'")
         return self
 
-    # -- accès ---------------------------------------------------------------
+    # -- access --------------------------------------------------------------
 
     def machine(self, mid: str) -> Machine:
         return _find(self.machines, mid, "machine")
@@ -270,7 +270,7 @@ class Inventory(_Strict):
         return _find(self.venvs, vid, "venv")
 
     def project(self, pid: str) -> Project:
-        return _find(self.projects, pid, "projet")
+        return _find(self.projects, pid, "project")
 
     def allowed_machines(self, project: Project) -> list[Machine]:
         if project.machines is None:
@@ -283,7 +283,7 @@ class Inventory(_Strict):
         return [self.image(i) for i in project.images]
 
     def allowed_venvs(self, project: Project, image: str | None = None) -> list[Venv]:
-        """Venvs utilisables ; ``system`` (sans venv) est toujours proposé, en dernier."""
+        """Usable venvs; ``system`` (no venv) is always offered, last."""
         venvs = list(self.venvs) if project.venvs is None else [self.venv(v) for v in project.venvs]
         if image is not None:
             venvs = [v for v in venvs if v.images is None or image in v.images]
@@ -293,15 +293,15 @@ class Inventory(_Strict):
 
 
 class UnknownResourceError(KeyError):
-    """Ressource absente de l'inventaire."""
+    """Resource missing from the inventory."""
 
     def __init__(self, kind: str, rid: str, available: list[str]) -> None:
         self.kind, self.rid, self.available = kind, rid, available
         super().__init__(rid)
 
     def __str__(self) -> str:
-        avail = ", ".join(self.available) or "aucun"
-        return f"{self.kind} '{self.rid}' inconnu(e) ; disponibles : {avail}"
+        avail = ", ".join(self.available) or "none"
+        return f"unknown {self.kind} '{self.rid}'; available: {avail}"
 
 
 _T = TypeVar("_T", Machine, Image, Venv, Project)
@@ -318,7 +318,7 @@ def _find(items: list[_T], rid: str, kind: str) -> _T:
 
 
 class RunStatus(StrEnum):
-    """Statut d'un run (section 4.3)."""
+    """Status of a run (section 4.3)."""
 
     LAUNCHING = "launching"
     RUNNING = "running"
@@ -358,7 +358,7 @@ class RunSource(StrEnum):
 
 
 class Run(BaseModel):
-    """Un run persistant (section 3.3)."""
+    """A persisted run (section 3.3)."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -368,8 +368,8 @@ class Run(BaseModel):
     image_id: str
     venv_id: str
     config: str
-    command: str = Field(description="Commande générique résolue (placeholders remplacés)")
-    full_command: list[str] = Field(default_factory=list, description="argv complet exécuté")
+    command: str = Field(description="Resolved generic command (placeholders replaced)")
+    full_command: list[str] = Field(default_factory=list, description="Full executed argv")
     container_name: str
     status: RunStatus
     exit_code: int | None = None
@@ -383,9 +383,9 @@ class Run(BaseModel):
     overrides: list[str] = Field(default_factory=list)
     cuda_visible_devices: str | None = None
     params: dict[str, str] = Field(
-        default_factory=dict, description="Valeurs des paramètres libres de la commande"
+        default_factory=dict, description="Values of the free command parameters"
     )
     stop_requested: bool = False
     container_alive: bool = Field(
-        default=False, description="Conteneur encore démarré (shell disponible)"
+        default=False, description="Container still started (shell available)"
     )

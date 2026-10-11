@@ -1,7 +1,7 @@
 /*
- * Thème TrainHub — tokens de couleur et typographie repris du système de thème
- * d'OpenCode (packages/ui/src/styles/theme.css, licence MIT, voir THIRD_PARTY_NOTICES).
- * Sombre par défaut ; clair via [data-theme="light"].
+ * TrainHub theme — color and typography tokens taken from OpenCode's theme system
+ * (packages/ui/src/styles/theme.css, MIT license, see THIRD_PARTY_NOTICES).
+ * Dark by default; light through [data-theme="light"].
  */
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
@@ -212,7 +212,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- pastilles de statut -------------------------------------------------- */
+/* --- status dots ---------------------------------------------------------- */
 
 .dot {
   position: relative;

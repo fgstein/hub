@@ -1,18 +1,18 @@
-"""Construction des commandes (fonctions pures, aucune I/O).
+"""Command building (pure functions, no I/O).
 
-Toutes les fonctions ``build_*`` renvoient un argv (``list[str]``) destiné à
-``asyncio.create_subprocess_exec`` : jamais une chaîne passée à un shell local.
+Every ``build_*`` function returns an argv (``list[str]``) meant for
+``asyncio.create_subprocess_exec``: never a string handed to a local shell.
 
-Niveaux d'interprétation pour un lancement via SSH :
+Interpretation levels for a launch over SSH:
 
-1. ``ssh`` reçoit la commande distante comme **un seul argument**, construit avec
-   :func:`shlex.join` ; le shell de connexion distant la découpe à nouveau en argv.
-2. ``docker run … bash -lc SCRIPT`` : ``SCRIPT`` est interprété par ``bash`` dans le
-   conteneur. Chaque valeur insérée dans ``SCRIPT`` (chemin du venv, workdir, placeholders,
-   overrides Hydra) est échappée avec :func:`shlex.quote`.
+1. ``ssh`` receives the remote command as **a single argument**, built with
+   :func:`shlex.join`; the remote login shell splits it back into an argv.
+2. ``docker run … bash -lc SCRIPT``: ``SCRIPT`` is interpreted by ``bash`` inside the
+   container. Every value inserted in ``SCRIPT`` (venv path, workdir, placeholders,
+   Hydra overrides) is escaped with :func:`shlex.quote`.
 
-Les fonctions ``docker_*`` renvoient l'argv « distant » (ce qui s'exécute sur la machine) ;
-:func:`transport` l'enveloppe dans ``ssh`` sauf pour une machine locale.
+The ``docker_*`` functions return the “remote” argv (what runs on the machine);
+:func:`transport` wraps it in ``ssh`` except for a local machine.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ SSH_CONTROL_OPTIONS: tuple[str, ...] = (
     "-o",
     "ControlPath=~/.ssh/th-%C",
 )
-#: Options non interactives ajoutées par l'exécuteur SSH (pas dans l'aperçu).
+#: Non-interactive options added by the SSH executor (not in the preview).
 SSH_BATCH_OPTIONS: tuple[str, ...] = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
 
 LABEL_ROOT = "trainhub"
@@ -53,9 +53,9 @@ LABEL_CONFIG = "trainhub.config"
 
 PS_FORMAT = "{{json .}}"
 
-#: Fichier (dans le conteneur) où le script écrit le code de sortie de la commande.
+#: File (in the container) where the script writes the exit code of the command.
 EXIT_FILE = "/tmp/.trainhub-exit"
-#: Healthcheck : ``unhealthy`` (et affiche le code) quand la commande est terminée.
+#: Healthcheck: ``unhealthy`` (and prints the code) once the command has finished.
 HEALTH_CMD = f"test ! -e {EXIT_FILE} || {{ cat {EXIT_FILE}; exit 1; }}"
 HEALTH_INTERVAL = "3s"
 
@@ -64,7 +64,7 @@ _CUDA_RE = re.compile(r"^[0-9]+(,[0-9]+)*$|^(all|none|void|)$")
 
 @dataclass(frozen=True)
 class RunSpec:
-    """Tout ce qu'il faut pour lancer un run."""
+    """Everything needed to launch a run."""
 
     run_id: str
     project: Project
@@ -73,12 +73,12 @@ class RunSpec:
     venv: Venv
     config: str
     command: str | None = None
-    """Commande générique (surcharge de ``project.command``), placeholders non résolus."""
+    """Generic command (overrides ``project.command``), placeholders unresolved."""
     overrides: tuple[str, ...] = ()
-    """Overrides Hydra ajoutés à la fin de la commande, chacun échappé."""
+    """Hydra overrides appended to the command, each one escaped."""
     cuda_visible_devices: str | None = None
     params: Mapping[str, str] = field(default_factory=dict)
-    """Valeurs des paramètres libres (``{nom}`` non réservés) de la commande."""
+    """Values of the free parameters (non-reserved ``{name}``) of the command."""
 
     @property
     def template(self) -> str:
@@ -91,7 +91,7 @@ class RunSpec:
 
 @dataclass(frozen=True)
 class Target:
-    """Un conteneur sur une machine."""
+    """A container on a machine."""
 
     machine: Machine
     container: str
@@ -99,7 +99,7 @@ class Target:
 
 @dataclass(frozen=True)
 class _Groups:
-    """argv découpé en groupes, pour l'affichage multi-ligne de :func:`preview`."""
+    """argv split into groups, for the multi-line display of :func:`preview`."""
 
     groups: list[list[str]] = field(default_factory=list)
 
@@ -111,18 +111,18 @@ class _Groups:
 
 
 def container_name(project_id: str, run_id: str) -> str:
-    """Nom du conteneur : ``th-<project>-<run_id>``."""
+    """Container name: ``th-<project>-<run_id>``."""
     return f"th-{project_id}-{run_id}"
 
 
 def param_words(name: str, value: str) -> list[str]:
-    """Valeur d'un paramètre libre découpée comme par un shell (``a=1 'b c'`` → 2 mots)."""
+    """Value of a free parameter split as a shell would (``a=1 'b c'`` → 2 words)."""
     if "\x00" in value:
-        raise ValueError(f"paramètre {{{name}}} : caractère nul interdit")
+        raise ValueError(f"parameter {{{name}}}: null character not allowed")
     try:
         return shlex.split(value)
     except ValueError as exc:
-        raise ValueError(f"paramètre {{{name}}} invalide : {exc}") from exc
+        raise ValueError(f"invalid parameter {{{name}}}: {exc}") from exc
 
 
 def resolve_command(
@@ -134,12 +134,12 @@ def resolve_command(
     project: str,
     params: Mapping[str, str] | None = None,
 ) -> str:
-    """Remplace les placeholders par leurs valeurs échappées pour le shell.
+    """Replace placeholders with their shell-escaped values.
 
-    ``{config}`` : chemin relatif sans extension (ex. ``exp/unet``) ; ``{config_name}`` :
-    basename (``unet``). ``${VAR}`` et les interpolations Hydra ``${…}`` ne sont pas touchés.
-    Tout autre ``{nom}`` est un paramètre libre : sa valeur (``params``) est découpée comme
-    par un shell et chaque mot est échappé ; absente ou vide, rien n'est inséré.
+    ``{config}``: relative path without extension (e.g. ``exp/unet``); ``{config_name}``:
+    basename (``unet``). ``${VAR}`` and Hydra interpolations ``${…}`` are left untouched.
+    Any other ``{name}`` is a free parameter: its value (``params``) is split as a shell
+    would and each word is escaped; if missing or empty, nothing is inserted.
     """
     free = params or {}
     values = {
@@ -160,7 +160,7 @@ def resolve_command(
 
 
 def resolved_command(spec: RunSpec) -> str:
-    """Commande générique résolue, overrides Hydra compris."""
+    """Resolved generic command, including Hydra overrides."""
     cmd = resolve_command(
         spec.template,
         config=spec.config,
@@ -179,21 +179,21 @@ def _activate_path(venv_path: str) -> str:
 
 
 def inner_script(spec: RunSpec) -> str:
-    """Script exécuté par ``bash -lc`` dans le conteneur.
+    """Script run by ``bash -lc`` in the container.
 
-    Sans ``keep_alive`` : ``source venv && cd workdir && exec CMD``.
+    Without ``keep_alive``: ``source venv && cd workdir && exec CMD``.
 
-    Avec ``keep_alive`` (défaut), la commande tourne en arrière-plan sous ``bash`` :
+    With ``keep_alive`` (default), the command runs in the background under ``bash``:
 
-    - ``SIGTERM`` (``docker stop``) est relayé à la commande, puis le conteneur s'arrête avec
-      son code de sortie ;
-    - quand la commande se termine d'elle-même, son code est écrit dans :data:`EXIT_FILE` (le
-      healthcheck passe alors à ``unhealthy``, ce qui signale la fin à TrainHub) et le
-      conteneur reste démarré pour qu'on puisse y ouvrir un shell ; à sa fermeture, il sort
-      avec le code de la commande.
+    - ``SIGTERM`` (``docker stop``) is forwarded to the command, then the container exits with
+      its exit code;
+    - when the command finishes on its own, its code is written to :data:`EXIT_FILE` (the
+      healthcheck then becomes ``unhealthy``, which signals the end to TrainHub) and the
+      container stays started so that a shell can be opened in it; when it is closed, it exits
+      with the command's code.
     """
     setup: list[str] = []
-    if spec.venv.path:  # venv « system » : rien à activer
+    if spec.venv.path:  # “system” venv: nothing to activate
         setup.append(f"source {shlex.quote(_activate_path(spec.venv.path))}")
     if spec.project.workdir:
         setup.append(f"cd {shlex.quote(spec.project.workdir)}")
@@ -201,8 +201,8 @@ def inner_script(spec: RunSpec) -> str:
         return " && ".join([*setup, f"exec {resolved_command(spec)}"])
     f = EXIT_FILE
     msg = (
-        r"\n[trainhub] commande terminée (code %s) : conteneur conservé, "
-        r"shell disponible depuis TrainHub\n"
+        r"\n[trainhub] command finished (code %s): container kept, "
+        r"shell available from TrainHub\n"
     )
     return "; ".join(
         [
@@ -282,27 +282,27 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
 
 
 def validate_spec(spec: RunSpec) -> None:
-    """Vérifie les valeurs libres d'un spec ; lève ``ValueError`` si invalide."""
+    """Check the free values of a spec; raise ``ValueError`` if invalid."""
     if not spec.config or spec.config.startswith("-"):
-        raise ValueError(f"config invalide : {spec.config!r}")
+        raise ValueError(f"invalid config: {spec.config!r}")
     if "\n" in spec.config or "\x00" in spec.config:
-        raise ValueError("config invalide : caractères de contrôle")
+        raise ValueError("invalid config: control characters")
     parts = spec.config.split("/")
     if spec.config.startswith("/") or any(p in ("", ".", "..") for p in parts):
-        raise ValueError(f"config invalide : {spec.config!r} (chemin relatif attendu)")
+        raise ValueError(f"invalid config: {spec.config!r} (relative path expected)")
     if spec.cuda_visible_devices is not None and not _CUDA_RE.match(
         spec.cuda_visible_devices.replace(" ", "")
     ):
         raise ValueError(
-            f"CUDA_VISIBLE_DEVICES invalide : {spec.cuda_visible_devices!r} "
-            "(attendu : liste d'indices, ex. 0,1)"
+            f"invalid CUDA_VISIBLE_DEVICES: {spec.cuda_visible_devices!r} "
+            "(expected: list of indices, e.g. 0,1)"
         )
     for name, value in spec.params.items():
         param_words(name, value)
 
 
 def docker_run(spec: RunSpec) -> list[str]:
-    """argv distant de ``docker run -d …``."""
+    """Remote argv of ``docker run -d …``."""
     validate_spec(spec)
     return _docker_run_groups(spec).flat()
 
@@ -361,9 +361,9 @@ def docker_restart(container: str, timeout: int = 30) -> list[str]:
 def docker_exec_shell(
     container: str, *, venv_path: str | None = None, workdir: str | None = None
 ) -> list[str]:
-    """argv distant d'un shell interactif dans le conteneur (venv activé, dans le workdir).
+    """Remote argv of an interactive shell in the container (venv activated, in the workdir).
 
-    ``bash`` s'il existe, sinon ``sh``.
+    ``bash`` if available, else ``sh``.
     """
     parts: list[str] = []
     if workdir:
@@ -386,7 +386,7 @@ def docker_exec_shell(
 
 
 def discover_root(discover: ConfigDiscover) -> str:
-    """Racine passée à ``find`` : ``~/x`` devient ``x`` (relatif au home de la session SSH)."""
+    """Root passed to ``find``: ``~/x`` becomes ``x`` (relative to the SSH session's home)."""
     root = discover.path
     if root == "~":
         return "."
@@ -396,7 +396,7 @@ def discover_root(discover: ConfigDiscover) -> str:
 
 
 def list_configs(discover: ConfigDiscover) -> list[str]:
-    """argv distant listant récursivement les fichiers de configs sous la racine."""
+    """Remote argv recursively listing the config files under the root."""
     return [
         "find",
         "-L",
@@ -411,10 +411,10 @@ def list_configs(discover: ConfigDiscover) -> list[str]:
 
 
 def parse_config_listing(output: str, discover: ConfigDiscover) -> list[str]:
-    """Sortie de ``find`` → identifiants de configs triés (chemin relatif sans extension).
+    """``find`` output → sorted config identifiers (relative path without extension).
 
-    Les chemins contenant un composant caché (``.git``, ``.hydra``…) et ceux qui
-    correspondent à ``exclude`` sont ignorés.
+    Paths containing a hidden component (``.git``, ``.hydra``…) and those matching
+    ``exclude`` are ignored.
     """
     import fnmatch
 
@@ -446,7 +446,7 @@ def parse_config_listing(output: str, discover: ConfigDiscover) -> list[str]:
 
 
 def ssh_argv(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = ()) -> list[str]:
-    """Enveloppe un argv distant dans ``ssh`` (la commande distante est un seul argument)."""
+    """Wrap a remote argv in ``ssh`` (the remote command is a single argument)."""
     argv = ["ssh", *SSH_CONTROL_OPTIONS, *extra]
     if machine.port is not None:
         argv += ["-p", str(machine.port)]
@@ -455,17 +455,17 @@ def ssh_argv(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = 
 
 
 def transport(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = ()) -> list[str]:
-    """argv local complet : ``ssh … -- CMD`` ou ``CMD`` tel quel pour une machine locale."""
+    """Full local argv: ``ssh … -- CMD``, or ``CMD`` as is for a local machine."""
     if machine.is_local:
         return list(remote)
     return ssh_argv(machine, remote, extra=extra)
 
 
-# -- API de construction « complète » (section 4.1) ---------------------------
+# -- “full” building API (section 4.1) ----------------------------------------
 
 
 def build_run(spec: RunSpec) -> list[str]:
-    """argv complet de lancement du conteneur."""
+    """Full argv launching the container."""
     return transport(spec.machine, docker_run(spec))
 
 
@@ -506,10 +506,10 @@ def build_list_configs(machine: Machine, discover: ConfigDiscover) -> list[str]:
 
 
 def preview(spec: RunSpec) -> str:
-    """Commande de lancement lisible, sur plusieurs lignes (affichage, dry run).
+    """Readable launch command, over several lines (display, dry run).
 
-    La partie distante est montrée avec un seul niveau d'échappement (celui que voit le
-    shell distant) ; :func:`preview_exact` donne la version copiable telle quelle.
+    The remote part is shown with a single escaping level (the one the remote shell
+    sees); :func:`preview_exact` gives the version that can be copied as is.
     """
     validate_spec(spec)
     groups = _docker_run_groups(spec).groups
@@ -530,5 +530,5 @@ def preview(spec: RunSpec) -> str:
 
 
 def preview_exact(spec: RunSpec) -> str:
-    """Commande de lancement exacte, sur une ligne, copiable dans un terminal local."""
+    """Exact launch command, on one line, ready to paste into a local terminal."""
     return shlex.join(build_run(spec))

@@ -17,12 +17,12 @@ jobs:
       - run: uv run ruff check src tests dev
       - run: uv run ruff format --check src tests dev
       - run: uv run mypy
-      - name: Image de test (intégration Docker locale)
+      - name: Test image (local Docker integration)
         run: docker build -t trainhub-fake-train dev/fake-train
       - run: uv run pytest -q
 
   web:
-    name: Front (biome, tsc, vitest, build, playwright)
+    name: Front end (biome, tsc, vitest, build, playwright)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,10 +42,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Taille du bundle (< 300 ko gzip hors xterm)
+      - name: Bundle size (< 300 kB gzip excluding xterm)
         run: |
           size=$(for f in dist/assets/index-*.js; do gzip -c "$f" | wc -c; done | awk '{s+=$1} END {print s}')
-          echo "bundle principal : $size octets gzip"
+          echo "main bundle: $size bytes gzip"
           test "$size" -lt 307200
       - run: uv sync --locked
         working-directory: .
@@ -60,12 +60,12 @@ jobs:
           path: web/test-results
 
   image:
-    name: Image Docker
+    name: Docker image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t trainhub:ci .
-      - name: Démarrage en mode fake
+      - name: Start in fake mode
         run: |
           docker run -d --name th -p 8420:8420 -e TRAINHUB_HOST=0.0.0.0 -e TRAINHUB_EXECUTOR=fake \
             -e TRAINHUB_INVENTORY=/etc/trainhub/inventory.example.yaml trainhub:ci

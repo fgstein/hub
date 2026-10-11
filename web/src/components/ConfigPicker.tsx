@@ -13,7 +13,7 @@ import { isActive } from "~/lib/types"
 import { state } from "~/stores/app"
 import { IconChevronDown, IconChevronRight, IconRefresh, IconSpinner } from "./Icons"
 
-/** Runs par config d'un projet, calculés en direct depuis le store (tous statuts / actifs). */
+/** Runs per config of a project, computed live from the store (all statuses / active). */
 function useRunCounts(projectId: () => string) {
   return createMemo(() => {
     const counts: Record<string, RunCounts> = {}
@@ -34,9 +34,9 @@ function useRunCounts(projectId: () => string) {
 function CountBadge(props: { counts: RunCounts; dim?: boolean }) {
   const title = () =>
     props.counts.total === 0
-      ? "Aucun run lancé sur cette config"
-      : `${props.counts.total} run${props.counts.total > 1 ? "s" : ""} lancé${props.counts.total > 1 ? "s" : ""}` +
-        (props.counts.active ? ` dont ${props.counts.active} en cours` : "")
+      ? "No run launched on this config"
+      : `${props.counts.total} run${props.counts.total > 1 ? "s" : ""} launched` +
+        (props.counts.active ? `, ${props.counts.active} running` : "")
   return (
     <span
       class="ml-auto flex shrink-0 items-center gap-1 pl-3 font-mono text-xs tabular"
@@ -80,7 +80,7 @@ export function ConfigPicker(props: {
   const filtered = createMemo(() => filterTree(tree(), query()))
   const rows = createMemo(() => visibleRows(filtered(), collapsed(), query().trim() !== ""))
 
-  // À l'ouverture : réinitialise la recherche et se place sur la config sélectionnée.
+  // On open: reset the search and move to the selected config.
   createEffect(
     on(open, (o) => {
       if (!o) return
@@ -119,8 +119,8 @@ export function ConfigPicker(props: {
   }
 
   const onKeyDown = (e: KeyboardEvent) => {
-    // Les événements d'un portail Solid remontent vers le composant parent (le brouillon) :
-    // Entrée/Échap ici ne doivent ni lancer le run ni fermer le brouillon.
+    // Events from a Solid portal bubble up to the parent component (the draft):
+    // Enter/Escape here must neither launch the run nor close the draft.
     e.stopPropagation()
     const list = rows()
     const cur = list[highlight()]
@@ -159,7 +159,7 @@ export function ConfigPicker(props: {
         class="flex h-7 w-full min-w-0 items-center rounded border bg-input pl-2 text-left transition-colors hover:bg-input-hover focus-visible:border-line"
         classList={{ "border-line-weak": !props.error, "border-line-critical": !!props.error }}
         aria-label="config"
-        title={props.value ?? "Choisir une config"}
+        title={props.value ?? "Choose a config"}
         data-testid="field-config"
       >
         <span
@@ -172,7 +172,7 @@ export function ConfigPicker(props: {
         <Show when={selectedCounts()?.total}>
           <span
             class="shrink-0 pl-1 font-mono text-xs text-fg-weak"
-            title="runs déjà lancés sur cette config"
+            title="runs already launched on this config"
           >
             ×{selectedCounts()?.total}
           </span>
@@ -196,7 +196,7 @@ export function ConfigPicker(props: {
               value={query()}
               onInput={(e) => {
                 setQuery(e.currentTarget.value)
-                // pendant une recherche, on se place sur le premier fichier correspondant
+                // while searching, move to the first matching file
                 setHighlight(
                   Math.max(
                     0,
@@ -204,7 +204,7 @@ export function ConfigPicker(props: {
                   ),
                 )
               }}
-              placeholder="Rechercher une config…"
+              placeholder="Search configs…"
               class="h-7 min-w-0 flex-1 rounded bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker"
               data-testid="config-search"
             />
@@ -212,8 +212,8 @@ export function ConfigPicker(props: {
               <button
                 type="button"
                 class="flex size-7 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
-                title="Rafraîchir (relit l'arborescence sur la machine)"
-                aria-label="Rafraîchir les configs"
+                title="Refresh (re-reads the tree on the machine)"
+                aria-label="Refresh configs"
                 onClick={() => props.onRefresh?.()}
                 data-testid="config-refresh"
               >
@@ -281,28 +281,28 @@ export function ConfigPicker(props: {
             <Show when={rows().length === 0}>
               <div class="px-2 py-2 text-sm text-fg-weak">
                 {props.loading
-                  ? "Lecture de l'arborescence…"
+                  ? "Reading the tree…"
                   : props.error
                     ? props.error
                     : query()
-                      ? "Aucune config ne correspond"
-                      : "Aucune config trouvée"}
+                      ? "No matching config"
+                      : "No config found"}
               </div>
             </Show>
           </div>
           <div class="flex items-center gap-3 border-t border-line-weaker px-3 py-1.5 text-xxs text-fg-weak">
             <span>
-              {props.configs.length} config{props.configs.length > 1 ? "s" : ""}
+              {props.configs.length} config{props.configs.length !== 1 ? "s" : ""}
             </span>
             <span class="ml-auto flex items-center gap-1">
-              <span class="rounded bg-surface-active px-1 font-mono text-fg-strong">n</span> runs lancés
+              <span class="rounded bg-surface-active px-1 font-mono text-fg-strong">n</span> runs launched
             </span>
             <span class="flex items-center gap-1">
               <span
                 class="dot"
                 style={{ "--dot-color": "var(--status-green)", width: "6px", height: "6px" }}
               />{" "}
-              en cours
+              running
             </span>
           </div>
         </Popover.Content>

@@ -1,4 +1,4 @@
-"""Serveur MCP (client MCP en mémoire) avec l'exécuteur fake."""
+"""MCP server (in-memory MCP client) with the fake executor."""
 
 from __future__ import annotations
 
@@ -118,15 +118,15 @@ async def test_actionable_errors(svc: RunService) -> None:
         bad = await c.call_tool("launch_run", {**SEL, "config": "foo"})
         assert bad.isError
         text = bad.content[0].text
-        assert "config 'foo' inconnue" in text and "baseline, unet_large" in text
+        assert "unknown config 'foo'" in text and "baseline, unet_large" in text
         missing = await c.call_tool("get_run", {"run_id": "rzzzzz"})
-        assert missing.isError and "introuvable" in missing.content[0].text
+        assert missing.isError and "not found" in missing.content[0].text
         st = await c.call_tool("list_runs", {"status": "bogus"})
-        assert st.isError and "possibles" in st.content[0].text
+        assert st.isError and "possible:" in st.content[0].text
 
 
 def test_http_transport(tmp_path: Path) -> None:
-    """Streamable HTTP monté sur /mcp dans l'application principale."""
+    """Streamable HTTP mounted on /mcp in the main application."""
     from fastapi.testclient import TestClient
 
     from trainhub.api.app import create_app

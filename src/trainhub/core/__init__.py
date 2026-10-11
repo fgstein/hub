@@ -1,4 +1,4 @@
-"""Cœur pur de TrainHub : modèles, inventaire, construction des commandes, statuts."""
+"""Pure core of TrainHub: models, inventory, command building, statuses."""
 
 from .commands import RunSpec, Target, build_run, preview, preview_exact
 from .inventory import InventoryError, load_inventory, parse_inventory

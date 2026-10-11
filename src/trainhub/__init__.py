@@ -1,4 +1,4 @@
-"""TrainHub : lance et suit des entraînements Hydra sur des machines distantes."""
+"""TrainHub: launch and monitor Hydra trainings on remote machines."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-"""Exécuteur ``local`` : vraies commandes docker, sans SSH, sur la machine de TrainHub.
+"""``local`` executor: real docker commands, without SSH, on the TrainHub host.
 
-Toutes les machines de l'inventaire sont exécutées localement ; les runs sont distingués par
-le label ``trainhub.machine``.
+Every machine of the inventory runs locally; runs are told apart by the
+``trainhub.machine`` label.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from .subprocess_exec import SubprocessExecutor
 
 
 class LocalExecutor(SubprocessExecutor):
-    """Exécute l'argv distant tel quel, localement."""
+    """Run the remote argv as is, locally."""
 
     kind = "local"
 

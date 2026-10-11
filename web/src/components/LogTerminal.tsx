@@ -16,7 +16,7 @@ import {
   IconSpinner,
 } from "./Icons"
 
-/** Chargement paresseux d'xterm (hors du bundle principal). */
+/** Lazy loading of xterm (outside the main bundle). */
 type XtermModules = readonly [
   typeof import("@xterm/xterm"),
   typeof import("@xterm/addon-fit"),
@@ -100,8 +100,8 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
   const queue: Uint8Array[] = []
   let raf = 0
   let disposed = false
-  // Libérés par le onCleanup synchrone plus bas : un onCleanup appelé après un await
-  // (dans onMount) n'est rattaché à aucun propriétaire et ne serait jamais exécuté.
+  // Released by the synchronous onCleanup below: an onCleanup called after an await
+  // (in onMount) is attached to no owner and would never run.
   let unsubscribe: (() => void) | undefined
   let ro: ResizeObserver | undefined
 
@@ -183,7 +183,7 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
       try {
         fit?.fit()
       } catch {
-        /* terminal pas encore visible */
+        /* terminal not visible yet */
       }
     })
     ro.observe(host)
@@ -235,9 +235,9 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
     }
     try {
       await navigator.clipboard.writeText(text)
-      toast("logs copiés", "success")
+      toast("logs copied", "success")
     } catch {
-      toast("copie impossible", "error")
+      toast("could not copy", "error")
     }
   }
 
@@ -294,7 +294,7 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
           <input
             ref={searchInput}
             value={query()}
-            placeholder="Rechercher…"
+            placeholder="Search…"
             class="mr-1 h-5 w-44 rounded bg-input px-1.5 font-mono text-xs text-fg-strong outline-none"
             onInput={(e) => {
               setQuery(e.currentTarget.value)
@@ -314,8 +314,8 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
         <button
           type="button"
           class={toolBtn}
-          title="Rechercher (Entrée : suivant, Maj+Entrée : précédent)"
-          aria-label="Rechercher"
+          title="Search (Enter: next, Shift+Enter: previous)"
+          aria-label="Search"
           onClick={() => {
             setShowSearch((v) => !v)
             queueMicrotask(() => searchInput?.focus())
@@ -326,8 +326,8 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
         <button
           type="button"
           class={toolBtn}
-          title="Copier (sélection ou tout)"
-          aria-label="Copier"
+          title="Copy (selection or everything)"
+          aria-label="Copy"
           onClick={copy}
         >
           <IconCopy size={12} />
@@ -336,16 +336,16 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
           class={toolBtn}
           href={api.logsUrl(props.runId)}
           download={`trainhub-${props.runId}.log`}
-          title="Télécharger les logs"
-          aria-label="Télécharger les logs"
+          title="Download logs"
+          aria-label="Download logs"
         >
           <IconDownload size={12} />
         </a>
         <button
           type="button"
           class={toolBtn}
-          title={props.fullscreen ? "Quitter le plein écran (Échap)" : "Plein écran"}
-          aria-label={props.fullscreen ? "Quitter le plein écran" : "Plein écran"}
+          title={props.fullscreen ? "Exit fullscreen (Escape)" : "Fullscreen"}
+          aria-label={props.fullscreen ? "Exit fullscreen" : "Fullscreen"}
           onClick={props.onToggleFullscreen}
           data-testid="terminal-fullscreen"
         >
@@ -362,14 +362,14 @@ export function LogTerminal(props: { runId: string; fullscreen: boolean; onToggl
           onClick={scrollDown}
           data-testid="terminal-new-lines"
         >
-          <IconArrowDown size={11} /> nouvelles lignes
+          <IconArrowDown size={11} /> new lines
         </button>
       </Show>
       <Show when={!props.fullscreen}>
         <div
           class="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-line-weak"
           onPointerDown={startResize}
-          title="Redimensionner"
+          title="Resize"
         />
       </Show>
     </div>

@@ -61,7 +61,7 @@ async def wait_for(
         if await pred():
             return
         if asyncio.get_running_loop().time() > deadline:
-            raise AssertionError("condition non atteinte dans le délai")
+            raise AssertionError("condition not met within the timeout")
         await asyncio.sleep(interval)
 
 

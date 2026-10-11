@@ -1,6 +1,6 @@
 /**
- * Store principal : inventaire, runs indexés par id (mises à jour fines), état d'interface,
- * brouillons et connexion temps réel.
+ * Main store: inventory, runs indexed by id (fine-grained updates), UI state,
+ * drafts and real-time connection.
  */
 import { batch, createRoot, createSignal } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
@@ -32,12 +32,12 @@ export interface Draft {
   venv: string | null
   config: string | null
   cuda: string
-  /** Overrides Hydra propres au run (ligne d'arguments, découpée comme par un shell). */
+  /** Run-specific Hydra overrides (argument line, split as a shell would). */
   overrides: string
-  /** Valeurs des paramètres libres de la commande (``{nom}``), par nom. */
+  /** Values of the free command parameters (``{name}``), by name. */
   params: Record<string, string>
   launching: boolean
-  /** Brouillon créé par « Relancer » : mis en évidence et affiché à l'écran. */
+  /** Draft created by “Relaunch”: highlighted and scrolled into view. */
   focus?: boolean
 }
 
@@ -48,7 +48,7 @@ interface AppState {
   ui: UiState
   seq: number
   drafts: Record<string, Draft[]>
-  /** Statut affiché pendant une action optimiste, par run. */
+  /** Status shown during an optimistic action, per run. */
   pending: Record<string, RunStatus | undefined>
 }
 
@@ -64,7 +64,7 @@ const [state, setState] = createStore<AppState>({
 
 export { state }
 
-// --------------------------------------------------------------------------- temps réel
+// --------------------------------------------------------------------------- real time
 
 function applyEvent(ev: ServerEvent): void {
   switch (ev.type) {
@@ -108,7 +108,7 @@ function applyEvent(ev: ServerEvent): void {
       updateMachine(ev.machine)
       return
     case "ui_state.updated":
-      // Les dernières sélections sont partagées ; l'onglet actif reste celui de ce client.
+      // Last selections are shared; the active tab stays this client's own.
       setState("ui", "last_selection", reconcile(ev.ui_state.last_selection))
       return
     case "logs.reset":
@@ -148,13 +148,13 @@ export function connect(): void {
   socket.connect()
 }
 
-// --------------------------------------------------------------------------- sélecteurs
+// --------------------------------------------------------------------------- selectors
 
 export function project(id: string | null | undefined): ProjectView | undefined {
   return state.inventory?.projects.find((p) => p.id === id)
 }
 
-/** Runs actifs d'un projet, du plus ancien au plus récent. */
+/** Active runs of a project, oldest first. */
 export function activeRunIds(projectId: string): string[] {
   return Object.values(state.runs)
     .filter((r) => r.project_id === projectId && isActive(r.status))
@@ -162,7 +162,7 @@ export function activeRunIds(projectId: string): string[] {
     .map((r) => r.id)
 }
 
-/** Runs terminés d'un projet, du plus récent au plus ancien. */
+/** Finished runs of a project, most recent first. */
 export function finishedRunIds(projectId: string): string[] {
   return Object.values(state.runs)
     .filter((r) => r.project_id === projectId && isFinished(r.status))
@@ -176,12 +176,12 @@ export function activeCount(projectId: string): number {
   return n
 }
 
-/** Statut affiché (optimiste pendant une action en cours). */
+/** Displayed status (optimistic during an ongoing action). */
 export function displayStatus(id: string): RunStatus {
   return state.pending[id] ?? state.runs[id]?.status ?? "failed"
 }
 
-// --------------------------------------------------------------------------- état d'interface
+// --------------------------------------------------------------------------- UI state
 
 let putTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -223,7 +223,7 @@ export function moveTab(id: string, toIndex: number): void {
   persistUi()
 }
 
-// --------------------------------------------------------------------------- brouillons
+// --------------------------------------------------------------------------- drafts
 
 let draftKey = 1
 
@@ -259,13 +259,13 @@ export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
   setState("drafts", projectId, (d) => [...(d ?? []), draft])
 }
 
-/** « Relancer » : nouveau brouillon avec les mêmes choix que le run (rien n'est lancé). */
+/** “Relaunch”: new draft with the same choices as the run (nothing is launched). */
 export function draftFromRun(runId: string): void {
   const r = state.runs[runId]
   if (!r) return
   const p = project(r.project_id)
   if (!p) {
-    toast(`projet « ${r.project_id} » absent de l'inventaire`, "error")
+    toast(`project “${r.project_id}” missing from the inventory`, "error")
     return
   }
   const keep = (v: string, allowed: string[]) => (allowed.includes(v) ? v : null)
@@ -288,7 +288,7 @@ export function draftFromRun(runId: string): void {
     !image && `image ${r.image_id}`,
     !venv && `venv ${r.venv_id}`,
   ].filter(Boolean)
-  if (missing.length) toast(`plus disponible pour ce projet : ${missing.join(", ")}`, "error")
+  if (missing.length) toast(`no longer available for this project: ${missing.join(", ")}`, "error")
 }
 
 export function compatibleVenvs(p: ProjectView, image: string | null): string[] {
@@ -300,7 +300,7 @@ export function compatibleVenvs(p: ProjectView, image: string | null): string[] 
 
 export function updateDraft(projectId: string, key: number, patch: Partial<Draft>): void {
   setState("drafts", projectId, (d) => d?.key === key, patch)
-  // un venv restreint à certaines images disparaît si l'image ne correspond plus
+  // a venv restricted to some images disappears if the image no longer matches
   if (patch.image !== undefined) {
     const p = project(projectId)
     const d = state.drafts[projectId]?.find((x) => x.key === key)
@@ -317,7 +317,7 @@ export function removeDraft(projectId: string, key: number): void {
   setState("drafts", projectId, (d) => (d ?? []).filter((x) => x.key !== key))
 }
 
-/** Paramètres de la commande du projet dont la valeur du brouillon est invalide. */
+/** Project command parameters whose draft value is invalid. */
 export function draftParamErrors(projectId: string, d: Draft): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of project(projectId)?.params ?? []) {
@@ -353,10 +353,10 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
     const paramErr = Object.entries(draftParamErrors(projectId, d))[0]
     toast(
       err
-        ? `overrides invalides : ${err}`
+        ? `invalid overrides: ${err}`
         : paramErr
-          ? `paramètre {${paramErr[0]}} invalide : ${paramErr[1]}`
-          : "sélection incomplète : machine, image, venv et config sont requis",
+          ? `invalid parameter {${paramErr[0]}}: ${paramErr[1]}`
+          : "incomplete selection: machine, image, venv and config are required",
       "error",
     )
     return
@@ -398,7 +398,7 @@ const OPTIMISTIC: Record<RunAction, RunStatus> = {
   close: "succeeded",
 }
 
-/** Action optimiste : la pastille change tout de suite, confirmée ou annulée ensuite. */
+/** Optimistic action: the status dot changes right away, then is confirmed or reverted. */
 export async function runAction(id: string, action: RunAction): Promise<void> {
   if (action !== "relaunch" && action !== "close") setState("pending", id, OPTIMISTIC[action])
   try {
@@ -428,7 +428,7 @@ export async function deleteRun(id: string): Promise<void> {
   }
 }
 
-// --------------------------------------------------------------------------- commande du projet
+// --------------------------------------------------------------------------- project command
 
 export async function saveCommand(projectId: string, command: string): Promise<boolean> {
   try {
@@ -480,7 +480,7 @@ export async function loadConfigs(projectId: string, machine: string | null, ref
   }
 }
 
-// --------------------------------------------------------------------------- divers
+// --------------------------------------------------------------------------- misc
 
 export const [fullscreenRun, setFullscreenRun] = createSignal<string | null>(null)
 
@@ -488,12 +488,12 @@ export function machineReachable(id: string): boolean | null | undefined {
   return state.inventory?.machines.find((m) => m.id === id)?.status.reachable
 }
 
-/** Projets dont la commande en cours d'édition est invalide (lancement désactivé). */
+/** Projects whose command being edited is invalid (launch disabled). */
 const [commandErrors, setCommandErrors] = createStore<Record<string, boolean>>({})
 
 export { commandErrors, setCommandErrors }
 
-/** Terminaux dépliés, par run (conservé quand un run passe dans « Terminés »). */
+/** Expanded terminals, per run (kept when a run moves to “Finished”). */
 const [openTerminals, setOpenTerminals] = createStore<Record<string, boolean>>({})
 
 export { openTerminals }
@@ -503,7 +503,7 @@ export function setTerminalOpen(id: string, open: boolean): void {
 
 export type PanelView = "logs" | "shell"
 
-/** Vue affichée dans le panneau déplié d'un run (logs par défaut). */
+/** View shown in a run's expanded panel (logs by default). */
 const [panelViews, setPanelViews] = createStore<Record<string, PanelView>>({})
 
 export { panelViews }
@@ -511,7 +511,7 @@ export function setPanelView(id: string, view: PanelView): void {
   setPanelViews(id, view)
 }
 
-/** Déplie le run et affiche son shell. */
+/** Expand the run and show its shell. */
 export function openShell(id: string): void {
   batch(() => {
     setPanelViews(id, "shell")

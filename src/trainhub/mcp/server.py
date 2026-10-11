@@ -1,7 +1,7 @@
-"""Serveur MCP (FastMCP) : expose à un agent les mêmes actions que l'interface.
+"""MCP server (FastMCP): exposes to an agent the same actions as the interface.
 
-Il appelle uniquement la couche service ; un run lancé par un agent apparaît immédiatement
-dans l'interface (événement ``run.created``) avec ``source = "mcp"``.
+It only calls the service layer; a run launched by an agent shows up immediately in the
+interface (``run.created`` event) with ``source = "mcp"``.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from ..service import RunService, ServiceError, allowed_actions
 from ..service.schemas import Selection
 
 INSTRUCTIONS = """\
-TrainHub lance et suit des entraînements Hydra sur des machines GPU distantes
-(ssh → docker → venv → commande). Un run est défini par 5 choix : projet, machine, image
-Docker, venv Python et config Hydra. Démarche conseillée : list_projects, puis
-list_resources et list_configs pour un projet, preview_command pour vérifier, launch_run,
-puis get_run / get_logs pour suivre. Statuts : launching, running, paused, stopping,
-succeeded, failed, stopped, unreachable (machine injoignable, statut réel inconnu).
+TrainHub launches and monitors Hydra trainings on remote GPU machines
+(ssh → docker → venv → command). A run is defined by 5 choices: project, machine, Docker
+image, Python venv and Hydra config. Recommended flow: list_projects, then
+list_resources and list_configs for a project, preview_command to check, launch_run,
+then get_run / get_logs to monitor. Statuses: launching, running, paused, stopping,
+succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
 """
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -37,29 +37,29 @@ LAUNCH_WAIT_S = 15.0
 STOP_WAIT_S = 15.0
 MAX_LOG_CHARS = 12_000
 
-ProjectArg = Annotated[str, Field(description="Id du projet (voir list_projects)")]
-RunIdArg = Annotated[str, Field(description="Id court du run, ex. r7f3k2")]
-MachineArg = Annotated[str, Field(description="Id de la machine (voir list_resources)")]
-ImageArg = Annotated[str, Field(description="Id de l'image Docker (voir list_resources)")]
-VenvArg = Annotated[str, Field(description="Id du venv (voir list_resources)")]
-ConfigArg = Annotated[str, Field(description="Nom de la config Hydra (voir list_configs)")]
+ProjectArg = Annotated[str, Field(description="Project id (see list_projects)")]
+RunIdArg = Annotated[str, Field(description="Short run id, e.g. r7f3k2")]
+MachineArg = Annotated[str, Field(description="Machine id (see list_resources)")]
+ImageArg = Annotated[str, Field(description="Docker image id (see list_resources)")]
+VenvArg = Annotated[str, Field(description="Venv id (see list_resources)")]
+ConfigArg = Annotated[str, Field(description="Hydra config name (see list_configs)")]
 OverridesArg = Annotated[
     list[str] | None,
-    Field(description="Overrides Hydra facultatifs, ex. ['trainer.max_epochs=5', 'seed=2']"),
+    Field(description="Optional Hydra overrides, e.g. ['trainer.max_epochs=5', 'seed=2']"),
 ]
-CudaArg = Annotated[str | None, Field(description="CUDA_VISIBLE_DEVICES facultatif, ex. '0,1'")]
+CudaArg = Annotated[str | None, Field(description="Optional CUDA_VISIBLE_DEVICES, e.g. '0,1'")]
 ParamsArg = Annotated[
     dict[str, str] | None,
     Field(
-        description="Valeurs des paramètres libres de la commande du projet ({nom} autres que "
-        "config, config_name, run_id, machine, project ; voir list_projects). Chaque valeur est "
-        "découpée comme par un shell ; absente ou vide : rien n'est inséré."
+        description="Values of the free parameters of the project command ({name} other than "
+        "config, config_name, run_id, machine, project; see list_projects). Each value is "
+        "split as a shell would; missing or empty: nothing is inserted."
     ),
 ]
 
 
 def run_summary(run: Run) -> dict[str, Any]:
-    """Vue compacte d'un run, lisible par un modèle."""
+    """Compact view of a run, readable by a model."""
     return {
         "id": run.id,
         "project": run.project_id,
@@ -98,7 +98,7 @@ def run_detail(run: Run) -> dict[str, Any]:
 def build_mcp(
     svc: RunService, *, readonly: bool = False, dns_rebinding_protection: bool = False
 ) -> FastMCP:
-    """Construit le serveur MCP ; ``readonly`` n'expose que les outils de lecture."""
+    """Build the MCP server; ``readonly`` only exposes the read tools."""
     mcp = FastMCP(
         "trainhub",
         instructions=INSTRUCTIONS,
@@ -114,12 +114,12 @@ def build_mcp(
         except ServiceError as exc:
             raise ToolError(exc.message) from exc
 
-    # -- lectures ------------------------------------------------------------------
+    # -- reads ---------------------------------------------------------------------
 
     @mcp.tool(
         annotations=READ,
-        description="Liste les projets (onglets) avec leur commande générique courante, "
-        "les ressources autorisées (machines, images, venvs) et les configs statiques.",
+        description="List the projects (tabs) with their current generic command, "
+        "the allowed resources (machines, images, venvs) and the static configs.",
     )
     async def list_projects() -> list[dict[str, Any]]:
         out = []
@@ -143,9 +143,9 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Machines, images et venvs autorisés pour un projet, avec la "
-        "joignabilité des machines (reachable: true/false/null si pas encore vérifiée) et "
-        "les images compatibles avec chaque venv.",
+        description="Machines, images and venvs allowed for a project, with machine "
+        "reachability (reachable: true/false/null if not checked yet) and "
+        "the images compatible with each venv.",
     )
     async def list_resources(project: ProjectArg) -> dict[str, Any]:
         view = await call(_project_view(svc, project))
@@ -171,15 +171,15 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Configs Hydra disponibles pour un projet. Une config est le chemin du "
-        "fichier YAML relatif à la racine des configs du projet, sans extension (ex. "
-        "'experiments/unet_large'), découvert récursivement sur la machine (première machine "
-        "autorisée si omise ; cache 60 s). run_counts indique, pour les configs déjà utilisées, "
-        "le nombre de runs lancés (total) et en cours (active).",
+        description="Hydra configs available for a project. A config is the path of the "
+        "YAML file relative to the project's configs root, without extension (e.g. "
+        "'experiments/unet_large'), discovered recursively on the machine (first allowed "
+        "machine if omitted; 60 s cache). run_counts gives, for configs already used, "
+        "the number of runs launched (total) and in progress (active).",
     )
     async def list_configs(
         project: ProjectArg,
-        machine: Annotated[str | None, Field(description="Machine pour la découverte")] = None,
+        machine: Annotated[str | None, Field(description="Machine used for discovery")] = None,
     ) -> dict[str, Any]:
         cl = await call(svc.get_configs(project, machine))
         return {
@@ -193,8 +193,8 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Construit la commande complète (ssh → docker run → venv → commande) "
-        "pour une sélection, sans rien exécuter (dry run). Utile avant launch_run.",
+        description="Build the full command (ssh → docker run → venv → command) "
+        "for a selection, without running anything (dry run). Useful before launch_run.",
     )
     async def preview_command(
         project: ProjectArg,
@@ -214,14 +214,14 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Liste les runs, du plus récent au plus ancien, avec statut et durée. "
-        "status : un statut (launching, running, paused, stopping, succeeded, failed, "
-        "stopped, unreachable) ou 'active' / 'finished'.",
+        description="List the runs, most recent first, with status and duration. "
+        "status: a status (launching, running, paused, stopping, succeeded, failed, "
+        "stopped, unreachable) or 'active' / 'finished'.",
     )
     async def list_runs(
-        project: Annotated[str | None, Field(description="Filtrer par projet")] = None,
-        status: Annotated[str | None, Field(description="Filtrer par statut")] = None,
-        limit: Annotated[int, Field(description="Nombre maximal de runs", ge=1, le=500)] = 50,
+        project: Annotated[str | None, Field(description="Filter by project")] = None,
+        status: Annotated[str | None, Field(description="Filter by status")] = None,
+        limit: Annotated[int, Field(description="Maximum number of runs", ge=1, le=500)] = 50,
     ) -> list[dict[str, Any]]:
         statuses: list[RunStatus] | None = None
         if status:
@@ -234,7 +234,7 @@ def build_mcp(
                     statuses = [RunStatus(status)]
                 except ValueError as exc:
                     raise ToolError(
-                        f"statut inconnu : {status!r} ; possibles : "
+                        f"unknown status: {status!r}; possible: "
                         f"{', '.join(s.value for s in RunStatus)}, active, finished"
                     ) from exc
         runs = await call(svc.list_runs(project=project, status=statuses, limit=limit))
@@ -242,29 +242,28 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
-        description="Détail complet d'un run : statut, durées, code de sortie, erreur, "
-        "commande résolue et argv exécuté, actions possibles.",
+        description="Full detail of a run: status, durations, exit code, error, "
+        "resolved command and executed argv, possible actions.",
     )
     async def get_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_detail(await call(svc.get_run(run_id)))
 
     @mcp.tool(
         annotations=READ,
-        description="Logs d'un run en texte lisible : séquences ANSI supprimées, barres de "
-        "progression réduites à leur dernier état, dernières lignes seulement (tail, défaut "
-        "200), filtrage facultatif par regex (grep, insensible à la casse). Sortie tronquée "
-        "si trop longue.",
+        description="Logs of a run as readable text: ANSI sequences stripped, progress "
+        "bars reduced to their last state, last lines only (tail, default 200), optional "
+        "regex filtering (grep, case-insensitive). Output truncated if too long.",
     )
     async def get_logs(
         run_id: RunIdArg,
-        tail: Annotated[int, Field(description="Nombre de lignes finales", ge=1, le=5000)] = 200,
-        grep: Annotated[str | None, Field(description="Regex de filtrage des lignes")] = None,
+        tail: Annotated[int, Field(description="Number of final lines", ge=1, le=5000)] = 200,
+        grep: Annotated[str | None, Field(description="Regex used to filter lines")] = None,
     ) -> str:
         run = await call(svc.get_run(run_id))
         raw = await call(svc.read_logs(run_id, None if grep else max(tail * 2, 500)))
         text = readable_logs(raw, tail=tail, grep=grep, max_chars=MAX_LOG_CHARS)
         header = f"[run {run.id} · {run.status} · {format_duration(elapsed_seconds(run))}]\n"
-        return header + (text if text.strip() else "(aucune ligne)")
+        return header + (text if text.strip() else "(no lines)")
 
     if readonly:
         return mcp
@@ -273,10 +272,10 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Lance un run (docker run -d sur la machine). Attend jusqu'à 15 s le "
-        "démarrage du conteneur puis renvoie le run (statut running, launching si l'image se "
-        "télécharge encore, ou failed avec l'erreur). Le run apparaît aussitôt dans "
-        "l'interface.",
+        description="Launch a run (docker run -d on the machine). Waits up to 15 s for the "
+        "container to start then returns the run (status running, launching if the image is "
+        "still being pulled, or failed with the error). The run shows up immediately in "
+        "the interface.",
     )
     async def launch_run(
         project: ProjectArg,
@@ -296,32 +295,32 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Met un run en pause (docker pause ; statut running requis). Les "
-        "processus sont gelés mais la mémoire GPU n'est pas libérée.",
+        description="Pause a run (docker pause; status running required). Processes "
+        "are frozen but GPU memory is not released.",
     )
     async def pause_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.pause(run_id)))
 
     @mcp.tool(
         annotations=WRITE,
-        description="Reprend un run en pause (docker unpause ; statut paused requis).",
+        description="Resume a paused run (docker unpause; status paused required).",
     )
     async def resume_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.resume(run_id)))
 
     @mcp.tool(
         annotations=DESTRUCTIVE,
-        description="Arrête un run (docker stop : SIGTERM puis SIGKILL après le délai du "
-        "projet ; statut running ou paused requis). Attend jusqu'à 15 s ; le statut final "
-        "est stopped.",
+        description="Stop a run (docker stop: SIGTERM then SIGKILL after the project's "
+        "timeout; status running or paused required). Waits up to 15 s; the final status "
+        "is stopped.",
     )
     async def stop_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.stop(run_id, wait=STOP_WAIT_S)))
 
     @mcp.tool(
         annotations=WRITE,
-        description="Redémarre le même conteneur (docker start, ou docker restart s'il est "
-        "conservé démarré) : la commande repart du début. Statut terminé requis "
+        description="Restart the same container (docker start, or docker restart if it was "
+        "kept started): the command starts over. Finished status required "
         "(succeeded, failed, stopped).",
     )
     async def restart_run(run_id: RunIdArg) -> dict[str, Any]:
@@ -329,8 +328,8 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Crée un nouveau run avec les mêmes paramètres (projet, machine, image, "
-        "venv, config, overrides) et la commande actuelle du projet. Statut terminé requis.",
+        description="Create a new run with the same parameters (project, machine, image, "
+        "venv, config, overrides) and the current project command. Finished status required.",
     )
     async def relaunch_run(run_id: RunIdArg) -> dict[str, Any]:
         run = await call(svc.relaunch(run_id, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
@@ -338,8 +337,8 @@ def build_mcp(
 
     @mcp.tool(
         annotations=DESTRUCTIVE,
-        description="Supprime un run terminé et son conteneur (docker rm -f) ; le fichier de "
-        "sauvegarde des logs est conservé côté TrainHub. Statut terminé requis.",
+        description="Delete a finished run and its container (docker rm -f); the log "
+        "backup file is kept by TrainHub. Finished status required.",
     )
     async def delete_run(run_id: RunIdArg) -> dict[str, Any]:
         await call(svc.delete(run_id))
@@ -347,22 +346,22 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Ferme (docker stop) le conteneur conservé d'un run terminé "
-        "(container_alive=true). Le statut du run ne change pas.",
+        description="Close (docker stop) the kept container of a finished run "
+        "(container_alive=true). The run status does not change.",
     )
     async def close_container(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.close_container(run_id)))
 
     @mcp.tool(
         annotations=WRITE,
-        description="Change la commande générique d'un projet (persistée ; n'affecte que "
-        "les runs lancés ensuite). Placeholders : {config} (obligatoire), {run_id}, "
-        "{machine}, {project}. Une commande identique au YAML annule la surcharge.",
+        description="Change the generic command of a project (persisted; only affects "
+        "runs launched afterwards). Placeholders: {config} (required), {run_id}, "
+        "{machine}, {project}. A command identical to the YAML one cancels the override.",
     )
     async def set_project_command(
         project: ProjectArg,
         command: Annotated[
-            str, Field(description="Nouvelle commande, ex. python train.py --config-name {config}")
+            str, Field(description="New command, e.g. python train.py --config-name {config}")
         ],
     ) -> dict[str, Any]:
         v = await call(svc.set_project_command(project, command))

@@ -94,7 +94,7 @@ def test_venv_image_reference() -> None:
 
 def test_duplicate_ids() -> None:
     text = BASIC_INVENTORY.replace("id: gpu-02", "id: gpu-01")
-    with pytest.raises(InventoryError, match="dupliqué"):
+    with pytest.raises(InventoryError, match="duplicate"):
         parse_inventory(text)
 
 
@@ -106,7 +106,7 @@ def test_extra_field_rejected_with_line() -> None:
 
 
 def test_invalid_yaml() -> None:
-    with pytest.raises(InventoryError, match=r"f.yaml:\d+ : YAML invalide"):
+    with pytest.raises(InventoryError, match=r"f.yaml:\d+: invalid YAML"):
         parse_inventory("machines: [\n  - a: b\n", "f.yaml")
 
 
@@ -115,7 +115,7 @@ def test_empty_inventory() -> None:
 
 
 def test_missing_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    with pytest.raises(InventoryError, match="lecture impossible"):
+    with pytest.raises(InventoryError, match="cannot read"):
         load_inventory(tmp_path / "absent.yaml")
 
 

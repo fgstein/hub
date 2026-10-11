@@ -28,7 +28,7 @@ def test_readable_logs_tail_grep_truncate() -> None:
     assert out == "line 997\nline 998\nline 999"
     assert readable_logs(raw, tail=None, grep=r"line 99\d$").splitlines()[0] == "line 990"
     long = readable_logs(raw, tail=None, max_chars=100)
-    assert long.startswith("[…") and "tronqués" in long and long.endswith("line 999\n")
+    assert long.startswith("[…") and "truncated" in long and long.endswith("line 999\n")
 
 
 def test_truncate_noop() -> None:

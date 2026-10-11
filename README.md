@@ -1,151 +1,149 @@
 # TrainHub
 
-TrainHub lance et suit des entraînements [Hydra](https://hydra.cc) sur des machines distantes,
-depuis une interface web, un serveur MCP (pour les agents) ou en Python pur.
+TrainHub launches and monitors [Hydra](https://hydra.cc) trainings on remote machines, from a
+web interface, an MCP server (for agents) or plain Python.
 
-Chaque run est construit à partir de 4 choix (**machine**, **image Docker**, **venv**, **config**)
-et exécute la chaîne :
+Each run is built from 4 choices (**machine**, **Docker image**, **venv**, **config**) and runs
+the chain:
 
 ```
 ssh machine → docker run -d → source venv → cd workdir → python train.py --config-name XXX
 ```
 
-Quand la commande se termine, le conteneur **reste démarré** (statut du run : réussi ou échoué
-selon le code de sortie) : on peut y ouvrir un shell depuis l'interface, puis le fermer soi-même
-(« Fermer le conteneur »). Désactivable par projet avec `docker.keep_alive: false`.
+When the command finishes, the container **stays started** (run status: succeeded or failed
+depending on the exit code): you can open a shell in it from the interface, then close it
+yourself (“Close container”). Can be disabled per project with `docker.keep_alive: false`.
 
-- Projets en onglets, chacun avec sa commande générique éditable. Placeholders remplis par
-  TrainHub : `{config}`, `{config_name}`, `{run_id}` (identifiant généré au lancement, ex.
-  `rn3ceg`), `{machine}`, `{project}`. **Tout autre `{nom}` est un paramètre du run** : le
-  brouillon affiche un champ par paramètre (ex. `python train.py --config-name {config} {options}
-  --my_option {option2}`). La valeur est découpée comme par un shell (`a=1 b=2` = deux arguments,
-  `"a b"` = un seul), chaque mot est échappé, un champ vide n'insère rien ; les dernières valeurs
-  sont mémorisées par projet.
-- Venv au choix parmi ceux de l'inventaire, plus **`system`**, toujours proposé : aucun venv
-  activé (Python de l'image, ou `uv run …` dans la commande).
-- Suivi en direct : statut, temps écoulé, logs en streaming dans un terminal xterm.js (couleurs ANSI, barres tqdm).
-- Logs de **tous** les runs sauvegardés au fil de l'eau dans `$TRAINHUB_DATA_DIR/logs/<run>.log` :
-  toujours affichés et téléchargeables après la fermeture ou la suppression du conteneur, une
-  coupure de la machine ou un redémarrage de TrainHub.
-- Commande de chaque run visible dans son panneau : générique résolue, ou complète (ssh +
-  `docker run` + script, options Docker du projet comprises).
-- Shell interactif dans le conteneur d'un run (`docker exec -it`, venv activé, dans le workdir),
-  onglet « shell » du panneau.
-- Overrides Hydra en fin de commande via l'API, le MCP et la CLI (`trainhub launch … trainer.max_epochs=5`).
-  Dans l'interface, on utilise un paramètre (`… {options}`) ; le champ « overrides » n'apparaît
-  que pour relancer un run qui en avait.
-- Contrôle : pause, reprise, arrêt, redémarrage, relance (ouvre un brouillon pré-rempli),
-  fermeture du conteneur conservé, suppression.
-- Les mêmes actions pour un agent via MCP (Streamable HTTP sur `/mcp`, ou stdio avec `trainhub mcp`).
-- Développement et tests sans GPU grâce aux modes `fake` (simulation en mémoire) et `local` (Docker local).
+- Projects as tabs, each with its own editable generic command. Placeholders filled in by
+  TrainHub: `{config}`, `{config_name}`, `{run_id}` (identifier generated at launch, e.g.
+  `rn3ceg`), `{machine}`, `{project}`. **Any other `{name}` is a run parameter**: the draft
+  shows one field per parameter (e.g. `python train.py --config-name {config} {options}
+  --my_option {option2}`). The value is split as a shell would (`a=1 b=2` = two arguments,
+  `"a b"` = a single one), each word is escaped, an empty field inserts nothing; the last values
+  are remembered per project.
+- Venv chosen among those of the inventory, plus **`system`**, always offered: no venv
+  activated (the image's Python, or `uv run …` in the command).
+- Live monitoring: status, elapsed time, logs streamed into an xterm.js terminal (ANSI colors, tqdm bars).
+- Logs of **every** run saved as they come in `$TRAINHUB_DATA_DIR/logs/<run>.log`: still shown
+  and downloadable after the container is closed or deleted, a machine outage or a TrainHub
+  restart.
+- Command of each run visible in its panel: resolved generic command, or full command (ssh +
+  `docker run` + script, including the project's Docker options).
+- Interactive shell in a run's container (`docker exec -it`, venv activated, in the workdir),
+  “shell” tab of the panel.
+- Hydra overrides appended to the command through the API, MCP and the CLI
+  (`trainhub launch … trainer.max_epochs=5`). In the interface, use a parameter (`… {options}`);
+  the “overrides” field only shows up to relaunch a run that had some.
+- Control: pause, resume, stop, restart, relaunch (opens a prefilled draft), closing the kept
+  container, deletion.
+- The same actions for an agent through MCP (Streamable HTTP on `/mcp`, or stdio with `trainhub mcp`).
+- Development and tests without a GPU thanks to the `fake` (in-memory simulation) and `local` (local Docker) modes.
 
-La spécification d'origine est l'issue #1 du dépôt ; les choix et écarts sont listés dans
+The original specification is issue #1 of the repository; choices and deviations are listed in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ---
 
-## Démarrage rapide (développement, mode fake)
+## Quick start (development, fake mode)
 
-Prérequis : [uv](https://docs.astral.sh/uv/), Node 22+.
+Requirements: [uv](https://docs.astral.sh/uv/), Node 22+.
 
 ```bash
 make install   # uv sync + npm install
-make dev       # backend en mode fake (rechargement) + Vite HMR → http://localhost:5173
+make dev       # backend in fake mode (auto reload) + Vite HMR → http://localhost:5173
 ```
 
-`make dev` utilise `dev/inventory.dev.yaml` : 4 machines simulées (dont une instable et une hors
-ligne), 3 projets, des logs réalistes (bannière Hydra, config résolue, barres de progression,
-métriques, warnings, échecs aléatoires).
+`make dev` uses `dev/inventory.dev.yaml`: 4 simulated machines (one flaky and one offline),
+3 projects, realistic logs (Hydra banner, resolved config, progress bars, metrics, warnings,
+random failures).
 
-Autres modes :
+Other modes:
 
-| Commande         | Exécuteur | Ce qui est réel                                        |
-|------------------|-----------|--------------------------------------------------------|
-| `make dev`       | `fake`    | Rien : machines et conteneurs simulés en mémoire        |
-| `make dev-local` | `local`   | Docker local, sans SSH (image `trainhub-fake-train`)    |
-| `make dev-sim`   | `ssh`     | SSH + Docker, vers 2 machines simulées (docker compose) |
+| Command          | Executor | What is real                                            |
+|------------------|----------|---------------------------------------------------------|
+| `make dev`       | `fake`   | Nothing: machines and containers simulated in memory    |
+| `make dev-local` | `local`  | Local Docker, without SSH (`trainhub-fake-train` image) |
+| `make dev-sim`   | `ssh`    | SSH + Docker, to 2 simulated machines (docker compose)  |
 
-`make dev-sim` génère une clé de test (`dev/ssh/`) ; ajoutez la ligne
-`Include <chemin>/dev/ssh/config` à `~/.ssh/config` pour que les alias `sim-gpu-01/02` résolvent.
+`make dev-sim` generates a test key (`dev/ssh/`); add the line
+`Include <path>/dev/ssh/config` to `~/.ssh/config` so that the `sim-gpu-01/02` aliases resolve.
 
-Qualité :
+Quality:
 
 ```bash
 make lint      # ruff, mypy --strict, biome, tsc
 make test      # pytest + vitest
-make e2e       # Playwright (mode fake)
-make build     # front + paquet Python
-make image     # image Docker trainhub:latest
+make e2e       # Playwright (fake mode)
+make build     # front end + Python package
+make image     # trainhub:latest Docker image
 ```
 
-Les tests d'intégration Docker (`tests/test_local_docker.py`) et SSH (`tests/test_sim_ssh.py`)
-sont ignorés automatiquement si Docker, l'image de test ou les machines simulées sont absents.
+The Docker (`tests/test_local_docker.py`) and SSH (`tests/test_sim_ssh.py`) integration tests
+are skipped automatically if Docker, the test image or the simulated machines are missing.
 
 ---
 
-## Inventaire (`inventory.yaml`)
+## Inventory (`inventory.yaml`)
 
-Les ressources sont déclarées dans un fichier YAML en lecture seule, validé au démarrage avec des
-erreurs lisibles (fichier, ligne, champ) et **rechargé à chaud** quand il change (un fichier
-devenu invalide est ignoré : l'ancien inventaire reste actif et l'erreur s'affiche en bas de page).
+Resources are declared in a read-only YAML file, validated at startup with readable errors
+(file, line, field) and **hot-reloaded** when it changes (a file that became invalid is ignored:
+the previous inventory stays active and the error is shown in the page footer).
 
-Exemple complet commenté : [`inventory.example.yaml`](inventory.example.yaml).
+Full commented example: [`inventory.example.yaml`](inventory.example.yaml).
 
 ```yaml
 machines:
   - id: gpu-01
-    host: gpu-01.lab.local      # ou un alias de ~/.ssh/config ; « localhost » = sans SSH
-    user: alice                 # optionnel
+    host: gpu-01.lab.local      # or an alias from ~/.ssh/config; “localhost” = without SSH
+    user: alice                 # optional
 images:
   - id: torch-2.4
     image: registry.lab/ml/torch:2.4-cuda12
 venvs:
   - id: main
-    path: /opt/venvs/main        # chemin DANS le conteneur
+    path: /opt/venvs/main        # path INSIDE the container
 projects:
   - id: segmentation
     command: python train.py --config-name {config}
     workdir: /workspace/seg
     docker: {gpus: all, shm_size: 16g, volumes: [/data:/data:ro], tty: true, stop_timeout: 30}
     configs:
-      root: /home/alice/seg/configs   # racine des configs Hydra sur la machine (côté hôte)
-      exclude: ["hydra/*"]            # optionnel
+      root: /home/alice/seg/configs   # root of the Hydra configs on the machine (host side)
+      exclude: ["hydra/*"]            # optional
 ```
 
-**Choix de la config.** Tous les fichiers `*.yaml` sous la racine du projet (récursivement,
-via `find` sur la machine choisie, cache 60 s, bouton ↻) sont présentés sous forme
-d'arborescence dans le brouillon : on clique sur le fichier voulu. Chaque fichier (et chaque
-dossier, en cumulé) indique le nombre de runs déjà lancés sur cette config, avec un point vert
-s'il y en a en cours. Une config est le chemin relatif sans extension
-(`experiments/unet_large`) : c'est ce qu'attend `--config-name` de Hydra quand `config_path`
-est la racine (une config principale dans un sous-dossier doit commencer par
-`# @package _global_`). Le placeholder `{config_name}` donne le seul basename (`unet_large`).
-Les dossiers et fichiers cachés (`.hydra`, `.git`…) sont ignorés.
+**Choosing the config.** Every `*.yaml` file under the project root (recursively, through
+`find` on the chosen machine, 60 s cache, ↻ button) is shown as a tree in the draft: click the
+file you want. Each file (and each directory, cumulatively) shows the number of runs already
+launched on that config, with a green dot if some are running. A config is the relative path
+without extension (`experiments/unet_large`): this is what Hydra's `--config-name` expects when
+`config_path` is the root (a primary config in a subdirectory must start with
+`# @package _global_`). The `{config_name}` placeholder gives the basename only (`unet_large`).
+Hidden directories and files (`.hydra`, `.git`…) are ignored.
 
-L'état modifiable depuis l'interface (commande surchargée d'un projet, onglets ouverts, dernières
-sélections, runs) vit dans une base SQLite (`$TRAINHUB_DATA_DIR/trainhub.sqlite`).
+State that can be changed from the interface (overridden project command, open tabs, last
+selections, runs) lives in a SQLite database (`$TRAINHUB_DATA_DIR/trainhub.sqlite`).
 
-**Conteneur conservé et logs.** Avec `keep_alive` (défaut), le script lancé dans le conteneur
-exécute la commande en arrière-plan, relaie `SIGTERM` (« Arrêter » = `docker stop`, comme
-avant), puis, quand la commande se termine, écrit son code dans `/tmp/.trainhub-exit` et garde
-le conteneur démarré. Un healthcheck (`--health-cmd`, toutes les 3 s) passe alors à
-`unhealthy` : c'est ainsi que TrainHub détecte la fin et lit le code de sortie, sans commande
-supplémentaire. Fermer le conteneur le fait sortir avec le code de la commande. Les logs sont
-suivis en permanence pour chaque run actif et écrits dans `$TRAINHUB_DATA_DIR/logs/<run>.log`
-(`<run>.done` quand la sauvegarde est complète) ; si les logs Docker repartent plus courts que la
-sauvegarde (rotation), l'ancienne version est gardée en `<run>.prev.log`. Supprimer un run
-conserve sa sauvegarde.
+**Kept container and logs.** With `keep_alive` (default), the script launched in the container
+runs the command in the background, forwards `SIGTERM` (“Stop” = `docker stop`, as before),
+then, when the command finishes, writes its code to `/tmp/.trainhub-exit` and keeps the
+container started. A healthcheck (`--health-cmd`, every 3 s) then becomes `unhealthy`: this is
+how TrainHub detects the end and reads the exit code, without any extra command. Closing the
+container makes it exit with the command's code. Logs are followed permanently for every active
+run and written to `$TRAINHUB_DATA_DIR/logs/<run>.log` (`<run>.done` once the backup is
+complete); if the Docker logs come back shorter than the backup (rotation), the old version is
+kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
 ---
 
-## Déploiement (Docker)
+## Deployment (Docker)
 
-TrainHub tourne dans un conteneur et n'a pas besoin de Docker local : tout `docker` s'exécute sur
-les machines distantes via le binaire `ssh` du système (respect de `~/.ssh/config`, de l'agent
-SSH et des jump hosts ; `ControlMaster`/`ControlPersist` réutilisent les connexions).
+TrainHub runs in a container and does not need local Docker: every `docker` command runs on the
+remote machines through the system `ssh` binary (honoring `~/.ssh/config`, the SSH agent and
+jump hosts; `ControlMaster`/`ControlPersist` reuse connections).
 
 ```bash
-make image   # ou : docker build -t trainhub:latest .
+make image   # or: docker build -t trainhub:latest .
 
 docker run -d --name trainhub --network host \
   -v ~/.ssh/config:/home/th/.ssh/config:ro \
@@ -156,70 +154,70 @@ docker run -d --name trainhub --network host \
   trainhub:latest
 ```
 
-Puis ouvrir <http://127.0.0.1:8420>.
+Then open <http://127.0.0.1:8420>.
 
-**Clés privées au lieu de l'agent SSH.** Montez les clés en lecture seule et référencez-les dans
-la config SSH montée (`IdentityFile /home/th/.ssh/id_ed25519`) :
+**Private keys instead of the SSH agent.** Mount the keys read-only and reference them in the
+mounted SSH config (`IdentityFile /home/th/.ssh/id_ed25519`):
 
 ```bash
   -v ~/.ssh/id_ed25519:/home/th/.ssh/id_ed25519:ro \
 ```
 
-Permissions attendues par `ssh` : clé privée `600` (ou `400`), `config` `600` ou `644` non
-modifiable par d'autres, appartenant à l'utilisateur du conteneur. L'utilisateur `th` a l'UID
-1000 : si vos fichiers appartiennent à un autre UID, reconstruisez avec
+Permissions expected by `ssh`: private key `600` (or `400`), `config` `600` or `644` not
+writable by others, owned by the container user. The `th` user has UID 1000: if your files
+belong to another UID, rebuild with
 `docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t trainhub .`.
-Le répertoire `/home/th/.ssh` doit rester inscriptible (sockets `ControlMaster`) : montez des
-fichiers, pas le répertoire entier.
+The `/home/th/.ssh` directory must stay writable (`ControlMaster` sockets): mount files, not
+the whole directory.
 
-### Variables d'environnement
+### Environment variables
 
-| Variable                | Défaut               | Rôle                                                           |
+| Variable                | Default              | Purpose                                                        |
 |-------------------------|----------------------|----------------------------------------------------------------|
-| `TRAINHUB_INVENTORY`    | `./inventory.yaml`   | Chemin de l'inventaire (rechargé à chaud)                      |
-| `TRAINHUB_DATA_DIR`     | `./.trainhub`        | Répertoire de la base SQLite                                   |
-| `TRAINHUB_HOST`         | `127.0.0.1`          | Adresse d'écoute                                               |
+| `TRAINHUB_INVENTORY`    | `./inventory.yaml`   | Path of the inventory (hot-reloaded)                           |
+| `TRAINHUB_DATA_DIR`     | `./.trainhub`        | SQLite database directory                                      |
+| `TRAINHUB_HOST`         | `127.0.0.1`          | Listen address                                                 |
 | `TRAINHUB_PORT`         | `8420`               | Port                                                           |
-| `TRAINHUB_EXECUTOR`     | `ssh`                | `ssh`, `local` ou `fake`                                       |
-| `TRAINHUB_TOKEN`        | —                    | Si défini : jeton exigé partout (API, WebSocket, `/mcp`)       |
-| `TRAINHUB_MCP_READONLY` | —                    | `1` : n'expose que les outils MCP de lecture                   |
-| `TRAINHUB_STATIC_DIR`   | auto                 | Répertoire du front compilé (défini dans l'image)              |
-| `TRAINHUB_LOG_LEVEL`    | `INFO`               | Niveau des logs JSON du serveur                                |
+| `TRAINHUB_EXECUTOR`     | `ssh`                | `ssh`, `local` or `fake`                                       |
+| `TRAINHUB_TOKEN`        | —                    | If set: token required everywhere (API, WebSocket, `/mcp`)     |
+| `TRAINHUB_MCP_READONLY` | —                    | `1`: only expose the read-only MCP tools                       |
+| `TRAINHUB_STATIC_DIR`   | auto                 | Directory of the built front end (set in the image)            |
+| `TRAINHUB_LOG_LEVEL`    | `INFO`               | Level of the server's JSON logs                                |
 
-**Jeton.** Avec `TRAINHUB_TOKEN`, envoyer `Authorization: Bearer <jeton>` (API, MCP), ou se
-connecter via la page `/login` qui pose un cookie (navigateur, WebSocket).
+**Token.** With `TRAINHUB_TOKEN`, send `Authorization: Bearer <token>` (API, MCP), or sign in
+through the `/login` page, which sets a cookie (browser, WebSocket).
 
 ---
 
-## Serveur MCP
+## MCP server
 
-Les outils (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
+The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
 `list_runs`, `get_run`, `get_logs`, `pause_run`, `resume_run`, `stop_run`, `restart_run`,
-`relaunch_run`, `close_container`, `delete_run`, `set_project_command`) appellent la même couche service que
-l'interface : un run lancé par un agent apparaît immédiatement dans l'interface, avec une icône
-« agent ». `get_logs` renvoie du texte nettoyé (sans ANSI, barres de progression réduites à leur
-dernier état, tronqué avec mention).
+`relaunch_run`, `close_container`, `delete_run`, `set_project_command`) call the same service
+layer as the interface: a run launched by an agent shows up immediately in the interface, with
+an “agent” icon. `get_logs` returns cleaned text (no ANSI, progress bars reduced to their last
+state, truncated with a note).
 
 ```bash
-# Streamable HTTP (serveur en cours d'exécution)
+# Streamable HTTP (running server)
 claude mcp add --transport http trainhub http://127.0.0.1:8420/mcp
-# avec jeton
+# with a token
 claude mcp add --transport http trainhub http://127.0.0.1:8420/mcp --header "Authorization: Bearer $TRAINHUB_TOKEN"
 
-# stdio : relaie vers le serveur en cours (pas de seconde instance avec son propre état)
+# stdio: relays to the running server (no second instance with its own state)
 claude mcp add trainhub -- trainhub mcp --url http://127.0.0.1:8420
 ```
 
-`TRAINHUB_MCP_READONLY=1` n'expose que les outils de lecture.
+`TRAINHUB_MCP_READONLY=1` only exposes the read-only tools.
 
 ---
 
-## Usage en Python pur et CLI
+## Plain Python and CLI usage
 
 ```python
 from trainhub import TrainHub
 
-tb = TrainHub.from_inventory("inventory.yaml")          # exécuteur : TRAINHUB_EXECUTOR (défaut ssh)
+tb = TrainHub.from_inventory("inventory.yaml")          # executor: TRAINHUB_EXECUTOR (default ssh)
 run = await tb.launch(project="segmentation", machine="gpu-01",
                       image="torch-2.4", venv="main", config="baseline")
 async for chunk in tb.stream_logs(run.id):
@@ -232,12 +230,12 @@ trainhub preview -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline trai
 trainhub launch  -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline --follow
 trainhub ps [--all]
 trainhub logs r7f3k2 [-f] [--clean]
-trainhub stop r7f3k2           # aussi : pause, resume, rm
-trainhub serve                 # serveur web (API, WebSocket, MCP, front)
-trainhub mcp                   # MCP stdio relié au serveur
+trainhub stop r7f3k2           # also: pause, resume, rm
+trainhub serve                 # web server (API, WebSocket, MCP, front end)
+trainhub mcp                   # stdio MCP connected to the server
 ```
 
-La CLI partage la base SQLite du serveur (`--data-dir` / `TRAINHUB_DATA_DIR`).
+The CLI shares the server's SQLite database (`--data-dir` / `TRAINHUB_DATA_DIR`).
 
 ---
 
@@ -245,25 +243,24 @@ La CLI partage la base SQLite du serveur (`--data-dir` / `TRAINHUB_DATA_DIR`).
 
 ```
 src/trainhub/
-  core/        fonctions pures : modèles, inventaire, construction des commandes (argv, shlex),
-               parsing docker ps/inspect, durées, nettoyage des logs — aucune I/O
-  executors/   interface Executor ; ssh (production), local (docker local), fake (simulation)
-  service/     cycle de vie des runs, SQLite, suivi (1 docker ps / machine / 3 s), hub de logs
-               (1 docker logs -f partagé par run, tampon circulaire 2 Mo), réconciliation, bus
-  api/         FastAPI : REST, WebSocket /ws (logs en trames binaires), jeton, front statique
-  mcp/         FastMCP (HTTP sur /mcp) et proxy stdio
-  client.py    classe TrainHub (Python pur) ; cli.py
-web/           SolidJS + Vite + Tailwind v4 + Kobalte + xterm.js (thème inspiré d'OpenCode)
-dev/           inventaires de dev, image fake-train, machines SSH simulées (docker compose)
+  core/        pure functions: models, inventory, command building (argv, shlex),
+               docker ps/inspect parsing, durations, log cleaning — no I/O
+  executors/   Executor interface; ssh (production), local (local docker), fake (simulation)
+  service/     run lifecycle, SQLite, monitoring (1 docker ps / machine / 3 s), log hub
+               (1 docker logs -f shared per run, 2 MB ring buffer), reconciliation, bus
+  api/         FastAPI: REST, WebSocket /ws (logs as binary frames), token, static front end
+  mcp/         FastMCP (HTTP on /mcp) and stdio proxy
+  client.py    TrainHub class (plain Python); cli.py
+web/           SolidJS + Vite + Tailwind v4 + Kobalte + xterm.js (theme inspired by OpenCode)
+dev/           dev inventories, fake-train image, simulated SSH machines (docker compose)
 ```
 
-Règles clés : l'API et le MCP n'appellent que la couche service ; `core` est testable sans I/O ;
-aucune commande n'est construite par concaténation non échappée (échappement `shlex.quote` à
-chaque niveau : shell distant, puis `bash -lc` dans le conteneur) ; fermer le navigateur ou
-redémarrer TrainHub n'interrompt jamais un entraînement (conteneurs détachés, retrouvés par
-labels `trainhub*`).
+Key rules: the API and MCP only call the service layer; `core` is testable without I/O; no
+command is built by unescaped concatenation (`shlex.quote` escaping at every level: remote
+shell, then `bash -lc` in the container); closing the browser or restarting TrainHub never
+interrupts a training (detached containers, found again through their `trainhub*` labels).
 
-## Code tiers
+## Third-party code
 
-Le thème du front reprend des tokens du système de thème d'OpenCode (licence MIT), voir
+The front-end theme reuses tokens from OpenCode's theme system (MIT license), see
 [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).

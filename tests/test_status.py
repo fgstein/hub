@@ -127,7 +127,7 @@ def test_status_mapping(state: str, code: int | None, stop: bool, expected: RunS
         (245, "4m 05s"),
         (3600, "1h 00m"),
         (3 * 3600 + 12 * 60 + 59, "3h 12m"),
-        (2 * 86400 + 4 * 3600 + 5, "2j 04h"),
+        (2 * 86400 + 4 * 3600 + 5, "2d 04h"),
         (-5, "0s"),
     ],
 )

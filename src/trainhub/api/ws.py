@@ -1,17 +1,17 @@
-"""WebSocket ``/ws`` : état en direct et logs.
+"""``/ws`` WebSocket: live state and logs.
 
-Serveur → client :
+Server → client:
 
-- ``{"type": "snapshot", "seq", "inventory", "runs", "ui_state", "server_time"}`` à la
-  connexion et sur demande (``snapshot.request``) ;
-- événements ``{"type": "run.created" | "run.updated" | "run.deleted" | "inventory.updated"
-  | "machine.status" | "ui_state.updated", "seq", ...data}`` ;
-- logs en **trames binaires** : 8 octets d'en-tête (id du run en ASCII, complété par des
-  espaces) suivis des octets bruts ;
-- ``{"type": "logs.reset", "run_id"}`` (vider le terminal avant un nouveau contenu) et
-  ``{"type": "logs.end", "run_id"}`` (le conteneur est terminé).
+- ``{"type": "snapshot", "seq", "inventory", "runs", "ui_state", "server_time"}`` on
+  connection and on request (``snapshot.request``);
+- events ``{"type": "run.created" | "run.updated" | "run.deleted" | "inventory.updated"
+  | "machine.status" | "ui_state.updated", "seq", ...data}``;
+- logs as **binary frames**: an 8-byte header (run id in ASCII, padded with spaces)
+  followed by the raw bytes;
+- ``{"type": "logs.reset", "run_id"}`` (clear the terminal before new content) and
+  ``{"type": "logs.end", "run_id"}`` (the container has ended).
 
-Client → serveur : ``logs.subscribe {run_id}``, ``logs.unsubscribe {run_id}``,
+Client → server: ``logs.subscribe {run_id}``, ``logs.unsubscribe {run_id}``,
 ``snapshot.request``, ``ping``.
 """
 
@@ -38,7 +38,7 @@ MAX_FRAME = 64 * 1024
 
 
 def log_frame(run_id: str, data: bytes) -> bytes:
-    """Trame binaire de logs : en-tête de 8 octets (id du run) + données."""
+    """Binary log frame: 8-byte header (run id) + data."""
     header = run_id.encode("ascii", "replace")[:HEADER_SIZE].ljust(HEADER_SIZE, b" ")
     return header + data
 
@@ -82,7 +82,7 @@ class _Connection:
                 if ev.seq <= self.min_seq:
                     continue
                 await self.send_json(_event_json(ev))
-            # abonné trop lent : nouvel abonnement et snapshot complet
+            # subscriber too slow: new subscription and full snapshot
             if not self.sub.overflowed:
                 return
 
@@ -126,7 +126,7 @@ class _Connection:
         elif kind == "ping":
             await self.send_json({"type": "pong", "t": msg.get("t")})
         else:
-            await self.send_json({"type": "error", "message": f"message inconnu : {kind!r}"})
+            await self.send_json({"type": "error", "message": f"unknown message: {kind!r}"})
 
     def close(self) -> None:
         for run_id in list(self.logs):
@@ -142,7 +142,7 @@ def _event_json(ev: Event) -> dict[str, Any]:
 @router.websocket("/ws")
 async def websocket(ws: WebSocket) -> None:
     if not websocket_authorized(ws):
-        await ws.close(code=4401, reason="jeton requis")
+        await ws.close(code=4401, reason="token required")
         return
     await ws.accept()
     svc: RunService = ws.app.state.service
@@ -155,14 +155,14 @@ async def websocket(ws: WebSocket) -> None:
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await conn.send_json({"type": "error", "message": "JSON invalide"})
+                await conn.send_json({"type": "error", "message": "invalid JSON"})
                 continue
             if isinstance(msg, dict):
                 await conn.handle(msg)
     except WebSocketDisconnect:
         pass
     except Exception:
-        log.exception("erreur WebSocket")
+        log.exception("WebSocket error")
     finally:
         conn.close()
         for t in (events, writer):
@@ -174,15 +174,15 @@ async def websocket(ws: WebSocket) -> None:
 
 @router.websocket("/ws/shell/{run_id}")
 async def shell(ws: WebSocket, run_id: str) -> None:
-    """Shell interactif dans le conteneur d'un run (``docker exec -it``).
+    """Interactive shell in a run's container (``docker exec -it``).
 
-    Client → serveur : trames binaires (frappes clavier) et
-    ``{"type": "resize", "cols", "rows"}``. Serveur → client : trames binaires (sortie du
-    terminal), puis ``{"type": "exit"}`` à la fin de la session, ou ``{"type": "error",
-    "message"}`` si elle ne peut pas s'ouvrir.
+    Client → server: binary frames (keystrokes) and
+    ``{"type": "resize", "cols", "rows"}``. Server → client: binary frames (terminal
+    output), then ``{"type": "exit"}`` at the end of the session, or ``{"type": "error",
+    "message"}`` if it cannot be opened.
     """
     if not websocket_authorized(ws):
-        await ws.close(code=4401, reason="jeton requis")
+        await ws.close(code=4401, reason="token required")
         return
     await ws.accept()
     svc: RunService = ws.app.state.service

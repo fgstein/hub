@@ -1,6 +1,6 @@
-"""Application FastAPI : API REST, WebSocket, serveur MCP (``/mcp``) et front compilé.
+"""FastAPI application: REST API, WebSocket, MCP server (``/mcp``) and built front end.
 
-Un seul processus sert tout ; la logique métier vit dans la couche service.
+A single process serves everything; the business logic lives in the service layer.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _RESERVED_PREFIXES = ("/api", "/ws", "/mcp", "/login", "/docs", "/openapi.json",
 
 
 def find_static_dir(settings: Settings) -> Path | None:
-    """Répertoire du front compilé : ``TRAINHUB_STATIC_DIR``, paquet, ou ``web/dist``."""
+    """Directory of the built front end: ``TRAINHUB_STATIC_DIR``, package, or ``web/dist``."""
     candidates = [
         settings.static_dir,
         Path(__file__).resolve().parent.parent / "static",
@@ -44,8 +44,8 @@ def _format_validation(exc: RequestValidationError) -> str:
     parts = []
     for err in exc.errors():
         loc = ".".join(str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path"))
-        parts.append(f"{loc or 'requête'} : {err.get('msg', 'invalide')}")
-    return "requête invalide — " + " ; ".join(parts)
+        parts.append(f"{loc or 'request'}: {err.get('msg', 'invalid')}")
+    return "invalid request — " + "; ".join(parts)
 
 
 def create_app(
@@ -55,7 +55,7 @@ def create_app(
     start_monitor: bool = True,
     enable_mcp: bool = True,
 ) -> FastAPI:
-    """Construit l'application (service fourni ou créé depuis la configuration)."""
+    """Build the application (service given, or created from the settings)."""
     settings = settings or Settings.from_env()
     svc = service or create_service(settings, version=__version__)
     mcp_app: Any = None
@@ -70,7 +70,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await svc.start(monitor=start_monitor)
         log.info(
-            "TrainHub démarré",
+            "TrainHub started",
             extra={
                 "executor": svc.executor.kind,
                 "inventory": str(settings.inventory),
@@ -89,7 +89,7 @@ def create_app(
     app = FastAPI(
         title="TrainHub",
         version=__version__,
-        description="Lance et suit des entraînements Hydra sur des machines distantes.",
+        description="Launch and monitor Hydra trainings on remote machines.",
         lifespan=lifespan,
     )
     app.state.service = svc
@@ -107,7 +107,7 @@ def create_app(
     app.include_router(routes.router)
     app.include_router(ws.router)
     if mcp_app is not None:
-        # L'application MCP expose sa route sur « /mcp » : on la monte à la racine.
+        # The MCP application exposes its route on “/mcp”: mount it at the root.
         for route in mcp_app.routes:
             app.router.routes.append(route)
 
@@ -120,7 +120,7 @@ def create_app(
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str) -> Response:
             if ("/" + path).startswith(_RESERVED_PREFIXES):
-                return JSONResponse({"detail": "introuvable"}, status_code=404)
+                return JSONResponse({"detail": "not found"}, status_code=404)
             candidate = (static / path).resolve()
             if path and candidate.is_file() and static.resolve() in candidate.parents:
                 return FileResponse(candidate)
@@ -131,8 +131,8 @@ def create_app(
         async def no_front() -> JSONResponse:
             return JSONResponse(
                 {
-                    "detail": "front non compilé (make build) ; API disponible sur /api, "
-                    "documentation sur /docs"
+                    "detail": "front end not built (make build); API available at /api, "
+                    "documentation at /docs"
                 }
             )
 
@@ -141,14 +141,14 @@ def create_app(
 
 
 def app_factory() -> FastAPI:
-    """Fabrique utilisée par uvicorn (``--factory``)."""
+    """Factory used by uvicorn (``--factory``)."""
     settings = Settings.from_env()
     setup_logging(settings.log_level)
     return create_app(settings)
 
 
 def serve(host: str | None = None, port: int | None = None, *, reload: bool = False) -> None:
-    """Démarre uvicorn avec la configuration de l'environnement."""
+    """Start uvicorn with the environment settings."""
     import uvicorn
 
     settings = Settings.from_env()

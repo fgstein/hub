@@ -1,6 +1,6 @@
-/** Outils pour la commande générique d'un projet. */
+/** Helpers for a project's generic command. */
 
-/** Placeholders remplis par TrainHub ; tout autre ``{nom}`` est un paramètre saisi au lancement. */
+/** Placeholders filled in by TrainHub; any other ``{name}`` is a parameter entered at launch. */
 export const PLACEHOLDERS = ["config", "config_name", "run_id", "machine", "project"] as const
 const PLACEHOLDER_RE = /(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}/g
 
@@ -9,7 +9,7 @@ export interface Segment {
   kind: "text" | "placeholder" | "param"
 }
 
-/** Découpe la commande en segments pour la coloration des placeholders. */
+/** Split the command into segments to highlight placeholders. */
 export function segments(command: string): Segment[] {
   const out: Segment[] = []
   let last = 0
@@ -27,15 +27,15 @@ export function segments(command: string): Segment[] {
   return out
 }
 
-/** Message d'erreur si la commande est invalide, sinon null. */
+/** Error message if the command is invalid, else null. */
 export function validateCommand(command: string): string | null {
-  if (!command.trim()) return "la commande est vide"
+  if (!command.trim()) return "the command is empty"
   const names = [...command.matchAll(PLACEHOLDER_RE)].map((m) => m[1] ?? "")
-  if (!names.includes("config")) return "la commande doit contenir {config}"
+  if (!names.includes("config")) return "the command must contain {config}"
   return null
 }
 
-/** Paramètres libres de la commande (placeholders non réservés), dans l'ordre d'apparition. */
+/** Free parameters of the command (non-reserved placeholders), in order of appearance. */
 export function commandParams(command: string): string[] {
   const names = [...command.matchAll(PLACEHOLDER_RE)].map((m) => m[1] ?? "")
   return [...new Set(names.filter((n) => !(PLACEHOLDERS as readonly string[]).includes(n)))]
@@ -43,21 +43,21 @@ export function commandParams(command: string): string[] {
 
 const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./{}$-]+$/
 
-/** Échappe un argument comme ``shlex.quote`` (Python). */
+/** Escape an argument like ``shlex.quote`` (Python). */
 export function shellQuote(arg: string): string {
   if (arg === "") return "''"
   if (SAFE_WORD.test(arg) && !arg.includes("${")) return arg
   return `'${arg.replaceAll("'", `'"'"'`)}'`
 }
 
-/** Joint un argv en une ligne copiable dans un terminal (comme ``shlex.join``). */
+/** Join an argv into one line ready to paste into a terminal (like ``shlex.join``). */
 export function shellJoin(argv: readonly string[]): string {
   return argv.map(shellQuote).join(" ")
 }
 
 /**
- * Découpe une ligne d'arguments comme un shell POSIX (guillemets simples et doubles,
- * antislash). Renvoie une erreur lisible si un guillemet n'est pas fermé.
+ * Split an argument line like a POSIX shell (single and double quotes, backslash).
+ * Returns a readable error if a quote is not closed.
  */
 export function splitArgs(text: string): { args: string[]; error: string | null } {
   const args: string[] = []
@@ -89,14 +89,14 @@ export function splitArgs(text: string): { args: string[]; error: string | null 
       inWord = true
     }
   }
-  if (quote) return { args: [], error: `guillemet ${quote} non fermé` }
+  if (quote) return { args: [], error: `unclosed ${quote} quote` }
   if (inWord) args.push(cur)
   return { args, error: null }
 }
 
 /**
- * Commande complète d'un run, lisible sur plusieurs lignes : la partie ssh, puis la commande
- * distante (``docker run …``) avec un seul niveau d'échappement, une option par ligne.
+ * Full command of a run, readable over several lines: the ssh part, then the remote
+ * command (``docker run …``) with a single escaping level, one option per line.
  */
 export function prettyCommand(argv: readonly string[]): string {
   if (!argv.length) return ""

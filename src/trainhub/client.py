@@ -1,6 +1,6 @@
-"""Classe :class:`TrainHub` : usage de TrainHub en Python pur, sans serveur web.
+""":class:`TrainHub` class: using TrainHub from plain Python, without the web server.
 
-Exemple ::
+Example ::
 
     from trainhub import TrainHub
 
@@ -27,10 +27,10 @@ from .service.schemas import ConfigList, PreviewResult
 
 
 class TrainHub:
-    """Façade asynchrone autour de :class:`~trainhub.service.RunService`.
+    """Asynchronous facade around :class:`~trainhub.service.RunService`.
 
-    Le service démarre paresseusement au premier appel ``await`` (base SQLite, suivi des
-    machines). Utilisable comme gestionnaire de contexte asynchrone.
+    The service starts lazily on the first ``await`` call (SQLite database, machine
+    monitoring). Usable as an asynchronous context manager.
     """
 
     def __init__(
@@ -50,11 +50,11 @@ class TrainHub:
         poll_interval: float = 3.0,
         monitor: bool = True,
     ) -> TrainHub:
-        """Crée une instance à partir d'un fichier d'inventaire.
+        """Create an instance from an inventory file.
 
-        ``executor`` : ``"fake"``, ``"local"``, ``"ssh"`` ou une instance ; par défaut
-        ``TRAINHUB_EXECUTOR`` (sinon ``ssh``). ``data_dir`` : répertoire de la base SQLite
-        (défaut ``TRAINHUB_DATA_DIR`` ou ``.trainhub``) ; ``":memory:"`` pour une base éphémère.
+        ``executor``: ``"fake"``, ``"local"``, ``"ssh"`` or an instance; defaults to
+        ``TRAINHUB_EXECUTOR`` (else ``ssh``). ``data_dir``: SQLite database directory
+        (default ``TRAINHUB_DATA_DIR`` or ``.trainhub``); ``":memory:"`` for a throwaway database.
         """
         inv = InventoryManager(path)
         if executor is None or isinstance(executor, str):
@@ -128,7 +128,7 @@ class TrainHub:
         params: Mapping[str, str] | None = None,
         wait: bool | float = True,
     ) -> Run:
-        """Lance un run ; attend par défaut la fin du ``docker run -d``."""
+        """Launch a run; by default waits for ``docker run -d`` to finish."""
         await self.start()
         sel = Selection(
             project=project,
@@ -181,7 +181,7 @@ class TrainHub:
         await self.service.delete(run_id)
 
     async def stream_logs(self, run_id: str, *, follow: bool = True) -> AsyncIterator[bytes]:
-        """Logs bruts : tampon puis direct jusqu'à la fin du run (``follow=False`` : existants)."""
+        """Raw logs: buffer then live until the run ends (``follow=False``: existing ones)."""
         await self.start()
         if not follow:
             yield await self.service.read_logs(run_id)

@@ -1,4 +1,4 @@
-"""Exécuteur SSH avec un faux binaire ``ssh`` (pas de réseau)."""
+"""SSH executor with a fake ``ssh`` binary (no network)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from trainhub.executors.base import MachineUnreachableError
 from trainhub.executors.ssh import SshExecutor
 
 FAKE_SSH = r"""#!/usr/bin/env bash
-# Faux ssh : journalise l'argv puis exécute la commande distante avec sh -c,
-# comme le ferait le shell de connexion de la machine.
+# Fake ssh: logs the argv then runs the remote command with sh -c,
+# as the machine's login shell would.
 printf '%s\n' "$@" > "$FAKE_SSH_LOG"
 host=""
 while [ $# -gt 0 ]; do
@@ -64,7 +64,7 @@ async def test_unreachable_is_reported(fake_ssh: Path) -> None:
 
 async def test_timeout_is_unreachable(fake_ssh: Path) -> None:
     ex = SshExecutor()
-    with pytest.raises(MachineUnreachableError, match="délai dépassé"):
+    with pytest.raises(MachineUnreachableError, match="timed out"):
         await ex.exec(Machine(id="m", host="slow.lab"), ["true"], timeout=0.5)
 
 
@@ -104,7 +104,7 @@ async def test_interactive_shell_through_pty(fake_ssh: Path) -> None:
             out += chunk
 
     try:
-        await read_until(b"32 120")  # taille initiale du PTY (lignes colonnes)
+        await read_until(b"32 120")  # initial PTY size (rows columns)
         shell.resize(100, 40)
         shell.write(b"hello\r")
         await read_until(b"got:hello")

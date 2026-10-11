@@ -1,4 +1,4 @@
-"""Inventaire courant avec rechargement à chaud (surveillance de la date de modification)."""
+"""Current inventory with hot reload (watching the modification time)."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ log = logging.getLogger("trainhub.inventory")
 
 
 class InventoryManager:
-    """Détient l'inventaire valide le plus récent ; recharge quand le fichier change.
+    """Holds the most recent valid inventory; reloads when the file changes.
 
-    Un fichier devenu invalide n'interrompt rien : l'ancien inventaire reste actif et
-    l'erreur est exposée dans :attr:`error`.
+    A file that became invalid interrupts nothing: the previous inventory stays active and
+    the error is exposed in :attr:`error`.
     """
 
     def __init__(self, path: str | Path | None = None, *, text: str | None = None) -> None:
@@ -52,7 +52,7 @@ class InventoryManager:
         self._listeners.append(cb)
 
     def check(self) -> bool:
-        """Recharge si le fichier a changé ; renvoie ``True`` si l'inventaire a changé."""
+        """Reload if the file changed; return ``True`` if the inventory changed."""
         if self.path is None:
             return False
         mtime = self._stat()
@@ -63,13 +63,13 @@ class InventoryManager:
             inv = load_inventory(self.path)
         except InventoryError as exc:
             self.error = str(exc)
-            log.error("inventaire invalide, ancien inventaire conservé", extra={"error": str(exc)})
+            log.error("invalid inventory, previous inventory kept", extra={"error": str(exc)})
             return False
         self.error = None
         if inv == self.inventory:
             return False
         self.inventory = inv
-        log.info("inventaire rechargé", extra={"path": str(self.path)})
+        log.info("inventory reloaded", extra={"path": str(self.path)})
         for cb in self._listeners:
             cb(inv)
         return True
@@ -91,4 +91,4 @@ class InventoryManager:
             try:
                 self.check()
             except Exception:  # pragma: no cover
-                log.exception("erreur pendant le rechargement de l'inventaire")
+                log.exception("error while reloading the inventory")

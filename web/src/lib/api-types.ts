@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Health
-         * @description Santé du serveur et joignabilité des machines.
+         * @description Server health and machine reachability.
          */
         get: operations["health_api_health_get"];
         put?: never;
@@ -33,7 +33,7 @@ export interface paths {
         };
         /**
          * Inventory
-         * @description Machines, images, venvs, projets (vue fusionnée YAML + base).
+         * @description Machines, images, venvs, projects (merged view of YAML + database).
          */
         get: operations["inventory_api_inventory_get"];
         put?: never;
@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * Project Configs
-         * @description Configs disponibles (statiques ou découvertes sur la machine, cache 60 s).
+         * @description Available configs (static or discovered on the machine, 60 s cache).
          */
         get: operations["project_configs_api_projects__project_id__configs_get"];
         put?: never;
@@ -79,7 +79,7 @@ export interface paths {
         head?: never;
         /**
          * Patch Project
-         * @description Met à jour la commande d'un projet, ou la remet à la valeur du YAML.
+         * @description Update a project's command, or reset it to the YAML value.
          */
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
@@ -93,7 +93,7 @@ export interface paths {
         };
         /**
          * Get Ui State
-         * @description Onglets ouverts, ordre, onglet actif, dernières sélections.
+         * @description Open tabs, order, active tab, last selections.
          */
         get: operations["get_ui_state_api_ui_state_get"];
         /** Put Ui State */
@@ -116,7 +116,7 @@ export interface paths {
         put?: never;
         /**
          * Preview
-         * @description Commande complète pour une sélection (dry run, rien n'est exécuté).
+         * @description Full command for a selection (dry run, nothing is executed).
          */
         post: operations["preview_api_preview_post"];
         delete?: never;
@@ -134,13 +134,13 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description Liste des runs, du plus récent au plus ancien.
+         * @description List of runs, most recent first.
          */
         get: operations["list_runs_api_runs_get"];
         put?: never;
         /**
          * Launch
-         * @description Lance un run ; renvoie immédiatement le run en statut ``launching``.
+         * @description Launch a run; return the run immediately with status ``launching``.
          */
         post: operations["launch_api_runs_post"];
         delete?: never;
@@ -162,7 +162,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Run
-         * @description Supprime le run et son conteneur (``docker rm``).
+         * @description Delete the run and its container (``docker rm``).
          */
         delete: operations["delete_run_api_runs__run_id__delete"];
         options?: never;
@@ -181,7 +181,7 @@ export interface paths {
         put?: never;
         /**
          * Run Action
-         * @description Action sur un run : ``pause``, ``resume``, ``stop``, ``restart``, ``relaunch``.
+         * @description Action on a run: ``pause``, ``resume``, ``stop``, ``restart``, ``relaunch``.
          */
         post: operations["run_action_api_runs__run_id___action__post"];
         delete?: never;
@@ -199,7 +199,7 @@ export interface paths {
         };
         /**
          * Run Logs
-         * @description Logs bruts (ANSI compris) en téléchargement.
+         * @description Raw logs (ANSI included) as a download.
          */
         get: operations["run_logs_api_runs__run_id__logs_get"];
         put?: never;
@@ -222,17 +222,17 @@ export interface components {
             machine: string | null;
             /**
              * Configs
-             * @description Identifiants de configs : chemin relatif à la racine, sans extension
+             * @description Config identifiers: path relative to the root, without extension
              */
             configs: string[];
             /**
              * Root
-             * @description Racine des configs (découverte)
+             * @description Configs root (discovery)
              */
             root?: string | null;
             /**
              * Run Counts
-             * @description Runs existants par config (absent : aucun)
+             * @description Existing runs per config (missing: none)
              */
             run_counts?: {
                 [key: string]: components["schemas"]["RunCount"];
@@ -248,7 +248,7 @@ export interface components {
         };
         /**
          * DockerOptions
-         * @description Options ``docker run`` propres à un projet.
+         * @description Project-specific ``docker run`` options.
          */
         DockerOptions: {
             /** Gpus */
@@ -275,7 +275,7 @@ export interface components {
             stop_timeout: number;
             /**
              * Keep Alive
-             * @description Conserver le conteneur (shell disponible) quand la commande se termine
+             * @description Keep the container (shell available) when the command finishes
              * @default true
              */
             keep_alive: boolean;
@@ -319,7 +319,7 @@ export interface components {
             projects: components["schemas"]["ProjectView"][];
             /**
              * Error
-             * @description Erreur du dernier rechargement
+             * @description Error of the last reload
              */
             error?: string | null;
             /** Executor */
@@ -356,17 +356,17 @@ export interface components {
             config: string;
             /**
              * Overrides
-             * @description Overrides Hydra facultatifs
+             * @description Optional Hydra overrides
              */
             overrides?: string[];
             /**
              * Cuda Visible Devices
-             * @description Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')
+             * @description Value of CUDA_VISIBLE_DEVICES (e.g. '0,1')
              */
             cuda_visible_devices?: string | null;
             /**
              * Params
-             * @description Valeurs des paramètres libres de la commande ({nom} non réservés) ; chaque valeur est découpée comme par un shell, vide = rien d'inséré
+             * @description Values of the free command parameters (non-reserved {name}); each value is split as a shell would, empty = nothing inserted
              */
             params?: {
                 [key: string]: string;
@@ -380,7 +380,7 @@ export interface components {
             id: string;
             /**
              * Reachable
-             * @description None : pas encore vérifié
+             * @description None: not checked yet
              */
             reachable?: boolean | null;
             /** Last Check */
@@ -410,19 +410,19 @@ export interface components {
         PreviewResult: {
             /**
              * Text
-             * @description Commande lisible, sur plusieurs lignes
+             * @description Readable command, over several lines
              */
             text: string;
             /**
              * Exact
-             * @description Commande exacte sur une ligne, copiable dans un terminal
+             * @description Exact command on one line, ready to paste into a terminal
              */
             exact: string;
             /** Argv */
             argv: string[];
             /**
              * Command
-             * @description Commande générique résolue
+             * @description Resolved generic command
              */
             command: string;
             /** Container Name */
@@ -430,17 +430,17 @@ export interface components {
         };
         /**
          * ProjectPatch
-         * @description Mise à jour d'un projet : nouvelle commande, ou retour à la valeur du YAML.
+         * @description Project update: new command, or back to the YAML value.
          */
         ProjectPatch: {
             /**
              * Command
-             * @description Nouvelle commande générique
+             * @description New generic command
              */
             command?: string | null;
             /**
              * Reset
-             * @description Revenir à la commande du YAML
+             * @description Go back to the YAML command
              * @default false
              */
             reset: boolean;
@@ -453,7 +453,7 @@ export interface components {
             label: string;
             /**
              * Command
-             * @description Commande générique effective (surcharge ou YAML)
+             * @description Effective generic command (override or YAML)
              */
             command: string;
             /** Yaml Command */
@@ -462,7 +462,7 @@ export interface components {
             command_overridden: boolean;
             /**
              * Params
-             * @description Paramètres libres de la commande effective, à renseigner au lancement
+             * @description Free parameters of the effective command, to fill in at launch
              */
             params?: string[];
             /** Workdir */
@@ -475,7 +475,7 @@ export interface components {
             venvs: string[];
             /**
              * Venv Images
-             * @description Pour chaque venv autorisé, images compatibles (None : toutes)
+             * @description For each allowed venv, compatible images (None: all)
              */
             venv_images: {
                 [key: string]: string[] | null;
@@ -493,7 +493,7 @@ export interface components {
         RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch" | "close";
         /**
          * RunCount
-         * @description Nombre de runs lancés sur une config (tous statuts) et, parmi eux, actifs.
+         * @description Number of runs launched on a config (all statuses) and, among them, active ones.
          */
         RunCount: {
             /** Total */
@@ -508,13 +508,13 @@ export interface components {
         RunSource: "ui" | "mcp" | "cli" | "import";
         /**
          * RunStatus
-         * @description Statut d'un run (section 4.3).
+         * @description Status of a run (section 4.3).
          * @enum {string}
          */
         RunStatus: "launching" | "running" | "paused" | "stopping" | "succeeded" | "failed" | "stopped" | "unreachable";
         /**
          * RunView
-         * @description Run enrichi des valeurs calculées.
+         * @description Run enriched with computed values.
          */
         RunView: {
             /** Id */
@@ -531,12 +531,12 @@ export interface components {
             config: string;
             /**
              * Command
-             * @description Commande générique résolue (placeholders remplacés)
+             * @description Resolved generic command (placeholders replaced)
              */
             command: string;
             /**
              * Full Command
-             * @description argv complet exécuté
+             * @description Full executed argv
              */
             full_command?: string[];
             /** Container Name */
@@ -570,7 +570,7 @@ export interface components {
             cuda_visible_devices?: string | null;
             /**
              * Params
-             * @description Valeurs des paramètres libres de la commande
+             * @description Values of the free command parameters
              */
             params?: {
                 [key: string]: string;
@@ -582,7 +582,7 @@ export interface components {
             stop_requested: boolean;
             /**
              * Container Alive
-             * @description Conteneur encore démarré (shell disponible)
+             * @description Container still started (shell available)
              * @default false
              */
             container_alive: boolean;
@@ -595,7 +595,7 @@ export interface components {
         };
         /**
          * Selection
-         * @description Choix d'un run : projet, machine, image, venv, config (+ options).
+         * @description Choice of a run: project, machine, image, venv, config (+ options).
          */
         Selection: {
             /** Project */
@@ -610,17 +610,17 @@ export interface components {
             config: string;
             /**
              * Overrides
-             * @description Overrides Hydra facultatifs
+             * @description Optional Hydra overrides
              */
             overrides?: string[];
             /**
              * Cuda Visible Devices
-             * @description Valeur de CUDA_VISIBLE_DEVICES (ex. '0,1')
+             * @description Value of CUDA_VISIBLE_DEVICES (e.g. '0,1')
              */
             cuda_visible_devices?: string | null;
             /**
              * Params
-             * @description Valeurs des paramètres libres de la commande ({nom} non réservés) ; chaque valeur est découpée comme par un shell, vide = rien d'inséré
+             * @description Values of the free command parameters (non-reserved {name}); each value is split as a shell would, empty = nothing inserted
              */
             params?: {
                 [key: string]: string;
@@ -628,7 +628,7 @@ export interface components {
         };
         /**
          * UiState
-         * @description État d'interface persisté côté serveur.
+         * @description UI state persisted on the server.
          */
         UiState: {
             /** Open Tabs */
@@ -872,7 +872,7 @@ export interface operations {
         parameters: {
             query?: {
                 project?: string | null;
-                /** @description Statut(s) séparés par des virgules, ou active/finished */
+                /** @description Comma-separated status(es), or active/finished */
                 status?: string | null;
                 limit?: number | null;
             };

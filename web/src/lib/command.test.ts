@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { prettyCommand, shellJoin, shellQuote, splitArgs } from "./command"
 
 describe("splitArgs", () => {
-  it("découpe les overrides Hydra en respectant les guillemets", () => {
+  it("splits Hydra overrides while honoring quotes", () => {
     expect(splitArgs("")).toEqual({ args: [], error: null })
     expect(splitArgs("  trainer.max_epochs=5   +x=1 ").args).toEqual(["trainer.max_epochs=5", "+x=1"])
     expect(splitArgs(`model.name="a b" 'q=it"s' y=\\$HOME`).args).toEqual([
@@ -10,10 +10,10 @@ describe("splitArgs", () => {
       'q=it"s',
       "y=$HOME",
     ])
-    expect(splitArgs("a='b").error).toMatch("non fermé")
+    expect(splitArgs("a='b").error).toMatch("unclosed")
   })
 
-  it("aller-retour avec shellJoin", () => {
+  it("round-trips with shellJoin", () => {
     const argv = ["model.name=a b", "x='q'", "paths.out=${oc.env:HOME}/out", "", "z=a;b"]
     expect(splitArgs(shellJoin(argv)).args).toEqual(argv)
     expect(shellQuote("trainer.max_epochs=5")).toBe("trainer.max_epochs=5")
@@ -21,7 +21,7 @@ describe("splitArgs", () => {
 })
 
 describe("prettyCommand", () => {
-  it("affiche la commande distante avec un seul niveau d'échappement", () => {
+  it("shows the remote command with a single escaping level", () => {
     const remote = shellJoin([
       "docker",
       "run",

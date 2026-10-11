@@ -2,7 +2,7 @@ import { Tooltip } from "@kobalte/core/tooltip"
 import { createMemo, For, Show } from "solid-js"
 import { connection, state } from "~/stores/app"
 
-/** Indicateur discret de connexion et de joignabilité des machines (bas de page). */
+/** Discreet indicator of connection and machine reachability (page footer). */
 export function StatusBar() {
   const machines = createMemo(() => state.inventory?.machines ?? [])
   const reachable = () => machines().filter((m) => m.status.reachable === true).length
@@ -19,17 +19,18 @@ export function StatusBar() {
           }}
           data-blink={connection() !== "open" ? "" : undefined}
         />
-        {connection() === "open" ? "connecté" : connection() === "connecting" ? "connexion…" : "reconnexion…"}
+        {connection() === "open"
+          ? "connected"
+          : connection() === "connecting"
+            ? "connecting…"
+            : "reconnecting…"}
       </span>
       <Show when={state.inventory}>
         <Tooltip openDelay={300}>
           <Tooltip.Trigger as="span" class="cursor-default">
             machines {reachable()}/{machines().length}
             <Show when={down().length}>
-              <span class="text-fg-critical">
-                {" "}
-                · {down().length} injoignable{down().length > 1 ? "s" : ""}
-              </span>
+              <span class="text-fg-critical"> · {down().length} unreachable</span>
             </Show>
           </Tooltip.Trigger>
           <Tooltip.Portal>
@@ -53,7 +54,7 @@ export function StatusBar() {
                     <span class="text-fg-strong">{m.id}</span>
                     <span class="truncate text-fg-weak">
                       {m.status.reachable === false
-                        ? (m.status.error ?? "injoignable")
+                        ? (m.status.error ?? "unreachable")
                         : m.status.latency_ms != null
                           ? `${Math.round(m.status.latency_ms)} ms`
                           : "—"}
@@ -66,10 +67,10 @@ export function StatusBar() {
         </Tooltip>
         <Show when={state.inventory?.error}>
           <span class="truncate text-fg-critical" title={state.inventory?.error ?? ""}>
-            inventaire invalide (ancienne version conservée)
+            invalid inventory (previous version kept)
           </span>
         </Show>
-        <span class="ml-auto font-mono">exécuteur {state.inventory?.executor}</span>
+        <span class="ml-auto font-mono">executor {state.inventory?.executor}</span>
       </Show>
     </footer>
   )

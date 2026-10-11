@@ -1,4 +1,4 @@
-"""Persistance SQLite (aiosqlite) : runs, commandes de projets surchargées, état d'interface."""
+"""SQLite persistence (aiosqlite): runs, overridden project commands, UI state."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ _COLUMNS = [
     "container_alive",
     "params",
 ]
-#: Colonnes ajoutées après la première version (migration à l'ouverture).
+#: Columns added after the first version (migrated on open).
 _ADDED_COLUMNS = {
     "container_alive": "INTEGER NOT NULL DEFAULT 0",
     "params": "TEXT NOT NULL DEFAULT '{}'",
@@ -115,7 +115,7 @@ def _from_row(row: aiosqlite.Row) -> Run:
 
 
 class Store:
-    """Accès à la base SQLite. Une seule connexion, sérialisée par aiosqlite."""
+    """SQLite database access. A single connection, serialized by aiosqlite."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -143,7 +143,7 @@ class Store:
     @property
     def db(self) -> aiosqlite.Connection:
         if self._db is None:
-            raise RuntimeError("store non ouvert")
+            raise RuntimeError("store not open")
         return self._db
 
     # -- runs ------------------------------------------------------------------
@@ -192,7 +192,7 @@ class Store:
         return [_from_row(r) for r in rows]
 
     async def count_runs_by_config(self, project: str) -> dict[str, Any]:
-        """Nombre de runs par config d'un projet : ``{config: {"total", "active"}}``."""
+        """Number of runs per config of a project: ``{config: {"total", "active"}}``."""
         active = [str(s) for s in RunStatus if s.is_active]
         sql = (
             "SELECT config, COUNT(*) AS total, "
@@ -207,7 +207,7 @@ class Store:
         await self.db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         await self.db.commit()
 
-    # -- commandes de projets --------------------------------------------------
+    # -- project commands ------------------------------------------------------
 
     async def get_project_commands(self) -> dict[str, str]:
         async with self.db.execute("SELECT project_id, command FROM project_commands") as cur:
@@ -226,7 +226,7 @@ class Store:
             )
         await self.db.commit()
 
-    # -- clé/valeur (état d'interface) ----------------------------------------
+    # -- key/value (UI state) -------------------------------------------------
 
     async def get_kv(self, key: str) -> Any:
         async with self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)) as cur:

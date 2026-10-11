@@ -1,15 +1,15 @@
 import type { RunStatus } from "~/lib/types"
 
 const STYLE: Record<RunStatus, { color: string; pulse?: boolean; blink?: boolean; label: string }> = {
-  launching: { color: "var(--status-orange)", pulse: true, label: "lancement" },
-  running: { color: "var(--status-green)", pulse: true, label: "en cours" },
-  paused: { color: "var(--status-orange)", label: "en pause" },
-  stopping: { color: "var(--status-orange)", pulse: true, label: "arrêt en cours" },
-  succeeded: { color: "var(--status-green)", label: "terminé avec succès" },
-  failed: { color: "var(--status-red)", label: "échec" },
-  // Point ouvert de la spec tranché : gris pour un arrêt volontaire.
-  stopped: { color: "var(--status-grey)", label: "arrêté" },
-  unreachable: { color: "var(--status-red)", blink: true, label: "machine injoignable" },
+  launching: { color: "var(--status-orange)", pulse: true, label: "launching" },
+  running: { color: "var(--status-green)", pulse: true, label: "running" },
+  paused: { color: "var(--status-orange)", label: "paused" },
+  stopping: { color: "var(--status-orange)", pulse: true, label: "stopping" },
+  succeeded: { color: "var(--status-green)", label: "succeeded" },
+  failed: { color: "var(--status-red)", label: "failed" },
+  // Open point of the spec settled: grey for a deliberate stop.
+  stopped: { color: "var(--status-grey)", label: "stopped" },
+  unreachable: { color: "var(--status-red)", blink: true, label: "machine unreachable" },
 }
 
 export const statusLabel = (s: RunStatus) => STYLE[s].label
@@ -25,7 +25,7 @@ export function StatusDot(props: { status: RunStatus | "draft" }) {
         data-blink={st()?.blink ? "" : undefined}
         data-hollow={props.status === "draft" ? "" : undefined}
         role="img"
-        aria-label={st()?.label ?? "brouillon"}
+        aria-label={st()?.label ?? "draft"}
       />
       {props.status === "succeeded" && (
         <span class="absolute -right-1.5 -top-1 text-[9px] leading-none text-st-green">✓</span>

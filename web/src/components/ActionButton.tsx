@@ -28,37 +28,37 @@ interface ActionDef {
   danger?: boolean
 }
 
-const PAUSE_HINT = "docker pause gèle les processus mais ne libère pas la mémoire GPU"
+const PAUSE_HINT = "docker pause freezes the processes but does not release GPU memory"
 
 export const ACTIONS: Record<MenuAction, ActionDef> = {
   pause: { label: "Pause", icon: IconPause, hint: PAUSE_HINT },
-  resume: { label: "Reprendre", icon: IconPlay },
-  stop: { label: "Arrêter", icon: IconStop, confirm: "Confirmer l'arrêt", danger: true },
+  resume: { label: "Resume", icon: IconPlay },
+  stop: { label: "Stop", icon: IconStop, confirm: "Confirm stop", danger: true },
   restart: {
-    label: "Redémarrer",
+    label: "Restart",
     icon: IconRestart,
-    hint: "Relance le même conteneur (docker start) : la commande repart du début",
+    hint: "Restarts the same container (docker start): the command starts over",
   },
   relaunch: {
-    label: "Relancer…",
+    label: "Relaunch…",
     icon: IconRelaunch,
-    hint: "Ouvre un brouillon avec les mêmes paramètres, à vérifier avant de lancer",
+    hint: "Opens a draft with the same parameters, to review before launching",
   },
   close: {
-    label: "Fermer le conteneur",
+    label: "Close container",
     icon: IconPower,
-    hint: "docker stop du conteneur conservé après la commande (le shell n'est plus disponible)",
+    hint: "docker stop of the container kept after the command (the shell is no longer available)",
   },
   delete: {
-    label: "Supprimer",
+    label: "Delete",
     icon: IconTrash,
-    confirm: "Confirmer la suppression",
+    confirm: "Confirm delete",
     danger: true,
-    hint: "docker rm : le conteneur est supprimé ; la sauvegarde des logs est conservée",
+    hint: "docker rm: the container is deleted; the log backup is kept",
   },
 }
 
-/** Action principale selon le statut : Pause si running, Reprendre si paused, Relancer si terminé. */
+/** Primary action by status: Pause if running, Resume if paused, Relaunch if finished. */
 export function primaryAction(status: RunView["status"]): RunAction | null {
   if (status === "running") return "pause"
   if (status === "paused") return "resume"
@@ -85,9 +85,9 @@ export function ActionButton(props: { run: RunView }) {
       await navigator.clipboard.writeText(
         props.run.full_command?.length ? shellJoin(props.run.full_command) : props.run.command,
       )
-      toast("commande copiée", "success")
+      toast("command copied", "success")
     } catch {
-      toast("copie impossible", "error")
+      toast("could not copy", "error")
     }
   }
 
@@ -104,9 +104,9 @@ export function ActionButton(props: { run: RunView }) {
         title={
           primary()
             ? `${ACTIONS[primary()!].label}${ACTIONS[primary()!].hint ? ` — ${ACTIONS[primary()!].hint}` : ""}`
-            : "Aucune action disponible"
+            : "No action available"
         }
-        aria-label={primary() ? ACTIONS[primary()!].label : "Aucune action"}
+        aria-label={primary() ? ACTIONS[primary()!].label : "No action"}
         data-testid="run-primary"
         data-action={primary() ?? ""}
         onClick={() => {
@@ -130,7 +130,7 @@ export function ActionButton(props: { run: RunView }) {
       >
         <DropdownMenu.Trigger
           class="flex w-6 items-center justify-center rounded-r-md hover:bg-surface-hover hover:text-fg-strong"
-          aria-label="Autres actions"
+          aria-label="More actions"
           data-testid="run-menu"
         >
           <IconChevronDown size={12} />
@@ -162,7 +162,7 @@ export function ActionButton(props: { run: RunView }) {
                     data-testid={`menu-${a}`}
                   >
                     <span class="flex w-4 justify-center text-icon">{def.icon({ size: 12 })}</span>
-                    {confirming() === a ? `${def.confirm} ?` : def.label}
+                    {confirming() === a ? `${def.confirm}?` : def.label}
                   </DropdownMenu.Item>
                 )
               }}
@@ -174,26 +174,26 @@ export function ActionButton(props: { run: RunView }) {
               <DropdownMenu.Item
                 onSelect={() => draftFromRun(props.run.id)}
                 class="flex h-7 cursor-default items-center gap-2 rounded px-2.5 text-sm text-fg-strong outline-none data-[highlighted]:bg-surface-active"
-                title="Ouvre un brouillon avec les mêmes paramètres (machine, image, venv, config, GPU, overrides), à modifier avant de lancer ; ce run continue"
+                title="Opens a draft with the same parameters (machine, image, venv, config, GPU, overrides), to edit before launching; this run keeps going"
                 data-testid="menu-duplicate"
               >
                 <span class="flex w-4 justify-center text-icon">
                   <IconRelaunch size={12} />
                 </span>
-                Nouveau run à partir de celui-ci…
+                New run from this one…
               </DropdownMenu.Item>
             </Show>
             <Show when={canShell()}>
               <DropdownMenu.Item
                 onSelect={() => openShell(props.run.id)}
                 class="flex h-7 cursor-default items-center gap-2 rounded px-2.5 text-sm text-fg-strong outline-none data-[highlighted]:bg-surface-active"
-                title="Shell interactif dans le conteneur (docker exec -it), venv activé"
+                title="Interactive shell in the container (docker exec -it), venv activated"
                 data-testid="menu-shell"
               >
                 <span class="flex w-4 justify-center text-icon">
                   <IconTerminal size={12} />
                 </span>
-                Ouvrir un shell
+                Open a shell
               </DropdownMenu.Item>
             </Show>
             <DropdownMenu.Item
@@ -203,7 +203,7 @@ export function ActionButton(props: { run: RunView }) {
               <span class="flex w-4 justify-center text-icon">
                 <IconCopy size={12} />
               </span>
-              Copier la commande
+              Copy command
             </DropdownMenu.Item>
             <DropdownMenu.Item
               as="a"
@@ -214,7 +214,7 @@ export function ActionButton(props: { run: RunView }) {
               <span class="flex w-4 justify-center text-icon">
                 <IconDownload size={12} />
               </span>
-              Télécharger les logs
+              Download logs
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
