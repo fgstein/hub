@@ -1,0 +1,22 @@
+# Machines SSH simulées (make sim-up) : sim-gpu-01 (port 2201) et sim-gpu-02 (port 2202).
+# Chaque machine a sshd et le client Docker, avec le socket Docker de l'hôte monté.
+# Clé de test : ./dev/gen-ssh-key.sh (dev/ssh/id_ed25519).
+services:
+  sim-gpu-01:
+    build: ./sim-machine
+    image: trainhub-sim-machine
+    container_name: sim-gpu-01
+    hostname: sim-gpu-01
+    ports: ["127.0.0.1:2201:22"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./ssh:/keys:ro
+  sim-gpu-02:
+    image: trainhub-sim-machine
+    depends_on: [sim-gpu-01]
+    container_name: sim-gpu-02
+    hostname: sim-gpu-02
+    ports: ["127.0.0.1:2202:22"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./ssh:/keys:ro

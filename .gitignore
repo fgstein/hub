@@ -17,3 +17,4 @@ playwright-report/
 web/openapi.json
 web/test-results/
 web/playwright-report/
+.ca-local.crt

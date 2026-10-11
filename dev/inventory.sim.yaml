@@ -1,0 +1,36 @@
+# Inventaire des machines SSH simulées (make sim-up, puis make dev-sim).
+# Les alias sim-gpu-01/02 viennent de dev/ssh/config (Include dans ~/.ssh/config).
+machines:
+  - id: sim-gpu-01
+    label: Machine simulée 1
+    host: sim-gpu-01
+  - id: sim-gpu-02
+    label: Machine simulée 2
+    host: sim-gpu-02
+
+images:
+  - id: fake-train
+    label: Image de test (Hydra + tqdm)
+    image: trainhub-fake-train
+  - id: missing
+    image: trainhub-does-not-exist:latest
+
+venvs:
+  - id: main
+    path: /opt/venvs/main
+  - id: exp
+    path: /opt/venvs/exp
+
+projects:
+  - id: fake
+    label: Fake train (SSH)
+    command: python train.py --config-name {config}
+    workdir: /workspace/fake
+    docker:
+      env:
+        HYDRA_FULL_ERROR: "1"
+      stop_timeout: 10
+    configs:
+      discover:
+        path: /home/alice/seg/configs
+        pattern: "*.yaml"

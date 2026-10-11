@@ -99,5 +99,5 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
     finally:
         for rid in run_ids:
             r = await svc.get_run(rid)
-            subprocess.run(["docker", "rm", "-f", r.container_name], capture_output=True)  # noqa: ASYNC221
+            subprocess.run(["docker", "rm", "-f", r.container_name], capture_output=True)
         await svc.close()
