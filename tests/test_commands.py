@@ -70,7 +70,8 @@ def test_example_matches_spec_shape() -> None:
         "--label", "trainhub.config=baseline",
         "--gpus", "all", "--shm-size", "16g",
         "-v", "/data:/data:ro", "-v", "/home/alice/seg:/workspace/seg",
-        "-w", "/workspace/seg", "-e", "WANDB_MODE=online",
+        "-w", "/workspace/seg", "-e", "COLUMNS=100", "-e", "LINES=40",
+        "-e", "WANDB_MODE=online",
         "--health-cmd", c.HEALTH_CMD, "--health-interval", "3s", "--health-retries", "1",
         "--health-timeout", "5s",
         "--ipc=host",
@@ -87,8 +88,8 @@ def test_keep_alive_can_be_disabled(inventory: Inventory) -> None:
     remote = c.docker_run(spec_for(inventory, project=proj))
     assert "--health-cmd" not in remote
     assert remote[-1] == (
-        "source /opt/venvs/main/bin/activate && cd /workspace/seg"
-        " && exec python train.py --config-name baseline"
+        "stty cols 100 rows 40 2>/dev/null; source /opt/venvs/main/bin/activate"
+        " && cd /workspace/seg && exec python train.py --config-name baseline"
     )
 
 
@@ -456,7 +457,10 @@ def test_system_venv_has_no_activation(inventory: Inventory) -> None:
     spec = dataclasses.replace(spec_for(inventory), venv=inventory.venv("system"))
     script = c.inner_script(spec)
     assert "source" not in script and "activate" not in script
-    assert script.startswith("rm -f /tmp/.trainhub-exit; cd /workspace/seg || exit 1; python")
+    assert script.startswith(
+        "rm -f /tmp/.trainhub-exit; stty cols 100 rows 40 2>/dev/null; "
+        "cd /workspace/seg || exit 1; python"
+    )
 
 
 def test_make_spec_params(inventory: Inventory) -> None:
@@ -476,3 +480,160 @@ def test_make_spec_params(inventory: Inventory) -> None:
     assert make_spec(inventory, **base, command=cmd).params == {"options": ""}
     with pytest.raises(SelectionError, match="nope"):
         make_spec(inventory, **base, command=cmd, params={"nope": "1"})
+
+
+# -- terminal size (tqdm), Docker command, sourced files ---------------------------------
+
+
+def test_tty_size_is_set_for_tqdm(inventory: Inventory) -> None:
+    """A docker run -d -t has a 0x0 TTY: tqdm would print nothing without stty."""
+    proj = inventory.project("segmentation")
+    proj = proj.model_copy(
+        update={"docker": proj.docker.model_copy(update={"tty_size": (132, 50)})}
+    )
+    remote = c.docker_run(spec_for(inventory, project=proj))
+    assert "stty cols 132 rows 50 2>/dev/null" in remote[-1]
+    assert "COLUMNS=132" in remote and "LINES=50" in remote
+    no_tty = proj.model_copy(update={"docker": proj.docker.model_copy(update={"tty": False})})
+    remote = c.docker_run(spec_for(inventory, project=no_tty))
+    assert "stty" not in remote[-1] and "COLUMNS=132" not in remote
+
+
+def test_docker_command_wrapper() -> None:
+    from trainhub.core.inventory import parse_inventory
+
+    from .conftest import BASIC_INVENTORY
+
+    text = "docker_command: sudo -n docker\n" + BASIC_INVENTORY.replace(
+        "    host: gpu-02\n",
+        "    host: gpu-02\n    docker_command: [/opt/bin/th-docker, --gpu-lock]\n",
+    )
+    inv = parse_inventory(text)
+    assert inv.machine("gpu-01").docker == ["sudo", "-n", "docker"]
+    assert inv.machine("gpu-02").docker == ["/opt/bin/th-docker", "--gpu-lock"]
+    spec = spec_for(inv)
+    assert shlex.split(c.build_run(spec)[-1])[:5] == ["sudo", "-n", "docker", "run", "-d"]
+    t = Target(inv.machine("gpu-02"), "th-x-r1")
+    assert shlex.split(c.build_stop(t)[-1])[:3] == ["/opt/bin/th-docker", "--gpu-lock", "stop"]
+    assert "sudo -n docker run -d -t --init" in c.preview(spec)
+    det = inv.project("detection")
+    assert det.configs.discover is not None
+    listing = c.build_list_configs(inv.machine("gpu-01"), det.configs.discover)
+    assert shlex.split(listing[-1])[0] == "find"
+
+
+def test_docker_command_default_and_invalid() -> None:
+    from trainhub.core.inventory import InventoryError, parse_inventory
+
+    from .conftest import BASIC_INVENTORY
+
+    assert parse_inventory(BASIC_INVENTORY).machine("local").docker == ["docker"]
+    with pytest.raises(InventoryError, match="docker_command"):
+        parse_inventory("docker_command: ''\n" + BASIC_INVENTORY)
+
+
+async def test_local_executor_uses_wrapper(tmp_path: Path) -> None:
+    from trainhub.core.models import Machine
+    from trainhub.executors.local import LocalExecutor
+
+    wrapper = tmp_path / "mydocker"
+    wrapper.write_text('#!/bin/sh\necho "wrapped:$*"\n')
+    wrapper.chmod(0o755)
+    m = Machine(id="l", host="localhost", docker_command=[str(wrapper), "--x"])
+    res = await LocalExecutor().exec(m, c.docker_ps())
+    assert res.out.startswith("wrapped:--x ps -a")
+
+
+def _sourcing_spec(
+    tmp_path: Path, inventory: Inventory, keep_alive: bool, **update: object
+) -> RunSpec:
+    from trainhub.core.models import SourceFile
+
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True, exist_ok=True)
+    (venv / "bin" / "activate").write_text("export ACTIVATED=1\n")
+    work = tmp_path / "work dir"
+    work.mkdir(exist_ok=True)
+    base = inventory.project("segmentation")
+    files = {
+        k: [SourceFile.model_validate(f) for f in v]  # type: ignore[attr-defined]
+        for k, v in update.items()
+    }
+    proj = base.model_copy(
+        update={
+            "workdir": str(work),
+            "command": "printenv FOO BAR ACTIVATED; : {config}",
+            "docker": base.docker.model_copy(update={"keep_alive": keep_alive}),
+            **files,
+        }
+    )
+    return dataclasses.replace(
+        spec_for(inventory, project=proj),
+        venv=inventory.venv("main").model_copy(update={"path": str(venv)}),
+    )
+
+
+def _env_without_foo() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in ("FOO", "BAR")}
+
+
+@pytest.mark.parametrize("keep_alive", [False, True])
+def test_env_files_and_source(tmp_path: Path, inventory: Inventory, keep_alive: bool) -> None:
+    work = tmp_path / "work dir"
+    work.mkdir()
+    # both usual forms: with and without "export"
+    (work / ".env").write_text('FOO="a b $x"\n# comment\nexport BAR=from-env\n')
+    (tmp_path / "setup it.sh").write_text('export BAR="$BAR+setup"\n')
+    spec = _sourcing_spec(
+        tmp_path,
+        inventory,
+        keep_alive,
+        env_files=[".env", {"path": "absent.env", "optional": True}],
+        source=[str(tmp_path / "setup it.sh")],
+    )
+    script = c.inner_script(spec)
+    if keep_alive:
+        # the command runs in the background; stop the keep-alive loop once it has finished
+        script = script.replace(c.EXIT_FILE, str(tmp_path / "exit"))
+        script = script.replace("while :; do sleep 3600 & wait $!; done", "exit $code")
+    res = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env=_env_without_foo(), timeout=20
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.splitlines()[:3] == ["a b ", "from-env+setup", "1"]
+
+
+@pytest.mark.parametrize("keep_alive", [False, True])
+def test_missing_required_source_fails(
+    tmp_path: Path, inventory: Inventory, keep_alive: bool
+) -> None:
+    spec = _sourcing_spec(tmp_path, inventory, keep_alive, env_files=["secrets.env"])
+    script = c.inner_script(spec).replace(c.EXIT_FILE, str(tmp_path / "exit"))
+    res = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=20)
+    assert res.returncode == 1
+    assert "file to source not found: secrets.env" in res.stderr
+    assert not (tmp_path / "exit").exists()
+
+
+def test_source_paths_are_quoted() -> None:
+    from trainhub.core.commands import _shell_path
+
+    assert _shell_path(".env") == "./.env"
+    assert _shell_path("conf/x.sh") == "./conf/x.sh"
+    assert _shell_path("~/my env.sh") == "~/'my env.sh'"
+    assert _shell_path("/a/$b;c") == "'/a/$b;c'"
+
+
+def test_project_source_from_yaml() -> None:
+    from trainhub.core.inventory import parse_inventory
+
+    from .conftest import BASIC_INVENTORY
+
+    text = BASIC_INVENTORY.replace(
+        "    workdir: /workspace/seg\n",
+        "    workdir: /workspace/seg\n    env_files: [.env, {path: .env.local, optional: true}]\n"
+        "    source: [/opt/setup.sh]\n",
+    )
+    p = parse_inventory(text).project("segmentation")
+    assert [(f.path, f.optional) for f in p.env_files] == [(".env", False), (".env.local", True)]
+    assert p.source[0].path == "/opt/setup.sh"

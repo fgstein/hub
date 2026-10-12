@@ -1,6 +1,10 @@
 # TrainHub inventory: available resources (read-only).
 # Path given by TRAINHUB_INVENTORY (default ./inventory.yaml), hot-reloaded.
 
+# Docker command on the machines (default: docker). Binary, path or wrapper accepting the
+# docker subcommands TrainHub uses. Can be overridden per machine.
+# docker_command: sudo -n docker
+
 machines:
   - id: gpu-01
     label: GPU 01 (4×A100)
@@ -28,6 +32,12 @@ projects:
     label: Segmentation
     command: python train.py --config-name {config}
     workdir: /workspace/seg      # cd before the command, in the container
+    # Files sourced in the container, after the venv and the cd, before the command.
+    # Relative to the workdir (or absolute, or ~/…). Missing = error, unless optional: true.
+    # env_files:                 # variables: "export AAA=bbb" or "AAA=bbb" (exported)
+    #   - .env
+    #   - {path: .env.local, optional: true}
+    # source: [scripts/setup_cluster.sh]   # scripts sourced as is, after env_files
     machines: [gpu-01, gpu-02]   # optional: allowed subset (default: all)
     images: [torch-2.4]
     venvs: [main, exp]
@@ -41,6 +51,7 @@ projects:
         WANDB_MODE: online
       extra_args: ["--ipc=host"]
       # tty: false               # disables -t (colors/progress bars)
+      # tty_size: [100, 40]      # container terminal size (columns, rows): tqdm adapts to it
       # stop_timeout: 30         # docker stop -t timeout
       # keep_alive: false        # default true: the container stays started when the command
       #                          # finishes (shell from TrainHub, “Close container”)

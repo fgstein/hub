@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..core.commands import with_docker
 from ..core.models import Machine
 from .subprocess_exec import SubprocessExecutor
 
@@ -18,4 +19,4 @@ class LocalExecutor(SubprocessExecutor):
     kind = "local"
 
     def full_argv(self, machine: Machine, remote: Sequence[str]) -> list[str]:
-        return list(remote)
+        return with_docker(machine, remote)

@@ -57,6 +57,8 @@ async def test_local_lifecycle(tmp_path: Path) -> None:
         assert run.full_command[0] == "docker"
         text = b"".join([c async for c in svc.stream_logs(run.id)]).decode()
         assert "venv=exp" in text and "name: a b" in text and "Epoch 1/1" in text
+        # tqdm prints its bar (TTY sized by stty, otherwise 0x0 and nothing is shown)
+        assert "it/s" in text and "100%|" in text
 
         async def finished() -> bool:
             return (await svc.get_run(run.id)).status is RunStatus.SUCCEEDED

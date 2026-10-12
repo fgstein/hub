@@ -225,3 +225,23 @@ Code comments and docstrings, error messages (API, MCP, CLI), the web interface,
 inventories and the documentation were translated from French to English. Durations now use
 `d` for days (`2d 04h`) and dates are formatted with the `en-GB` locale. Error messages already
 stored in an existing SQLite database (e.g. `error` of old runs) are not rewritten.
+
+## Fix and additions — progress bars, Docker command, sourced files (12/10)
+
+- **tqdm bars missing from the logs.** A `docker run -d -t` creates a **0x0** pseudo-terminal
+  (no client attached to size it); tqdm reads that width and prints no bar at all (checked with
+  real Docker). The test image forced `ncols=100`, which hid the problem; it no longer does, and
+  the Docker integration test checks that the bar is there. Fix: with `tty`, the container script
+  starts with `stty cols C rows L 2>/dev/null` and `COLUMNS`/`LINES` are passed; size set per
+  project with `docker.tty_size` (default `[100, 40]`).
+- **Configurable Docker command.** `docker_command` at the top of the inventory (default
+  `docker`), overridable per machine; string (split like a shell) or list. Substitution happens
+  at transport time: the core still builds `docker …` (testable, understood by the fake
+  executor), then `ssh`/`local` replace `docker` with the machine's command. The preview and the
+  audited argv show the real command.
+- **Files sourced before the command.** Per project, `env_files` then `source`; each entry is a
+  path or `{path, optional}`. `env_files` is sourced between `set -a` and `set +a`, so `AAA=bbb`
+  lines are exported like `export AAA=bbb`. Relative paths are resolved against the workdir and
+  prefixed with `./` (otherwise `source` would search the PATH); `~/` is expanded. A missing
+  mandatory file: `trainhub: file to source not found: …` and exit code 1, before the command
+  starts. They are part of the setup steps, so they work with and without `keep_alive`.

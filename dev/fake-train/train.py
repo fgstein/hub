@@ -42,8 +42,7 @@ def main(cfg: DictConfig) -> None:
         bar = tqdm(
             range(cfg.trainer.steps),
             desc=f"Epoch {epoch}/{cfg.trainer.max_epochs}",
-            dynamic_ncols=False,
-            ncols=100,
+            # width read from the terminal, as in a real training script
         )
         for step in bar:
             if _stop:

@@ -29,6 +29,7 @@ from .models import (
     Image,
     Machine,
     Project,
+    SourceFile,
     Venv,
 )
 
@@ -178,6 +179,42 @@ def _activate_path(venv_path: str) -> str:
     return venv_path.rstrip("/") + "/bin/activate"
 
 
+def _shell_path(path: str) -> str:
+    """Path for the container's shell: ``~/`` is still expanded, the rest is escaped.
+
+    A relative path gets ``./``: otherwise ``source`` would look it up in the PATH.
+    """
+    if path == "~" or path.startswith("~/"):
+        rest = path[2:]
+        return "~/" + shlex.quote(rest) if rest else "~"
+    if not path.startswith(("/", "./", "../")):
+        path = "./" + path
+    return shlex.quote(path)
+
+
+def _source_snippet(f: SourceFile, *, export: bool) -> str:
+    """Shell fragment sourcing ``f`` (``set -a`` exports the variables of a .env).
+
+    Missing mandatory file: explicit message and exit code 1.
+    """
+    p = _shell_path(f.path)
+    load = f"set -a && source {p} && set +a" if export else f"source {p}"
+    if f.optional:
+        return f"{{ [ ! -e {p} ] || {{ {load}; }}; }}"
+    missing = shlex.quote(f"trainhub: file to source not found: {f.path}")
+    return f"{{ [ -e {p} ] || {{ echo {missing} >&2; exit 1; }}; }} && {load}"
+
+
+def _tty_prefix(spec: RunSpec) -> list[str]:
+    """``stty`` sizing the terminal: a detached container's pseudo-terminal is 0x0, and tqdm
+    then prints no progress bar at all."""
+    d = spec.project.docker
+    if not d.tty:
+        return []
+    cols, rows = d.tty_size
+    return [f"stty cols {int(cols)} rows {int(rows)} 2>/dev/null"]
+
+
 def inner_script(spec: RunSpec) -> str:
     """Script run by ``bash -lc`` in the container.
 
@@ -197,8 +234,11 @@ def inner_script(spec: RunSpec) -> str:
         setup.append(f"source {shlex.quote(_activate_path(spec.venv.path))}")
     if spec.project.workdir:
         setup.append(f"cd {shlex.quote(spec.project.workdir)}")
+    setup += [_source_snippet(f, export=True) for f in spec.project.env_files]
+    setup += [_source_snippet(f, export=False) for f in spec.project.source]
+    tty = _tty_prefix(spec)
     if not spec.project.docker.keep_alive:
-        return " && ".join([*setup, f"exec {resolved_command(spec)}"])
+        return "; ".join([*tty, " && ".join([*setup, f"exec {resolved_command(spec)}"])])
     f = EXIT_FILE
     msg = (
         r"\n[trainhub] command finished (code %s): container kept, "
@@ -207,6 +247,7 @@ def inner_script(spec: RunSpec) -> str:
     return "; ".join(
         [
             f"rm -f {f}",
+            *tty,
             *(f"{s} || exit 1" for s in setup),
             f"{resolved_command(spec)} & pid=$!",
             "trap 'stop=1; kill -TERM $pid 2>/dev/null' TERM INT HUP",
@@ -258,6 +299,9 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
         opts += ["-v", vol]
     if spec.project.workdir:
         opts += ["-w", spec.project.workdir]
+    if d.tty:
+        # For libraries that read the width from the environment (rich, click…).
+        opts += ["-e", f"COLUMNS={d.tty_size[0]}", "-e", f"LINES={d.tty_size[1]}"]
     for k, v in d.env.items():
         opts += ["-e", f"{k}={v}"]
     if spec.cuda_visible_devices is not None:
@@ -454,10 +498,22 @@ def ssh_argv(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = 
     return argv
 
 
+def with_docker(machine: Machine, remote: Sequence[str]) -> list[str]:
+    """Replace a leading ``docker`` with the machine's Docker command (wrapper…)."""
+    argv = list(remote)
+    if argv and argv[0] == "docker":
+        return [*machine.docker, *argv[1:]]
+    return argv
+
+
 def transport(machine: Machine, remote: Sequence[str], *, extra: Sequence[str] = ()) -> list[str]:
-    """Full local argv: ``ssh … -- CMD``, or ``CMD`` as is for a local machine."""
+    """Full local argv: ``ssh … -- CMD``, or ``CMD`` as is for a local machine.
+
+    ``docker`` is replaced there by the command configured for the machine.
+    """
+    remote = with_docker(machine, remote)
     if machine.is_local:
-        return list(remote)
+        return remote
     return ssh_argv(machine, remote, extra=extra)
 
 
@@ -513,6 +569,7 @@ def preview(spec: RunSpec) -> str:
     """
     validate_spec(spec)
     groups = _docker_run_groups(spec).groups
+    groups[0] = with_docker(spec.machine, groups[0])
     q = shlex.join
     lines: list[str] = []
     if not spec.machine.is_local:

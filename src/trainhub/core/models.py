@@ -37,6 +37,24 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+def parse_docker_command(v: object) -> object:
+    """``"sudo -n docker"`` or ``["sudo", "-n", "docker"]`` → non-empty argument list."""
+    import shlex
+
+    if v is None:
+        return v
+    if isinstance(v, str):
+        try:
+            v = shlex.split(v)
+        except ValueError as exc:
+            raise ValueError(f"invalid docker_command: {exc}") from exc
+    if isinstance(v, list | tuple):
+        if not v or not all(isinstance(a, str) and a for a in v):
+            raise ValueError("docker_command: empty command or empty arguments")
+        return list(v)
+    return v
+
+
 def command_params(command: str) -> list[str]:
     """Free parameters of a command (non-reserved placeholders), in order of appearance."""
     names = PLACEHOLDER_RE.findall(command)
@@ -64,10 +82,24 @@ class Machine(_Strict):
     host: str = Field(min_length=1)
     user: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
+    docker_command: list[str] | None = Field(
+        default=None,
+        description="Docker command on this machine (wrapper, sudo…); default: the inventory's",
+    )
+
+    @field_validator("docker_command", mode="before")
+    @classmethod
+    def _parse_docker(cls, v: object) -> object:
+        return parse_docker_command(v)
 
     @property
     def display(self) -> str:
         return self.label or self.id
+
+    @property
+    def docker(self) -> list[str]:
+        """argv of the effective Docker command on this machine."""
+        return list(self.docker_command or ["docker"])
 
     @property
     def is_local(self) -> bool:
@@ -118,11 +150,24 @@ class DockerOptions(_Strict):
     env: dict[str, str] = Field(default_factory=dict)
     extra_args: list[str] = Field(default_factory=list)
     tty: bool = True
+    tty_size: tuple[int, int] = Field(
+        default=(100, 40),
+        description="Size (columns, rows) of the container's terminal. A docker run -d -t has "
+        "a 0x0 pseudo-terminal, in which tqdm prints nothing.",
+    )
     stop_timeout: int = Field(default=30, ge=0)
     keep_alive: bool = Field(
         default=True,
         description="Keep the container (shell available) when the command finishes",
     )
+
+    @field_validator("tty_size")
+    @classmethod
+    def _check_tty_size(cls, v: tuple[int, int]) -> tuple[int, int]:
+        cols, rows = v
+        if not (20 <= cols <= 1000 and 5 <= rows <= 500):
+            raise ValueError("tty_size: columns between 20 and 1000, rows between 5 and 500")
+        return v
 
     @field_validator("env", mode="before")
     @classmethod
@@ -182,6 +227,28 @@ class ConfigSource(_Strict):
         return self
 
 
+class SourceFile(_Strict):
+    """File sourced in the container before the command.
+
+    Absolute path, ``~/…``, or relative to the project's ``workdir``. Short form: a string.
+    """
+
+    path: str = Field(min_length=1)
+    optional: bool = Field(default=False, description="Ignored if it does not exist")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_str(cls, data: object) -> object:
+        return {"path": data} if isinstance(data, str) else data
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, v: str) -> str:
+        if any(c in v for c in "\n\r\x00"):
+            raise ValueError("invalid path (control character)")
+        return v
+
+
 class Project(_Strict):
     """Project = one tab of the interface, with its generic command."""
 
@@ -194,6 +261,15 @@ class Project(_Strict):
     venvs: list[str] | None = None
     docker: DockerOptions = Field(default_factory=DockerOptions)
     configs: ConfigSource = Field(default_factory=lambda: ConfigSource(static=[]))
+    env_files: list[SourceFile] = Field(
+        default_factory=list,
+        description="Variable files (KEY=value or export KEY=value) sourced and exported "
+        "before the command, e.g. .env (relative to the workdir)",
+    )
+    source: list[SourceFile] = Field(
+        default_factory=list,
+        description="Scripts sourced before the command (after env_files), in order",
+    )
 
     @field_validator("command")
     @classmethod
@@ -232,7 +308,27 @@ class Inventory(_Strict):
     images: list[Image] = Field(default_factory=list)
     venvs: list[Venv] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
+    docker_command: list[str] = Field(
+        default_factory=lambda: ["docker"],
+        description="Default Docker command on the machines: binary, path or wrapper "
+        "(e.g. 'sudo -n docker', '/opt/bin/mydocker'). Can be overridden per machine.",
+    )
     simulation: SimulationSettings | None = None
+
+    @field_validator("docker_command", mode="before")
+    @classmethod
+    def _parse_docker(cls, v: object) -> object:
+        return ["docker"] if v is None else parse_docker_command(v)
+
+    @model_validator(mode="after")
+    def _apply_docker_command(self) -> Inventory:
+        # Each machine carries its effective command (its own, else the inventory's).
+        machines = [
+            m if m.docker_command else m.model_copy(update={"docker_command": self.docker_command})
+            for m in self.machines
+        ]
+        object.__setattr__(self, "machines", machines)
+        return self
 
     @model_validator(mode="after")
     def _check_refs(self) -> Inventory:

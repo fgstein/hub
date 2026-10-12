@@ -289,6 +289,18 @@ export interface components {
              */
             tty: boolean;
             /**
+             * Tty Size
+             * @description Size (columns, rows) of the container's terminal. A docker run -d -t has a 0x0 pseudo-terminal, in which tqdm prints nothing.
+             * @default [
+             *       100,
+             *       40
+             *     ]
+             */
+            tty_size: [
+                number,
+                number
+            ];
+            /**
              * Stop Timeout
              * @default 30
              */

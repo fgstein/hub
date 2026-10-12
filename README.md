@@ -117,6 +117,13 @@ machines:
 Commands run through the system `ssh` binary, so `~/.ssh/config`, the SSH agent and jump hosts
 all apply. `host: localhost` (without `user`/`port`) runs on the TrainHub host, without SSH.
 
+**Docker command.** `docker` by default. For a wrapper, a path or `sudo`, set
+`docker_command: sudo -n docker` at the top of the inventory, or per machine
+(`docker_command: [/opt/bin/mydocker, --flag]`). The wrapper must accept the subcommands TrainHub
+uses (`run`, `ps`, `logs`, `inspect`, `exec`, `pause`, `unpause`, `stop`, `start`, `restart`,
+`rm`) with the same options and output as `docker` (notably `ps --format '{{json .}}'` and
+`inspect`). Config discovery (`find`) is not affected.
+
 ### Images
 
 ```yaml
@@ -159,8 +166,11 @@ projects:
       env: {WANDB_MODE: online}
       extra_args: ["--ipc=host"]                # any other docker run argument
       tty: true                                 # default true: -t (colors, progress bars)
+      tty_size: [100, 40]                       # default: terminal columns, rows (tqdm)
       stop_timeout: 30                          # default 30: docker stop -t
       keep_alive: true                          # default true: keep the container at the end
+    env_files: [.env]                           # optional: variables, exported (see below)
+    source: [scripts/setup.sh]                  # optional: scripts sourced before the command
     configs:
       root: /home/alice/seg/configs             # configs root, on the machine
       pattern: "*.yaml"                         # optional (default *.yaml)
@@ -195,6 +205,22 @@ inserts nothing. The last values are remembered per project.
 
 Extra arguments can also be appended to the command at launch through the API, MCP and the CLI
 (`trainhub launch … lr=0.1 epochs=5`). In the interface, use a run parameter (`… {options}`).
+
+#### Files sourced before the command
+
+`env_files` (variable files, `export AAA=bbb` or `AAA=bbb`: everything is exported to the
+command, thanks to `set -a`) then `source` (scripts sourced as is), in order, inside the
+container, after the venv is activated and after `cd workdir`. Paths are relative to `workdir`,
+absolute, or `~/…`. A missing file fails the run with `trainhub: file to source not found: …`,
+unless it is declared `{path: .env.local, optional: true}`. Works with and without `keep_alive`.
+
+#### Terminal size and progress bars
+
+With `tty: true`, the container is started with `docker run -d -t`: its pseudo-terminal has a
+**0x0** size since nobody is attached, and tqdm then prints no progress bar at all. TrainHub sets
+the size first (`stty cols … rows …`) and passes `COLUMNS`/`LINES`; adjust it with `tty_size`. If
+the interface's terminal is narrower than that width, bar lines wrap and `\r` only rewrites the
+last one: reduce `tty_size`.
 
 #### Config discovery
 
