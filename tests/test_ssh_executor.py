@@ -113,3 +113,24 @@ async def test_interactive_shell_through_pty(fake_ssh: Path) -> None:
         assert await asyncio.wait_for(shell.read(), 5) in (b"", b"\r\n")
     finally:
         await shell.close()
+
+
+async def test_docker_ps_logged_at_debug_with_wrapper(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The monitoring loop's ps stays at DEBUG even with a wrapper; the log shows the wrapper."""
+    import logging
+
+    from trainhub.core import commands as c
+    from trainhub.executors.local import LocalExecutor
+
+    wrapper = tmp_path / "mydocker"
+    wrapper.write_text("#!/bin/sh\necho ok\n")
+    wrapper.chmod(0o755)
+    m = Machine(id="l", host="localhost", docker_command=["sh", str(wrapper)])
+    caplog.set_level(logging.DEBUG, logger="trainhub.exec")
+    await LocalExecutor().exec(m, c.docker_ps())
+    await LocalExecutor().exec(m, c.docker_pause("th-x"))
+    ps, pause = [r for r in caplog.records if r.getMessage() == "command executed"]
+    assert ps.levelno == logging.DEBUG and ps.argv[:3] == ["sh", str(wrapper), "ps"]  # type: ignore[attr-defined]
+    assert pause.levelno == logging.INFO and pause.argv[2] == "pause"  # type: ignore[attr-defined]

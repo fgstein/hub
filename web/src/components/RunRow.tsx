@@ -289,30 +289,33 @@ export function RunRow(props: { id: string }) {
                   classList={{ "mb-1.5": !fullscreen(), "px-4 py-1.5": fullscreen() }}
                 >
                   <CommandBar run={run()!} />
-                  <div class="flex items-center gap-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      class={tabCls(view() === "logs")}
-                      onClick={() => setPanelView(props.id, "logs")}
-                      data-testid="panel-logs"
-                    >
-                      logs
-                    </button>
-                    <button
-                      type="button"
-                      class={`${tabCls(view() === "shell")} disabled:opacity-40`}
-                      disabled={!canShell() && !shellMounted()}
-                      title={
-                        canShell()
-                          ? "Interactive shell in the container (docker exec -it), venv activated"
-                          : "Container stopped (or paused): no shell"
-                      }
-                      onClick={() => setPanelView(props.id, "shell")}
-                      data-testid="panel-shell"
-                    >
-                      <IconTerminal size={11} /> shell
-                    </button>
-                  </div>
+                  {/* The logs/shell tabs only appear once a shell has been opened (button). */}
+                  <Show when={shellMounted()}>
+                    <div class="flex items-center gap-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        class={tabCls(view() === "logs")}
+                        onClick={() => setPanelView(props.id, "logs")}
+                        data-testid="panel-logs"
+                      >
+                        logs
+                      </button>
+                      <button
+                        type="button"
+                        class={`${tabCls(view() === "shell")} disabled:opacity-40`}
+                        disabled={!canShell() && !shellMounted()}
+                        title={
+                          canShell()
+                            ? "Interactive shell in the container (docker exec -it), venv activated"
+                            : "Container stopped (or paused): no shell"
+                        }
+                        onClick={() => setPanelView(props.id, "shell")}
+                        data-testid="panel-shell"
+                      >
+                        <IconTerminal size={11} /> shell
+                      </button>
+                    </div>
+                  </Show>
                 </div>
                 <div classList={{ hidden: view() !== "logs", contents: view() === "logs" }}>
                   <LogTerminal

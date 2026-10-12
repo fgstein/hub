@@ -189,3 +189,26 @@ test("configs: recursive tree, run counter, keyboard search", async ({ page }) =
   await expect(node("exp/sweep/lr_small").getByTestId("config-count")).toContainText(String(before + 1))
   await expect(node("exp").getByTestId("config-count")).toContainText(String(before + 1))
 })
+
+test("shell: no shell tab until the user opens a shell", async ({ page }) => {
+  const draft = await newDraft(page)
+  await pick(page, "field-machine", "gpu-01")
+  await pickConfig(page, "baseline")
+  await draft.getByTestId("draft-launch").click()
+  const running = page.locator('[data-testid=run-row][data-status="running"]').first()
+  await expect(running).toBeVisible({ timeout: 10_000 })
+  const runId = await running.getAttribute("data-run-id")
+  const row = page.locator(`[data-testid=run-row][data-run-id="${runId}"]`)
+  await row.getByTestId("run-line").click()
+  await expect(row.getByTestId("terminal")).toBeVisible()
+  // logs only: no logs/shell tabs yet
+  await expect(row.getByTestId("panel-shell")).toHaveCount(0)
+  await expect(row.getByTestId("panel-logs")).toHaveCount(0)
+  // "Open a shell" from the menu: the tabs and the shell appear
+  await row.getByTestId("run-menu").click()
+  await page.getByTestId("menu-shell").click()
+  await expect(row.getByTestId("panel-shell")).toBeVisible()
+  await expect(row.getByTestId("panel-logs")).toBeVisible()
+  await row.getByTestId("panel-logs").click()
+  await expect(row.getByTestId("terminal")).toBeVisible()
+})

@@ -245,3 +245,11 @@ stored in an existing SQLite database (e.g. `error` of old runs) are not rewritt
   prefixed with `./` (otherwise `source` would search the PATH); `~/` is expanded. A missing
   mandatory file: `trainhub: file to source not found: …` and exit code 1, before the command
   starts. They are part of the setup steps, so they work with and without `keep_alive`.
+
+## Monitoring logs with a Docker wrapper; shell tab on demand (12/10)
+
+- Command logs show the effective argv (Docker command/wrapper included), and the monitoring
+  loop's `ps` stays at DEBUG whatever the Docker command: with a wrapper it used to be logged at
+  INFO every 3 s per machine.
+- The logs/shell tabs of a run's panel only appear once a shell has been opened with “Open a
+  shell”; before that the panel shows the logs only.
