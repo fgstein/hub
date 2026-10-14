@@ -19,6 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from .. import __version__
 from ..core import commands as cmd
 from ..core import gpus
 from ..core.commands import RunSpec
@@ -195,7 +196,7 @@ class RunService:
         poll_interval: float = 3.0,
         log_idle_timeout: float = 30.0,
         log_dir: Path | None = None,
-        version: str = "0.1.0",
+        version: str = __version__,
     ) -> None:
         self.inv_mgr = inventory
         self.executor = executor
@@ -609,6 +610,7 @@ class RunService:
             runs=[RunView.of(r, now) for r in runs],
             ui_state=await self.get_ui_state(),
             server_time=now,
+            version=self.version,
         )
 
     def health(self) -> Health:

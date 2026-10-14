@@ -16,6 +16,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
+from .. import __version__
 from ..config import Settings
 
 
@@ -37,7 +38,7 @@ async def run_stdio_proxy(url: str | None = None, *, token: str | None = None) -
     ):
         init = await upstream.initialize()
         server: Server[Any, Any] = Server(
-            "trainhub", version="0.1.0", instructions=init.instructions
+            "trainhub", version=__version__, instructions=init.instructions
         )
 
         @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]

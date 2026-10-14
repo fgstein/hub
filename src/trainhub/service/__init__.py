@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .. import __version__
 from ..config import Settings, require_inventory
 from ..executors import create_executor
 from .events import Event, EventBus
@@ -22,7 +23,7 @@ from .schemas import Selection, UiState
 from .store import Store
 
 
-def create_service(settings: Settings, *, version: str = "0.1.0") -> RunService:
+def create_service(settings: Settings, *, version: str = __version__) -> RunService:
     """Wire up inventory, executor and SQLite database according to the settings."""
     inv = InventoryManager(require_inventory(settings.inventory))
     executor = create_executor(settings.executor, inv.inventory)

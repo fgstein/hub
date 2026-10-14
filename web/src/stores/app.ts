@@ -48,6 +48,8 @@ interface AppState {
   runs: Record<string, RunView>
   ui: UiState
   seq: number
+  /** TrainHub version of the server (from the snapshot). */
+  version: string | null
   drafts: Record<string, Draft[]>
   /** Status shown during an optimistic action, per run. */
   pending: Record<string, RunStatus | undefined>
@@ -59,6 +61,7 @@ const [state, setState] = createStore<AppState>({
   runs: {},
   ui: { open_tabs: [], active_tab: null, last_selection: {} },
   seq: 0,
+  version: null,
   drafts: {},
   pending: {},
 })
@@ -78,6 +81,7 @@ function applyEvent(ev: ServerEvent): void {
         setState("runs", reconcile(runs))
         setState("ui", reconcile(ev.ui_state))
         setState("seq", ev.seq)
+        setState("version", ev.version)
         setState("ready", true)
       })
       return

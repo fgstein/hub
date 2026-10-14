@@ -103,11 +103,13 @@ describe("main store", async () => {
     runs: [run("r1"), run("r2", { status: "succeeded", finished_at: "2026-01-01T01:00:00Z" }), run("r3")],
     ui_state: { open_tabs: ["seg"], active_tab: "seg", last_selection: { seg: { image: "i2", venv: "v2" } } },
     server_time: new Date().toISOString(),
+    version: "9.9.9",
   }
   ws.emit(snapshot)
 
   it("applies the snapshot and sorts runs", () => {
     expect(app.state.ready).toBe(true)
+    expect(app.state.version).toBe("9.9.9")
     expect(app.activeRunIds("seg")).toEqual(["r1", "r3"])
     expect(app.finishedRunIds("seg")).toEqual(["r2"])
     expect(app.activeCount("seg")).toBe(2)

@@ -168,6 +168,7 @@ class Snapshot(BaseModel):
     runs: list[RunView]
     ui_state: UiState
     server_time: datetime
+    version: str = Field(description="TrainHub version of the server")
 
 
 class Health(BaseModel):

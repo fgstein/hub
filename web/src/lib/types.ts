@@ -28,6 +28,7 @@ export interface Snapshot {
   runs: RunView[]
   ui_state: UiState
   server_time: string
+  version: string
 }
 
 export type ServerEvent =

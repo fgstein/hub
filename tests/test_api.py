@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
+from trainhub import __version__
 from trainhub.api.app import create_app
 from trainhub.api.ws import parse_log_frame
 from trainhub.config import Settings
@@ -105,6 +106,7 @@ def test_scenario_launch_logs_pause_resume_stop(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         snap = ws.receive_json()
         assert snap["type"] == "snapshot" and snap["runs"] == []
+        assert snap["version"] == __version__
         r = client.post("/api/runs", json=SEL.model_dump())
         assert r.status_code == 201
         run = r.json()
@@ -224,3 +226,11 @@ def test_machine_gpus_route(client: TestClient) -> None:
     data = r.json()
     assert data["machine"] == "gpu-01" and len(data["gpus"]) == 4
     assert client.get("/api/machines/nope/gpus").status_code == 404
+
+
+def test_version_matches_pyproject() -> None:
+    import tomllib
+
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    with pyproject.open("rb") as f:
+        assert tomllib.load(f)["project"]["version"] == __version__

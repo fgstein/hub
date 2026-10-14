@@ -72,6 +72,11 @@ export function StatusBar() {
         </Show>
         <span class="ml-auto font-mono">executor {state.inventory?.executor}</span>
       </Show>
+      <Show when={state.version}>
+        <span class="font-mono" classList={{ "ml-auto": !state.inventory }} data-testid="version">
+          TrainHub v{state.version}
+        </span>
+      </Show>
     </footer>
   )
 }
