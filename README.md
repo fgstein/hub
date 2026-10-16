@@ -363,8 +363,9 @@ projects:
 `MLFLOW_RUN_CONTEXT={"trainhub.run_id": "<run id>"}` (and `TRAINHUB_RUN_ID`) to the container:
 MLflow adds the tags of this variable to every run it creates (`mlflow.start_run()`, Lightning's
 `MLFlowLogger`…), so the training code needs no change. Otherwise, tag the run yourself, e.g.
-`mlflow.set_tag("trainhub.run_id", os.environ["TRAINHUB_RUN_ID"])`. The container must also
-reach the MLflow server: set `MLFLOW_TRACKING_URI` in `docker.env` (or in your code).
+`mlflow.set_tag("trainhub.run_id", os.environ["TRAINHUB_RUN_ID"])`. TrainHub reads MLflow
+directly from its own host (`tracking_uri`); the training keeps logging to MLflow as it already
+does.
 
 **Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own
 environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and
