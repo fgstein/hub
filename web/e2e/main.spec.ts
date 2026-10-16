@@ -242,3 +242,21 @@ test("Machines tab: CPU and GPU load of every machine", async ({ page }) => {
   await page.getByTestId("tab-seg").click()
   await expect(page.getByTestId("project-page")).toBeVisible()
 })
+
+test("Machines tab: a click on a GPU prepares a draft on that machine and GPU", async ({ page }) => {
+  await page.goto("/machines")
+  const up = page.getByTestId("machine-card-gpu-01")
+  const gpu2 = up.locator("[data-testid=machine-gpu][data-index='2']").getByTestId("machine-gpu-launch")
+  await expect(gpu2).toBeVisible({ timeout: 10_000 })
+  // seg and det can both run on gpu-01: the project is asked
+  await gpu2.click()
+  await expect(page.getByTestId("gpu-project-menu")).toBeVisible()
+  await page.getByTestId("gpu-project-seg").click()
+  await expect(page).toHaveURL(/\/p\/seg$/)
+  const draft = page.getByTestId("draft-row").last()
+  await expect(draft).toBeVisible()
+  await expect(draft.getByTestId("field-gpu")).toHaveValue("2")
+  await expect(draft.getByTestId("field-machine").locator("input")).toHaveValue("gpu-01")
+  // the machine is already chosen: its list does not open
+  await expect(page.getByRole("listbox")).toHaveCount(0)
+})

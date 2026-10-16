@@ -31,7 +31,8 @@ are a common case, see the [examples](#examples).
   epoch) and a status dot colored by the training state: green while it goes well, red if it
   failed, blue once finished. See [MLflow](#mlflow).
 - **Machines tab**: CPU (every core), memory and GPU load of every machine of the inventory,
-  with the TrainHub runs placed on each GPU, refreshed every 5 s.
+  with the TrainHub runs placed on each GPU, refreshed every 5 s; a click on a GPU prepares a run
+  on it.
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete.
 - **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
   + script).
@@ -379,7 +380,9 @@ final status. If MLflow is unreachable, the last values stay displayed with a wa
 The **Machines** tab (left of the project tabs) shows, for every machine of the inventory:
 CPU usage (overall and one cell per core, over 0.5 s), load average and memory, read from
 `/proc` over SSH; and each GPU's utilization, memory and temperature (`nvidia-smi`), with the
-TrainHub runs pinned to it. An unreachable machine shows the SSH error. The tab refreshes every
+TrainHub runs pinned to it. An unreachable machine shows the SSH error. A click on a GPU
+prepares a draft on that machine with `CUDA_VISIBLE_DEVICES` set to that GPU (the project is
+asked when several can run on the machine). The tab refreshes every
 5 s while it is open; nothing is queried otherwise.
 
 ---

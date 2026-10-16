@@ -20,7 +20,13 @@ export function ProjectPage(props: { project: ProjectView }) {
       <section aria-label="Active runs" data-testid="active-runs">
         <For each={active()}>{(rid) => <RunRow id={rid} />}</For>
         <For each={drafts()}>
-          {(d, i) => <DraftRow project={props.project} draft={d} autofocus={i() === drafts().length - 1} />}
+          {(d, i) => (
+            <DraftRow
+              project={props.project}
+              draft={d}
+              autofocus={i() === drafts().length - 1 && !d.noAutofocus}
+            />
+          )}
         </For>
       </section>
       <Show

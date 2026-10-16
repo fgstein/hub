@@ -41,6 +41,8 @@ export interface Draft {
   launching: boolean
   /** Draft created by “Relaunch”: highlighted and scrolled into view. */
   focus?: boolean
+  /** Machine already chosen (Machines tab): do not open the machine list. */
+  noAutofocus?: boolean
 }
 
 interface AppState {
@@ -263,6 +265,19 @@ export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
     ...init,
   }
   setState("drafts", projectId, (d) => [...(d ?? []), draft])
+}
+
+/** New draft on a machine and one of its GPUs (Machines tab), in an open, active tab. */
+export function draftOnGpu(projectId: string, machine: string, gpu: number): void {
+  const p = project(projectId)
+  if (!p) return
+  setActiveTab(projectId)
+  addDraft(projectId, {
+    machine: p.machines.includes(machine) ? machine : null,
+    cuda: String(gpu),
+    focus: true,
+    noAutofocus: true,
+  })
 }
 
 /** “Relaunch”: new draft with the same choices as the run (nothing is launched). */
