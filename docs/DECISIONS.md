@@ -245,3 +245,46 @@ stored in an existing SQLite database (e.g. `error` of old runs) are not rewritt
   prefixed with `./` (otherwise `source` would search the PATH); `~/` is expanded. A missing
   mandatory file: `trainhub: file to source not found: …` and exit code 1, before the command
   starts. They are part of the setup steps, so they work with and without `keep_alive`.
+
+## Change — MLflow progress and status, Machines tab (October 16)
+
+Requests: read from MLflow a configurable parameter (maximum epoch) and metric (current epoch)
+to show a progress bar; color the status dot from MLflow (green: going well, red: failed,
+blue: finished); a tab showing the CPU and GPU load of every machine of the inventory.
+
+- **Link TrainHub run ↔ MLflow run: a tag** (`trainhub.run_id` by default, `run_tag`). To avoid
+  any change in the training code, TrainHub passes `MLFLOW_RUN_CONTEXT={"<run_tag>": "<id>"}`
+  to the container: MLflow's `SystemEnvironmentContext` adds these tags to every run created
+  (checked with MLflow 3.17; also used by Lightning's `MLFlowLogger`). `TRAINHUB_RUN_ID` is
+  passed too. A variable of the same name in `docker.env` wins. `inject_env: false` disables
+  it. **[to confirm]**
+- **REST API called directly** (`httpx`, already a dependency) rather than the `mlflow`
+  package (heavy). Search: `runs/search` with `tags.\`<run_tag>\` = '<id>' AND
+  attributes.start_time >= <run start − 5 min>` (after a restart, the previous MLflow run is
+  ignored), most recent first; once found, `runs/get` by id. Experiments: the listed names
+  (`get-by-name`), else all (`experiments/search`, cached 60 s). Checked against a real MLflow
+  3.17 server.
+- **Settings**: global `mlflow` section, overridable per project (`mlflow: {enabled: false}` to
+  disable one project). Defaults: parameter `max_epochs`, metric `epoch` (latest value),
+  `epoch_offset: 0`, polling every 10 s. Credentials: `MLFLOW_TRACKING_TOKEN` or
+  `MLFLOW_TRACKING_USERNAME`/`PASSWORD` in TrainHub's environment, never in the YAML.
+- **Persisted state**: `Run.mlflow` (run id, status, epoch, max epochs, UI link, last error),
+  `mlflow` column of the database, published with `run.updated`. Polled while the run is active,
+  then up to 10 min after the end until MLflow gives a final status. On an MLflow error the last
+  values are kept, with the error (tooltip, “mlflow ⚠”).
+- **Dot color** (front end, `lib/mlflow.ts`): running + RUNNING/SCHEDULED → green; FINISHED →
+  blue (also succeeded + RUNNING: MLflow lags behind); FAILED/KILLED → red; failed → red.
+  Launching, paused, stopping, stopped (grey, deliberate stop although MLflow says KILLED) and
+  unreachable keep their colors. Without MLflow information, the colors are unchanged. New
+  `--status-blue` token. **[to confirm]**
+- **Machines tab** (`/machines`, fixed tab left of the projects): `GET
+  /api/machines/{id}/load` runs one `sh -c` on the host (`/proc/loadavg`, two readings of
+  `/proc/stat` 0.5 s apart for the usage of each core, `/proc/meminfo`) and the two
+  `nvidia-smi` queries, in parallel. An unreachable machine is a `reachable: false` answer, not
+  an error. The front end queries each machine separately (a slow machine does not hold the
+  others) every 5 s while the tab is open and visible. Load is drawn with a single sequential
+  hue (`--load-full`), distinct from the status colors, always with the value written next to
+  it. MCP tool `get_machine_load`.
+- `fake` mode: simulated MLflow (state of the simulated training: epochs, FINISHED/FAILED/KILLED)
+  and simulated `/proc` (64 cores, ~8 busy cores per running command); enabled in
+  `dev/inventory.dev.yaml` (except `llm-finetune`).

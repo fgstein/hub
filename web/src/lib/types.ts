@@ -17,6 +17,9 @@ export type ConfigList = S["ConfigList"]
 export type Health = S["Health"]
 export type MachineGpus = S["MachineGpus"]
 export type GpuView = S["GpuView"]
+export type MlflowInfo = S["MlflowInfo"]
+export type MachineLoad = S["MachineLoad"]
+export type CpuView = S["CpuView"]
 
 export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close"
 export type MenuAction = RunAction | "delete"

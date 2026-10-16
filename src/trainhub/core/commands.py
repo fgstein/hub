@@ -80,6 +80,8 @@ class RunSpec:
     cuda_visible_devices: str | None = None
     params: Mapping[str, str] = field(default_factory=dict)
     """Values of the free parameters (non-reserved ``{name}``) of the command."""
+    extra_env: Mapping[str, str] = field(default_factory=dict)
+    """Variables added by TrainHub to the container (e.g. MLflow tagging)."""
 
     @property
     def template(self) -> str:
@@ -304,6 +306,9 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
         opts += ["-e", f"COLUMNS={d.tty_size[0]}", "-e", f"LINES={d.tty_size[1]}"]
     for k, v in d.env.items():
         opts += ["-e", f"{k}={v}"]
+    for k, v in spec.extra_env.items():
+        if k not in d.env:  # the project's own value wins
+            opts += ["-e", f"{k}={v}"]
     if spec.cuda_visible_devices is not None:
         opts += ["-e", f"CUDA_VISIBLE_DEVICES={spec.cuda_visible_devices}"]
     if d.keep_alive:

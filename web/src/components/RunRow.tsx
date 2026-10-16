@@ -2,6 +2,7 @@ import { Tooltip } from "@kobalte/core/tooltip"
 import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js"
 import { prettyCommand, shellJoin } from "~/lib/command"
 import { elapsedSeconds, formatDateTime, formatDuration, pausedSeconds } from "~/lib/format"
+import { formatEpoch, progress, trainingState } from "~/lib/mlflow"
 import { isActive, isFinished, type RunView, shellAvailable } from "~/lib/types"
 import {
   displayStatus,
@@ -17,10 +18,10 @@ import {
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
 import { ActionButton } from "./ActionButton"
-import { IconAgent, IconChevronDown, IconCopy, IconTerminal } from "./Icons"
+import { IconAgent, IconChevronDown, IconCopy, IconExternal, IconTerminal } from "./Icons"
 import { LogTerminal } from "./LogTerminal"
 import { ShellTerminal } from "./ShellTerminal"
-import { StatusDot, statusLabel } from "./StatusDot"
+import { StatusDot, statusLabel, trainingLabel } from "./StatusDot"
 
 const UNSUBSCRIBE_DELAY_MS = 10_000
 
@@ -39,10 +40,84 @@ function Tip(props: { content: JSX.Element; children: JSX.Element; class?: strin
   )
 }
 
+/** Training progress read from MLflow: current epoch / maximum epoch, link to the run. */
+function MlflowProgress(props: { run: RunView; color: string }) {
+  const p = () => progress(props.run)
+  const ml = () => props.run.mlflow
+  return (
+    <Show when={ml()}>
+      <Tip
+        class="flex shrink-0 items-center gap-1.5"
+        content={
+          <div class="space-y-0.5 font-mono">
+            <div>MLflow: {ml()!.run_id ? (ml()!.status ?? "?") : "no run found yet"}</div>
+            <Show when={p()}>
+              <div>
+                epoch {formatEpoch(p()!.epoch)} / {formatEpoch(p()!.max)}
+                <Show when={p()!.fraction != null}> ({Math.round(p()!.fraction! * 100)} %)</Show>
+              </div>
+            </Show>
+            <Show when={ml()!.error}>
+              <div class="text-fg-critical">{ml()!.error}</div>
+            </Show>
+          </div>
+        }
+      >
+        <Show
+          when={p()}
+          fallback={
+            <span class="text-xs text-fg-weaker" data-testid="run-mlflow-pending">
+              {ml()!.error ? "mlflow ⚠" : "mlflow…"}
+            </span>
+          }
+        >
+          <span
+            class="relative h-1.5 w-20 overflow-hidden rounded-full bg-surface-active"
+            role="progressbar"
+            aria-label="Training progress (MLflow)"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={p()!.fraction == null ? undefined : Math.round(p()!.fraction! * 100)}
+            data-testid="run-progress"
+          >
+            <span
+              class="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
+              style={{ width: `${(p()!.fraction ?? 0) * 100}%`, background: props.color }}
+            />
+          </span>
+          <span class="w-[52px] font-mono text-xs text-fg tabular" data-testid="run-epoch">
+            {formatEpoch(p()!.epoch)}/{formatEpoch(p()!.max)}
+          </span>
+        </Show>
+        <Show when={ml()!.url}>
+          <a
+            href={ml()!.url!}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+            aria-label="Open the run in MLflow"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="run-mlflow-link"
+          >
+            <IconExternal size={11} />
+          </a>
+        </Show>
+      </Tip>
+    </Show>
+  )
+}
+
+const TRAINING_COLOR = {
+  healthy: "var(--status-green)",
+  failed: "var(--status-red)",
+  finished: "var(--status-blue)",
+} as const
+
 /** Left + middle + right part of a run (reused in the fullscreen header). */
 function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; header?: boolean }) {
   const run = () => state.runs[props.id]!
   const status = () => displayStatus(props.id)
+  const training = () => trainingState(status(), run().mlflow?.status)
   const elapsed = () =>
     run().started_at ? formatDuration(elapsedSeconds(run(), isActive(run().status) ? now() : 0)) : "—"
   const paused = () => pausedSeconds(run(), now())
@@ -58,7 +133,7 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
       onClick={() => props.onToggle?.()}
       data-testid="run-line"
     >
-      <StatusDot status={status()} />
+      <StatusDot status={status()} training={training()} />
       <Tip
         class="w-[68px] shrink-0 font-mono text-sm tabular text-fg-strong"
         content={
@@ -66,6 +141,9 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
             <div>
               {statusLabel(status())} · {run().id}
             </div>
+            <Show when={training()}>
+              <div>{trainingLabel(training()!)}</div>
+            </Show>
             <div>started: {formatDateTime(run().started_at)}</div>
             <Show when={run().finished_at}>
               <div>finished: {formatDateTime(run().finished_at)}</div>
@@ -106,6 +184,7 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
           </Tip>
         </Show>
       </div>
+      <MlflowProgress run={run()} color={training() ? TRAINING_COLOR[training()!] : "var(--status-grey)"} />
       <Show when={run().container_alive && isFinished(run().status)}>
         <Tip
           class="shrink-0"

@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from .. import __version__
 from ..core import commands as cmd
-from ..core import gpus
+from ..core import gpus, load
 from ..core.commands import RunSpec
 from ..core.ids import new_run_id
 from ..core.logs_clean import clean_logs
@@ -30,6 +30,7 @@ from ..core.models import (
     ConfigDiscover,
     Inventory,
     Machine,
+    MlflowInfo,
     Project,
     Run,
     RunSource,
@@ -53,8 +54,10 @@ from ..executors.base import (
 from .events import EventBus
 from .inventory_watch import InventoryManager
 from .log_hub import LogHub, LogsGoneError, LogSubscriber
+from .mlflow import HttpMlflow, MlflowSource, MlflowTracker
 from .schemas import (
     ConfigList,
+    CpuView,
     GpuRunView,
     GpuView,
     Health,
@@ -62,6 +65,7 @@ from .schemas import (
     InventoryView,
     LastSelection,
     MachineGpus,
+    MachineLoad,
     MachineStatus,
     MachineView,
     PreviewResult,
@@ -197,6 +201,7 @@ class RunService:
         log_idle_timeout: float = 30.0,
         log_dir: Path | None = None,
         version: str = __version__,
+        mlflow: MlflowSource | None = None,
     ) -> None:
         self.inv_mgr = inventory
         self.executor = executor
@@ -222,6 +227,9 @@ class RunService:
         from .monitor import Monitor
 
         self.monitor = Monitor(self, poll_interval)
+        if mlflow is None:
+            mlflow = executor.mlflow_source() or HttpMlflow()
+        self.mlflow = MlflowTracker(self, mlflow)
         self.executor.update_inventory(self.inventory)
         self.inv_mgr.on_change(self._on_inventory_change)
 
@@ -243,9 +251,11 @@ class RunService:
             self.inv_mgr.start()
         if monitor:
             self.monitor.start()
+            self.mlflow.start()
 
     async def close(self) -> None:
         await self.monitor.stop()
+        await self.mlflow.stop()
         await self.inv_mgr.stop()
         for t in list(self._tasks):
             t.cancel()
@@ -806,6 +816,7 @@ class RunService:
                 paused_at=None,
                 stop_requested=False,
                 container_alive=True,
+                mlflow=None,  # the command starts over: a new MLflow run will be created
             )
             self.logs.restart(run.id)
             return run
@@ -1063,40 +1074,39 @@ class RunService:
 
     # -- GPUs ---------------------------------------------------------------------------
 
-    async def machine_gpus(self, machine_id: str) -> MachineGpus:
-        """GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it."""
-        machine = self._machine(machine_id)
-        runs = [r for r in await self.store.list_runs(machine=machine_id) if r.status.is_active]
-        report = MachineGpus(
-            machine=machine_id,
-            active_runs=[
-                GpuRunView(
-                    id=r.id,
-                    project=r.project_id,
-                    status=r.status,
-                    cuda_visible_devices=r.cuda_visible_devices,
-                )
-                for r in runs
-            ],
-            checked_at=utcnow(),
-        )
-        try:
-            gpus_res, apps_res = await asyncio.gather(
-                self.executor.exec(machine, gpus.query_gpus()),
-                self.executor.exec(machine, gpus.query_apps()),
+    async def _active_runs_on(self, machine_id: str) -> list[Run]:
+        return [r for r in await self.store.list_runs(machine=machine_id) if r.status.is_active]
+
+    @staticmethod
+    def _gpu_runs(runs: list[Run]) -> list[GpuRunView]:
+        return [
+            GpuRunView(
+                id=r.id,
+                project=r.project_id,
+                status=r.status,
+                cuda_visible_devices=r.cuda_visible_devices,
             )
-        except MachineUnreachableError as exc:
-            raise UnreachableError(str(exc)) from exc
-        except ExecutorError as exc:
-            raise ServiceError(str(exc)) from exc
+            for r in runs
+        ]
+
+    async def _query_gpus(
+        self, machine: Machine, runs: list[Run]
+    ) -> tuple[list[GpuView], str | None]:
+        """GPUs of ``machine`` (``nvidia-smi``) and an error message if they are unknown.
+
+        Raises :class:`MachineUnreachableError` / :class:`ExecutorError` from the executor.
+        """
+        gpus_res, apps_res = await asyncio.gather(
+            self.executor.exec(machine, gpus.query_gpus()),
+            self.executor.exec(machine, gpus.query_apps()),
+        )
         if not gpus_res.ok:
-            report.error = f"nvidia-smi failed: {gpus_res.error_message()}"
-            return report
+            return [], f"nvidia-smi failed: {gpus_res.error_message()}"
         pinned: dict[int, list[str]] = {}
         for r in runs:
             for i in gpus.visible_indices(r.cuda_visible_devices) or []:
                 pinned.setdefault(i, []).append(r.id)
-        report.gpus = [
+        return [
             GpuView(
                 index=g.index,
                 name=g.name,
@@ -1108,8 +1118,74 @@ class RunService:
                 runs=pinned.get(g.index, []),
             )
             for g in gpus.parse_gpus(gpus_res.out, apps_res.out if apps_res.ok else "")
-        ]
+        ], None
+
+    async def machine_gpus(self, machine_id: str) -> MachineGpus:
+        """GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it."""
+        machine = self._machine(machine_id)
+        runs = await self._active_runs_on(machine_id)
+        report = MachineGpus(
+            machine=machine_id, active_runs=self._gpu_runs(runs), checked_at=utcnow()
+        )
+        try:
+            report.gpus, report.error = await self._query_gpus(machine, runs)
+        except MachineUnreachableError as exc:
+            raise UnreachableError(str(exc)) from exc
+        except ExecutorError as exc:
+            raise ServiceError(str(exc)) from exc
         return report
+
+    # -- machine load ---------------------------------------------------------------------
+
+    async def _query_cpu(self, machine: Machine) -> tuple[CpuView | None, str | None]:
+        res = await self.executor.exec(machine, load.query_cpu())
+        if not res.ok:
+            return None, f"CPU load unavailable: {res.error_message()}"
+        try:
+            c = load.parse_cpu(res.out)
+        except ValueError as exc:
+            return None, f"CPU load unavailable: {exc}"
+        return CpuView(
+            cores=c.cores,
+            usage_pct=c.usage_pct,
+            per_core_pct=c.per_core_pct,
+            load_avg=c.load_avg,
+            memory_used_mib=c.memory_used_mib,
+            memory_total_mib=c.memory_total_mib,
+        ), None
+
+    async def machine_load(self, machine_id: str) -> MachineLoad:
+        """CPU (``/proc``) and GPU (``nvidia-smi``) load of a machine, never raises for an
+        unreachable machine (``reachable: false`` and ``error``)."""
+        machine = self._machine(machine_id)
+        runs = await self._active_runs_on(machine_id)
+        report = MachineLoad(
+            machine=machine_id,
+            reachable=True,
+            active_runs=self._gpu_runs(runs),
+            checked_at=utcnow(),
+        )
+        try:
+            (report.cpu, report.cpu_error), (report.gpus, report.gpu_error) = await asyncio.gather(
+                self._query_cpu(machine), self._query_gpus(machine, runs)
+            )
+        except ExecutorError as exc:
+            report.reachable = False
+            report.error = exc.reason if isinstance(exc, MachineUnreachableError) else str(exc)
+        return report
+
+    # -- MLflow --------------------------------------------------------------------------
+
+    async def set_mlflow(
+        self, run_id: str, info: MlflowInfo, *, started_at: datetime | None = None
+    ) -> None:
+        """Record the MLflow state of a run (published as ``run.updated``).
+
+        Ignored if the run was restarted since ``started_at`` (state of the previous run).
+        """
+        run = await self.store.get_run(run_id)
+        if run is not None and run.started_at == started_at:
+            await self._update(run, mlflow=info)
 
     # -- updates and monitoring ----------------------------------------------------------
 

@@ -26,6 +26,10 @@ projects:
     machines: [gpu-01]
     configs:
       discover: {path: /det/configs}
+    mlflow: {enabled: false}
+mlflow:
+  tracking_uri: http://mlflow.e2e:5000
+  poll_interval_s: 2
 simulation:
   duration_s: [600, 600]
   time_scale: 1

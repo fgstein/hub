@@ -249,6 +249,71 @@ class SourceFile(_Strict):
         return v
 
 
+class MlflowOptions(_Strict):
+    """MLflow tracking of the runs (``mlflow`` section, global and/or per project).
+
+    TrainHub finds the MLflow run of each of its runs by a tag (``run_tag``) whose value is
+    the TrainHub run id, then reads its status, a parameter (maximum epoch) and a metric
+    (current epoch). Fields left empty in a project take the global value.
+    """
+
+    enabled: bool = True
+    tracking_uri: str | None = Field(
+        default=None, description="MLflow server URL, as seen from TrainHub (http[s]://…)"
+    )
+    experiments: list[str] | None = Field(
+        default=None, description="Experiment names searched (default: all)"
+    )
+    run_tag: str | None = Field(
+        default=None, description="Tag of the MLflow run holding the TrainHub run id"
+    )
+    max_epochs_param: str | None = Field(
+        default=None, description="MLflow parameter holding the maximum epoch"
+    )
+    epoch_metric: str | None = Field(
+        default=None, description="MLflow metric holding the current epoch"
+    )
+    epoch_offset: int | None = Field(
+        default=None, description="Added to the epoch metric (1 if it counts from 0)"
+    )
+    inject_env: bool | None = Field(
+        default=None,
+        description="Pass MLFLOW_RUN_CONTEXT (run_tag = run id) and TRAINHUB_RUN_ID to the "
+        "container, so that MLflow tags the run without code change",
+    )
+    poll_interval_s: float | None = Field(
+        default=None, ge=2, description="Polling period of MLflow (global section only)"
+    )
+
+    @field_validator("tracking_uri")
+    @classmethod
+    def _check_uri(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.match(r"^https?://[^\s]+$", v):
+            raise ValueError("tracking_uri: an http:// or https:// URL is expected")
+        return v.rstrip("/")
+
+    @field_validator("run_tag", "max_epochs_param", "epoch_metric")
+    @classmethod
+    def _check_key(cls, v: str | None) -> str | None:
+        if v is not None and (not v or any(c in v for c in "`'\"\n")):
+            raise ValueError("invalid MLflow key (empty, or quote character)")
+        return v
+
+
+class MlflowConfig(_Strict):
+    """Effective MLflow settings of a project (global section merged with the project's)."""
+
+    tracking_uri: str
+    experiments: list[str] | None = None
+    run_tag: str = "trainhub.run_id"
+    max_epochs_param: str = "max_epochs"
+    epoch_metric: str = "epoch"
+    epoch_offset: int = 0
+    inject_env: bool = True
+
+
 class Project(_Strict):
     """Project = one tab of the interface, with its generic command."""
 
@@ -269,6 +334,9 @@ class Project(_Strict):
     source: list[SourceFile] = Field(
         default_factory=list,
         description="Scripts sourced before the command (after env_files), in order",
+    )
+    mlflow: MlflowOptions | None = Field(
+        default=None, description="MLflow settings of the project (override the global ones)"
     )
 
     @field_validator("command")
@@ -298,6 +366,7 @@ class SimulationSettings(_Strict):
     )
     flaky_period_s: float = Field(default=40.0, gt=0)
     gpus: int = Field(default=4, ge=0, description="Simulated GPUs per machine (nvidia-smi)")
+    cpus: int = Field(default=64, ge=1, description="Simulated CPU cores per machine")
     seed: int | None = None
 
 
@@ -313,12 +382,34 @@ class Inventory(_Strict):
         description="Default Docker command on the machines: binary, path or wrapper "
         "(e.g. 'sudo -n docker', '/opt/bin/mydocker'). Can be overridden per machine.",
     )
+    mlflow: MlflowOptions | None = Field(
+        default=None, description="MLflow tracking (progress bar and training status)"
+    )
     simulation: SimulationSettings | None = None
 
     @field_validator("docker_command", mode="before")
     @classmethod
     def _parse_docker(cls, v: object) -> object:
         return ["docker"] if v is None else parse_docker_command(v)
+
+    def mlflow_config(self, project: Project) -> MlflowConfig | None:
+        """Effective MLflow settings of ``project`` (``None``: MLflow not used)."""
+        if project.mlflow is not None and not project.mlflow.enabled:
+            return None
+        merged: dict[str, object] = {}
+        for layer in (self.mlflow, project.mlflow):
+            if layer is None or not layer.enabled:
+                continue
+            for k, v in layer.model_dump(exclude={"enabled", "poll_interval_s"}).items():
+                if v is not None:
+                    merged[k] = v
+        if not merged.get("tracking_uri"):
+            return None
+        return MlflowConfig.model_validate(merged)
+
+    @property
+    def mlflow_poll_interval(self) -> float:
+        return (self.mlflow.poll_interval_s if self.mlflow else None) or 10.0
 
     @model_validator(mode="after")
     def _apply_docker_command(self) -> Inventory:
@@ -446,6 +537,26 @@ ACTIVE_STATUSES = frozenset(
 FINISHED_STATUSES = frozenset({RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.STOPPED})
 
 
+class MlflowInfo(BaseModel):
+    """What TrainHub read of the MLflow run matching a TrainHub run."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    run_id: str | None = Field(default=None, description="None: no MLflow run found yet")
+    experiment_id: str | None = None
+    status: str | None = Field(
+        default=None, description="MLflow status: RUNNING, SCHEDULED, FINISHED, FAILED, KILLED"
+    )
+    epoch: float | None = Field(default=None, description="Current epoch (metric + offset)")
+    max_epochs: float | None = Field(default=None, description="Maximum epoch (parameter)")
+    url: str | None = Field(default=None, description="Page of the run in the MLflow UI")
+    error: str | None = Field(default=None, description="Last error querying MLflow")
+
+
+#: MLflow statuses after which the MLflow run no longer changes.
+MLFLOW_TERMINAL = frozenset({"FINISHED", "FAILED", "KILLED"})
+
+
 class RunSource(StrEnum):
     UI = "ui"
     MCP = "mcp"
@@ -484,4 +595,7 @@ class Run(BaseModel):
     stop_requested: bool = False
     container_alive: bool = Field(
         default=False, description="Container still started (shell available)"
+    )
+    mlflow: MlflowInfo | None = Field(
+        default=None, description="Matching MLflow run (projects with MLflow only)"
     )

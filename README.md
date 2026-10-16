@@ -27,6 +27,11 @@ are a common case, see the [examples](#examples).
   restart.
 - **Kept container**: when the command finishes, the container stays started (status succeeded
   or failed from the exit code) so that you can open a shell in it, then close it yourself.
+- **MLflow progress**: for projects tracked with MLflow, a progress bar (current epoch / maximum
+  epoch) and a status dot colored by the training state: green while it goes well, red if it
+  failed, blue once finished. See [MLflow](#mlflow).
+- **Machines tab**: CPU (every core), memory and GPU load of every machine of the inventory,
+  with the TrainHub runs placed on each GPU, refreshed every 5 s.
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete.
 - **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
   + script).
@@ -318,6 +323,64 @@ Logs are followed for every active run and written to `$TRAINHUB_DATA_DIR/logs/<
 (`<run>.done` once the backup is complete). If the Docker logs come back shorter than the backup
 (rotation), the old version is kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
+### MLflow
+
+With an `mlflow` section, TrainHub reads, for each run, the matching MLflow run: its status, a
+parameter giving the maximum epoch and a metric giving the current epoch. The interface then
+shows a progress bar (`3/10`), a link to the run in the MLflow UI, and colors the status dot:
+
+| Run (container) | MLflow run              | Dot                         |
+|-----------------|-------------------------|-----------------------------|
+| running         | `RUNNING` / `SCHEDULED` | green: training going well  |
+| running / succeeded | `FINISHED`          | blue: training finished     |
+| any             | `FAILED` / `KILLED`     | red: training failed        |
+| failed          | any                     | red                         |
+
+Container states (launching, paused, stopping, stopped, machine unreachable) keep their usual
+color: a deliberate stop stays grey even though MLflow reports `KILLED`.
+
+```yaml
+mlflow:                          # global section (optional)
+  tracking_uri: http://mlflow.lab:5000   # as seen from TrainHub
+  # experiments: [segmentation]  # experiments searched (default: all)
+  max_epochs_param: trainer.max_epochs   # MLflow parameter: maximum epoch (default max_epochs)
+  epoch_metric: epoch            # MLflow metric: current epoch (latest value; default epoch)
+  # epoch_offset: 1              # added to the metric, e.g. 1 if it counts from 0
+  # run_tag: trainhub.run_id     # tag holding the TrainHub run id (default)
+  # inject_env: true             # see below
+  # poll_interval_s: 10          # MLflow polling period (global section only)
+
+projects:
+  - id: segmentation
+    mlflow:                      # optional: overrides the global values for this project
+      epoch_metric: trainer/epoch
+  - id: llm
+    mlflow: {enabled: false}     # no MLflow for this project
+```
+
+**Finding the MLflow run.** TrainHub looks for the MLflow run whose tag `trainhub.run_id`
+(`run_tag`) equals the TrainHub run id. With `inject_env` (default), TrainHub passes
+`MLFLOW_RUN_CONTEXT={"trainhub.run_id": "<run id>"}` (and `TRAINHUB_RUN_ID`) to the container:
+MLflow adds the tags of this variable to every run it creates (`mlflow.start_run()`, Lightning's
+`MLFlowLogger`…), so the training code needs no change. Otherwise, tag the run yourself, e.g.
+`mlflow.set_tag("trainhub.run_id", os.environ["TRAINHUB_RUN_ID"])`. The container must also
+reach the MLflow server: set `MLFLOW_TRACKING_URI` in `docker.env` (or in your code).
+
+**Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own
+environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and
+`MLFLOW_TRACKING_PASSWORD`.
+
+Runs are polled while active, and up to 10 minutes after they finish until MLflow reports a
+final status. If MLflow is unreachable, the last values stay displayed with a warning.
+
+### Machines tab
+
+The **Machines** tab (left of the project tabs) shows, for every machine of the inventory:
+CPU usage (overall and one cell per core, over 0.5 s), load average and memory, read from
+`/proc` over SSH; and each GPU's utilization, memory and temperature (`nvidia-smi`), with the
+TrainHub runs pinned to it. An unreachable machine shows the SSH error. The tab refreshes every
+5 s while it is open; nothing is queried otherwise.
+
 ---
 
 ## Quick start (development, fake mode)
@@ -416,14 +479,15 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 ## MCP server
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
-`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `pause_run`, `resume_run`,
+`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `get_machine_load`, `pause_run`, `resume_run`,
 `stop_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
 `set_project_command`) call the same service layer as the interface: a run launched by an agent
 shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text
 (no ANSI, progress bars reduced to their last state, truncated with a note) and a cursor: passed
 back as `since`, only the new output is returned. `wait_run` waits on the server side until a
 run finishes, a log line matches a regex or its status changes (progress notifications while
-waiting). `get_gpus` runs `nvidia-smi` on the machines and shows the TrainHub runs on each GPU.
+waiting). `get_gpus` runs `nvidia-smi` on the machines and shows the TrainHub runs on each GPU;
+`get_machine_load` adds the CPU and memory load. Runs carry their MLflow state (`mlflow`).
 
 ```bash
 # Streamable HTTP (running server)

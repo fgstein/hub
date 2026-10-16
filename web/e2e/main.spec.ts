@@ -189,3 +189,56 @@ test("configs: recursive tree, run counter, keyboard search", async ({ page }) =
   await expect(node("exp/sweep/lr_small").getByTestId("config-count")).toContainText(String(before + 1))
   await expect(node("exp").getByTestId("config-count")).toContainText(String(before + 1))
 })
+
+test("MLflow: progress bar, dot color and link to the run", async ({ page }) => {
+  await newDraft(page)
+  await pick(page, "field-machine", "gpu-01")
+  await pickConfig(page, "baseline")
+  await page.getByTestId("draft-launch").click()
+  const row = page.locator('[data-testid=run-row][data-status="running"]').first()
+  await expect(row).toBeVisible({ timeout: 10_000 })
+  await expect(row.getByTestId("run-progress")).toBeVisible({ timeout: 10_000 })
+  await expect(row.getByTestId("run-epoch")).toHaveText(/^\d+\/\d+$/)
+  await expect(row.locator("[data-training]")).toHaveAttribute("data-training", "healthy")
+  await expect(row.getByTestId("run-mlflow-link")).toHaveAttribute(
+    "href",
+    /^http:\/\/mlflow\.e2e:5000\/#\/experiments\/\d+\/runs\/[0-9a-f]+$/,
+  )
+  // stopped: MLflow says KILLED, but a deliberate stop keeps its grey dot
+  await row.getByTestId("run-menu").click()
+  await page.getByTestId("menu-stop").click()
+  await page.getByTestId("menu-stop").click()
+  const stopped = page.getByTestId("finished-runs").locator('[data-testid=run-row][data-status="stopped"]')
+  await expect(stopped).toHaveCount(1, { timeout: 15_000 })
+  await expect(stopped.locator("[data-status=stopped]").first()).not.toHaveAttribute("data-training", /.*/)
+
+  // project without MLflow: no progress
+  await newDraft(page, "det")
+  await pickConfig(page, "yolo_s")
+  await page.getByTestId("draft-launch").click()
+  const det = page.locator('[data-testid=run-row][data-status="running"]').first()
+  await expect(det).toBeVisible({ timeout: 10_000 })
+  await page.waitForTimeout(2500)
+  await expect(det.getByTestId("run-progress")).toHaveCount(0)
+})
+
+test("Machines tab: CPU and GPU load of every machine", async ({ page }) => {
+  await page.goto("/p/seg")
+  await page.getByTestId("tab-machines").click()
+  await expect(page).toHaveURL(/\/machines$/)
+  await expect(page.getByTestId("machines-page")).toBeVisible()
+  // the project tab is no longer the active one
+  await expect(page.getByTestId("tab-seg")).toHaveAttribute("aria-selected", "false")
+  const up = page.getByTestId("machine-card-gpu-01")
+  await expect(up).toHaveAttribute("data-reachable", "true", { timeout: 10_000 })
+  await expect(up.getByTestId("machine-cores").getByRole("listitem")).toHaveCount(64)
+  await expect(up.getByTestId("machine-gpu")).toHaveCount(4)
+  await expect(up.getByTestId("machine-cpu-usage")).toContainText("64 cores")
+  const down = page.getByTestId("machine-card-gpu-down")
+  await expect(down).toHaveAttribute("data-reachable", "false", { timeout: 10_000 })
+  await expect(down.getByTestId("machine-error")).toBeVisible()
+  await expect(page.getByTestId("machines-summary")).toContainText("1/2 reachable")
+  // back to the project
+  await page.getByTestId("tab-seg").click()
+  await expect(page.getByTestId("project-page")).toBeVisible()
+})

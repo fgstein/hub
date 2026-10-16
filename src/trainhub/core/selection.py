@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 
 from .commands import RunSpec
@@ -60,6 +61,13 @@ def make_spec(
             f"available: {', '.join(venvs) or 'none'}"
         )
     cvd = cuda_visible_devices.strip() if cuda_visible_devices else None
+    extra_env: dict[str, str] = {}
+    ml = inv.mlflow_config(proj)
+    if ml is not None and ml.inject_env:
+        # MLflow adds the tags of MLFLOW_RUN_CONTEXT to every run it creates
+        # (fluent API and Lightning's MLFlowLogger): no change needed in the training code.
+        extra_env["TRAINHUB_RUN_ID"] = run_id
+        extra_env["MLFLOW_RUN_CONTEXT"] = json.dumps({ml.run_tag: run_id})
     return RunSpec(
         run_id=run_id,
         project=proj,
@@ -71,4 +79,5 @@ def make_spec(
         overrides=tuple(o for o in overrides if o.strip()),
         cuda_visible_devices=cvd or None,
         params={k: (params or {}).get(k, "") for k in wanted},
+        extra_env=extra_env,
     )

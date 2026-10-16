@@ -11,6 +11,7 @@ import type {
   InventoryView,
   LastSelection,
   MachineGpus,
+  MachineLoad,
   MachineStatus,
   ProjectView,
   RunAction,
@@ -506,6 +507,32 @@ export async function loadGpus(machine: string, maxAgeMs = 5000) {
     setGpusCache(machine, {
       loading: false,
       data: undefined,
+      error: e instanceof Error ? e.message : String(e),
+      at: Date.now(),
+    })
+  }
+}
+
+// --------------------------------------------------------------------------- machine load
+
+/** CPU/GPU load per machine (``/proc`` + ``nvidia-smi``), refreshed by the Machines tab. */
+const [loadCache, setLoadCache] = createStore<
+  Record<string, { loading: boolean; data?: MachineLoad; error?: string; at?: number }>
+>({})
+
+export { loadCache }
+
+/** Reload the load of a machine unless it is being loaded (one request at a time). */
+export async function loadMachine(machine: string) {
+  const cur = loadCache[machine]
+  if (cur?.loading) return
+  setLoadCache(machine, { ...cur, loading: true })
+  try {
+    const data = await api.load(machine)
+    setLoadCache(machine, { loading: false, data, error: undefined, at: Date.now() })
+  } catch (e) {
+    setLoadCache(machine, {
+      loading: false,
       error: e instanceof Error ? e.message : String(e),
       at: Date.now(),
     })

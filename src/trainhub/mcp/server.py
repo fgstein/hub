@@ -364,6 +364,19 @@ def build_mcp(
 
         return list(await asyncio.gather(*(one(m) for m in ids)))
 
+    @mcp.tool(
+        annotations=READ,
+        description="Load of the inventory machines: CPU (usage of every core over 0.5 s, "
+        "load average, memory, from /proc) and GPUs (as get_gpus). An unreachable machine "
+        "has reachable false. Without machine: every machine, queried in parallel.",
+    )
+    async def get_machine_load(
+        machine: Annotated[str | None, Field(description="Machine id")] = None,
+    ) -> list[dict[str, Any]]:
+        ids = [machine] if machine is not None else [m.id for m in svc.inventory.machines]
+        loads = await asyncio.gather(*(call(svc.machine_load(m)) for m in ids))
+        return [x.model_dump(mode="json") for x in loads]
+
     if readonly:
         return mcp
 
@@ -506,5 +519,6 @@ READ_TOOLS = frozenset(
         "get_logs",
         "wait_run",
         "get_gpus",
+        "get_machine_load",
     }
 )

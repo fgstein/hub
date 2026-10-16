@@ -1,5 +1,6 @@
 import { Navigate, Route, Router, useNavigate, useParams } from "@solidjs/router"
 import { createEffect, on, onCleanup, onMount, Show } from "solid-js"
+import { MachinesPage } from "./components/MachinesPage"
 import { ProjectPage } from "./components/ProjectPage"
 import { StatusBar } from "./components/StatusBar"
 import { TabBar } from "./components/TabBar"
@@ -117,6 +118,7 @@ export function App() {
   return (
     <Router root={Shell}>
       <Route path="/p/:id" component={ProjectRoute} />
+      <Route path="/machines" component={MachinesPage} />
       <Route path="*" component={Home} />
     </Router>
   )

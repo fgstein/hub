@@ -64,6 +64,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/machines/{machine_id}/load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machine Load
+         * @description CPU (``/proc``) and GPU (``nvidia-smi``) load of a machine; an unreachable machine
+         *     is reported (``reachable: false``), not an error.
+         */
+        get: operations["machine_load_api_machines__machine_id__load_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/configs": {
         parameters: {
             query?: never;
@@ -267,6 +288,37 @@ export interface components {
             cached_at?: string | null;
         };
         /**
+         * CpuView
+         * @description CPU and memory of a machine (``/proc``, on the host).
+         */
+        CpuView: {
+            /** Cores */
+            cores: number;
+            /**
+             * Usage Pct
+             * @description Usage of all the cores, over 0.5 s
+             */
+            usage_pct: number;
+            /**
+             * Per Core Pct
+             * @description Usage of each core, over 0.5 s
+             */
+            per_core_pct: number[];
+            /**
+             * Load Avg
+             * @description 1, 5 and 15 min load
+             */
+            load_avg: [
+                number,
+                number,
+                number
+            ] | null;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
+        };
+        /**
          * DockerOptions
          * @description Project-specific ``docker run`` options.
          */
@@ -466,6 +518,35 @@ export interface components {
              */
             checked_at: string;
         };
+        /**
+         * MachineLoad
+         * @description CPU and GPU load of a machine, with the active TrainHub runs placed on it.
+         */
+        MachineLoad: {
+            /** Machine */
+            machine: string;
+            /** Reachable */
+            reachable: boolean;
+            cpu?: components["schemas"]["CpuView"] | null;
+            /** Cpu Error */
+            cpu_error?: string | null;
+            /** Gpus */
+            gpus?: components["schemas"]["GpuView"][];
+            /** Gpu Error */
+            gpu_error?: string | null;
+            /** Active Runs */
+            active_runs?: components["schemas"]["GpuRunView"][];
+            /**
+             * Error
+             * @description Machine unreachable
+             */
+            error?: string | null;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+        };
         /** MachineStatus */
         MachineStatus: {
             /** Id */
@@ -497,6 +578,44 @@ export interface components {
             /** Port */
             port: number | null;
             status: components["schemas"]["MachineStatus"];
+        };
+        /**
+         * MlflowInfo
+         * @description What TrainHub read of the MLflow run matching a TrainHub run.
+         */
+        MlflowInfo: {
+            /**
+             * Run Id
+             * @description None: no MLflow run found yet
+             */
+            run_id?: string | null;
+            /** Experiment Id */
+            experiment_id?: string | null;
+            /**
+             * Status
+             * @description MLflow status: RUNNING, SCHEDULED, FINISHED, FAILED, KILLED
+             */
+            status?: string | null;
+            /**
+             * Epoch
+             * @description Current epoch (metric + offset)
+             */
+            epoch?: number | null;
+            /**
+             * Max Epochs
+             * @description Maximum epoch (parameter)
+             */
+            max_epochs?: number | null;
+            /**
+             * Url
+             * @description Page of the run in the MLflow UI
+             */
+            url?: string | null;
+            /**
+             * Error
+             * @description Last error querying MLflow
+             */
+            error?: string | null;
         };
         /** PreviewResult */
         PreviewResult: {
@@ -678,6 +797,8 @@ export interface components {
              * @default false
              */
             container_alive: boolean;
+            /** @description Matching MLflow run (projects with MLflow only) */
+            mlflow?: components["schemas"]["MlflowInfo"] | null;
             /** Active */
             active: boolean;
             /** Elapsed S */
@@ -823,6 +944,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MachineGpus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    machine_load_api_machines__machine_id__load_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineLoad"];
                 };
             };
             /** @description Validation Error */

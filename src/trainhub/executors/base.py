@@ -11,8 +11,12 @@ import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..core.models import Inventory, Machine
+
+if TYPE_CHECKING:
+    from ..service.mlflow import MlflowSource
 
 log = logging.getLogger("trainhub.exec")
 
@@ -160,6 +164,10 @@ class Executor(abc.ABC):
     async def open_shell(self, machine: Machine, remote: Sequence[str]) -> ShellSession:
         """Open an interactive shell (``docker exec -it …``) on ``machine``."""
         raise ExecutorError(f"interactive shell not available with the {self.kind} executor")
+
+    def mlflow_source(self) -> MlflowSource | None:
+        """MLflow to use instead of the REST API (simulation); ``None``: the real one."""
+        return None
 
     async def close(self) -> None:  # noqa: B027
         """Release resources (processes, connections)."""

@@ -211,4 +211,29 @@ class MachineGpus(BaseModel):
     checked_at: datetime
 
 
+class CpuView(BaseModel):
+    """CPU and memory of a machine (``/proc``, on the host)."""
+
+    cores: int
+    usage_pct: float = Field(description="Usage of all the cores, over 0.5 s")
+    per_core_pct: list[float] = Field(description="Usage of each core, over 0.5 s")
+    load_avg: tuple[float, float, float] | None = Field(description="1, 5 and 15 min load")
+    memory_used_mib: int | None
+    memory_total_mib: int | None
+
+
+class MachineLoad(BaseModel):
+    """CPU and GPU load of a machine, with the active TrainHub runs placed on it."""
+
+    machine: str
+    reachable: bool
+    cpu: CpuView | None = None
+    cpu_error: str | None = None
+    gpus: list[GpuView] = Field(default_factory=list)
+    gpu_error: str | None = None
+    active_runs: list[GpuRunView] = Field(default_factory=list)
+    error: str | None = Field(default=None, description="Machine unreachable")
+    checked_at: datetime
+
+
 RUN_STATUSES = [s.value for s in RunStatus]

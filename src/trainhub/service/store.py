@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS runs (
     cuda_visible_devices TEXT,
     stop_requested INTEGER NOT NULL DEFAULT 0,
     container_alive INTEGER NOT NULL DEFAULT 0,
-    params TEXT NOT NULL DEFAULT '{}'
+    params TEXT NOT NULL DEFAULT '{}',
+    mlflow TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_project ON runs(project_id);
 CREATE INDEX IF NOT EXISTS runs_machine ON runs(machine_id);
@@ -74,14 +75,16 @@ _COLUMNS = [
     "stop_requested",
     "container_alive",
     "params",
+    "mlflow",
 ]
 #: Columns added after the first version (migrated on open).
 _ADDED_COLUMNS = {
     "container_alive": "INTEGER NOT NULL DEFAULT 0",
     "params": "TEXT NOT NULL DEFAULT '{}'",
+    "mlflow": "TEXT",
 }
 _BOOL_COLS = {"stop_requested", "container_alive"}
-_JSON_COLS = {"full_command", "overrides", "params"}
+_JSON_COLS = {"full_command", "overrides", "params", "mlflow"}
 _DT_COLS = {"created_at", "started_at", "finished_at", "paused_at"}
 
 
@@ -107,7 +110,10 @@ def _from_row(row: aiosqlite.Row) -> Run:
     for col in _COLUMNS:
         v = row[col]
         if col in _JSON_COLS:
-            v = json.loads(v) if v else ({} if col == "params" else [])
+            if col == "mlflow":
+                v = json.loads(v) if v else None
+            else:
+                v = json.loads(v) if v else ({} if col == "params" else [])
         elif col in _BOOL_COLS:
             v = bool(v)
         d[col] = v
