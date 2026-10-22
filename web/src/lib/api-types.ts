@@ -496,6 +496,8 @@ export interface components {
             params?: {
                 [key: string]: string;
             };
+            /** @description Repeat the run several times in a row (same container) */
+            series?: components["schemas"]["SeriesRequest"] | null;
             /** @default ui */
             source: components["schemas"]["RunSource"];
         };
@@ -698,6 +700,22 @@ export interface components {
             docker: components["schemas"]["DockerOptions"];
         };
         /**
+         * RandomRange
+         * @description Integer range a parameter is drawn from (bounds included).
+         */
+        RandomRange: {
+            /**
+             * Min
+             * @default 0
+             */
+            min: number;
+            /**
+             * Max
+             * @default 2147483647
+             */
+            max: number;
+        };
+        /**
          * RunAction
          * @enum {string}
          */
@@ -799,6 +817,8 @@ export interface components {
             container_alive: boolean;
             /** @description Matching MLflow run (projects with MLflow only) */
             mlflow?: components["schemas"]["MlflowInfo"] | null;
+            /** @description Repetitions of the command in the container (None: run once) */
+            series?: components["schemas"]["Series"] | null;
             /** Active */
             active: boolean;
             /** Elapsed S */
@@ -838,6 +858,84 @@ export interface components {
             params?: {
                 [key: string]: string;
             };
+            /** @description Repeat the run several times in a row (same container) */
+            series?: components["schemas"]["SeriesRequest"] | null;
+        };
+        /**
+         * Series
+         * @description A run repeated ``count`` times in a row in its container (see :mod:`.series`).
+         */
+        Series: {
+            /**
+             * Count
+             * @description Number of repetitions
+             */
+            count: number;
+            /**
+             * Continue On Failure
+             * @description Go on with the next repetitions after a failure (default: stop the series)
+             * @default false
+             */
+            continue_on_failure: boolean;
+            /**
+             * Random
+             * @description Parameters drawn at random: name → [min, max]
+             */
+            random?: {
+                [key: string]: [
+                    number,
+                    number
+                ];
+            };
+            /**
+             * Values
+             * @description For each repetition, the values of the parameters that change (override the run's params)
+             */
+            values: {
+                [key: string]: string;
+            }[];
+            /**
+             * Current
+             * @description Repetition in progress or last started, from 1 (0: none yet)
+             * @default 0
+             */
+            current: number;
+            /**
+             * Exit Codes
+             * @description Exit codes of the finished repetitions, in order
+             */
+            exit_codes?: number[];
+        };
+        /**
+         * SeriesRequest
+         * @description Repeat the run several times in a row, in the same container.
+         */
+        SeriesRequest: {
+            /**
+             * Count
+             * @description Number of repetitions
+             */
+            count: number;
+            /**
+             * Random
+             * @description Command parameters drawn at random for each repetition (distinct values when the range allows it); they override params
+             */
+            random?: {
+                [key: string]: components["schemas"]["RandomRange"];
+            };
+            /**
+             * Values
+             * @description Explicit values of the parameters that change, one dict per repetition (instead of random; e.g. to reproduce a series)
+             */
+            values?: {
+                [key: string]: string;
+            }[] | null;
+            /**
+             * Continue On Failure
+             * @description Go on with the next repetitions after a failure (default: the series stops at the first failure)
+             * @default false
+             */
+            continue_on_failure: boolean;
         };
         /**
          * UiState

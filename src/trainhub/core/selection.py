@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 
 from .commands import RunSpec
-from .models import Inventory, command_params
+from .models import Inventory, Series, command_params
 
 
 class SelectionError(ValueError):
@@ -26,6 +26,7 @@ def make_spec(
     overrides: Sequence[str] = (),
     cuda_visible_devices: str | None = None,
     params: Mapping[str, str] | None = None,
+    series: Series | None = None,
 ) -> RunSpec:
     """Build a :class:`RunSpec`, checking the resources allowed for the project.
 
@@ -44,6 +45,13 @@ def make_spec(
             f"parameter(s) not in the command: {', '.join(unknown)}; "
             f"command parameters: {', '.join(wanted) or 'none'}"
         )
+    if series is not None:
+        varying = sorted({k for values in series.values for k in values} - set(wanted))
+        if varying:
+            raise SelectionError(
+                f"series: parameter(s) not in the command: {', '.join(varying)}; "
+                f"command parameters: {', '.join(wanted) or 'none'}"
+            )
     machines = [x.id for x in inv.allowed_machines(proj)]
     if m.id not in machines:
         raise SelectionError(
@@ -80,4 +88,5 @@ def make_spec(
         cuda_visible_devices=cvd or None,
         params={k: (params or {}).get(k, "") for k in wanted},
         extra_env=extra_env,
+        series=series,
     )

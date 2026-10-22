@@ -156,6 +156,8 @@ class HttpMlflow(MlflowSource):
 
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
         known = run.mlflow.run_id if run.mlflow else None
+        if known and run.series is not None and run.status.is_active:
+            known = None  # each repetition of a series creates its own MLflow run
         if known:
             data = await self._call(cfg, "GET", "runs/get", params={"run_id": known})
             if data and data.get("run"):

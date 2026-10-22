@@ -21,12 +21,19 @@ import hashlib
 import json
 import math
 import random
+import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ..core.commands import LABEL_RUN_ID, discover_root, transport
+from ..core.commands import (
+    LABEL_RUN_ID,
+    LABEL_SERIES,
+    LABEL_SERIES_CONTINUE,
+    discover_root,
+    transport,
+)
 from ..core.gpus import visible_indices
 from ..core.load import CPU_SCRIPT
 from ..core.models import (
@@ -37,6 +44,7 @@ from ..core.models import (
     Run,
     SimulationSettings,
 )
+from ..core.series import end_marker, halt_message, start_marker
 from ..service.mlflow import MlflowSource
 from .base import (
     ExecResult,
@@ -724,7 +732,8 @@ class FakeExecutor(Executor):
 
     async def _simulate(self, c: FakeContainer) -> None:
         try:
-            code = await self._training(c)
+            count = int(c.labels.get(LABEL_SERIES) or 0)
+            code = await self._series(c, count) if count else await self._training(c)
         except asyncio.CancelledError:
             return
         except Exception as exc:  # pragma: no cover - safety net
@@ -742,9 +751,34 @@ class FakeExecutor(Executor):
             return
         self._finish(c, code)
 
-    async def _training(self, c: FakeContainer) -> int:
+    async def _series(self, c: FakeContainer, count: int) -> int:
+        """Repetitions of a series, with the markers of the real script."""
+        nl = "\r\n" if c.tty else "\n"
+        keep_going = c.labels.get(LABEL_SERIES_CONTINUE) == "1"
+        # Start markers of the real script, with the values of each repetition.
+        script = c.command[-1] if c.command else ""
+        starts = re.findall(r"\[trainhub\] series run \d+/\d+ started[^'\n]*", script)
+        last = 0
+        for k in range(1, count + 1):
+            if k > 1:  # each repetition creates its own MLflow run
+                c.ml_run += 1
+                c.ml_status, c.ml_epoch, c.ml_epochs = "RUNNING", None, None
+            start = starts[k - 1] if len(starts) == count else start_marker(k, count)
+            c.write(f"{start}{nl}".encode())
+            code = await self._training(c, salt=str(k))
+            c.ml_status = "FINISHED" if code == 0 else "FAILED"
+            c.write(f"{nl}{end_marker(k, count, code)}{nl}".encode())
+            if code != 0:
+                last = code
+                if not keep_going:
+                    if k < count:
+                        c.write(f"{halt_message(k, count)}{nl}".encode())
+                    break
+        return last
+
+    async def _training(self, c: FakeContainer, salt: str = "") -> int:
         s = self.settings
-        rng = random.Random(f"{c.id}{c.started_at}")
+        rng = random.Random(f"{c.id}{c.started_at}{salt}")
         nl = "\r\n" if c.tty else "\n"
         tty = c.tty
 

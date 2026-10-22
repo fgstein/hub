@@ -33,6 +33,8 @@ are a common case, see the [examples](#examples).
 - **Machines tab**: CPU (every core), memory and GPU load of every machine of the inventory,
   with the TrainHub runs placed on each GPU, refreshed every 5 s; a click on a GPU prepares a run
   on it.
+- **Series**: run the same command N times in a row in a single container, with some
+  parameters (e.g. `{seed}`) drawn at random for each repetition. See [Series](#series).
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete.
 - **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
   + script).
@@ -324,6 +326,36 @@ Logs are followed for every active run and written to `$TRAINHUB_DATA_DIR/logs/<
 (`<run>.done` once the backup is complete). If the Docker logs come back shorter than the backup
 (rotation), the old version is kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
+### Series
+
+A **series** runs the same command several times in a row, in the **same container**: the
+next repetition starts when the previous one ends. In the draft, set the number of runs in the
+`×` field next to “Launch”, and click the die next to a parameter to draw it at random for each
+repetition, between two integer bounds (default `0` – `2147483647`, a usual seed range). Every
+other field (machine, image, venv, config, GPU, other parameters) is the same for all the
+repetitions.
+
+- The values are drawn **once, at launch**, distinct for each repetition when the range allows
+  it, and stored with the run: the run row shows the progress (`2/5`, one cell per repetition)
+  and its tooltip the values and exit codes. The logs show
+  `[trainhub] series run 2/5 started · seed=4821` before each repetition.
+- **Failure**: by default the series stops at the first failed repetition (the next ones are not
+  launched). Check “continue after a failure” to launch them anyway. The run's final code is 0 if
+  every repetition succeeded, else the code of the last failure.
+- **Stop** stops the repetition in progress and the whole series. **Restart** starts the series
+  over with the same values; **Relaunch** (API, MCP) creates a new series with the same values,
+  while “Relaunch…” in the interface prepares a draft with the same settings and new draws.
+- A series is **a single run** for TrainHub (one container, one log, one row). Each repetition
+  gets `TRAINHUB_SERIES_INDEX` (1, 2…), usable in the command as `${TRAINHUB_SERIES_INDEX}`,
+  e.g. `hydra.run.dir=outputs/{run_id}-${TRAINHUB_SERIES_INDEX}`: `{run_id}` is the same for all
+  the repetitions.
+- With MLflow, each repetition creates its own MLflow run, tagged `trainhub.run_id` and
+  `trainhub.series_index`; the progress bar follows the repetition in progress.
+
+API, MCP (`launch_run`) and Python: `series: {count: 5, random: {seed: {min: 0, max: 99999}},
+continue_on_failure: false}` (or explicit `values`, one dict per repetition). CLI:
+`trainhub launch … -n 5 -R seed -R fold=0:4 [--continue-on-failure]`. At most 100 repetitions.
+
 ### MLflow
 
 With an `mlflow` section, TrainHub reads, for each run, the matching MLflow run: its status, a
@@ -560,6 +592,7 @@ await tb.stop(run.id)
 ```bash
 trainhub preview -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline trainer.max_epochs=5
 trainhub launch  -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline --follow
+trainhub launch  -p segmentation … -n 5 -R seed   # series: 5 runs in a row, {seed} drawn
 trainhub ps [--all]
 trainhub logs r7f3k2 [-f] [--clean]
 trainhub stop r7f3k2           # also: pause, resume, rm

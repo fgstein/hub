@@ -19,7 +19,7 @@ from ..core.logs_clean import readable_logs
 from ..core.models import Run, RunSource, RunStatus
 from ..core.status import elapsed_seconds, format_duration, paused_seconds
 from ..service import RunService, ServiceError, allowed_actions
-from ..service.schemas import Selection
+from ..service.schemas import Selection, SeriesRequest
 
 INSTRUCTIONS = """\
 TrainHub launches and monitors training commands on remote GPU machines
@@ -29,6 +29,8 @@ list_resources and list_configs for a project, preview_command to check, launch_
 then wait_run / get_logs to monitor (get_gpus helps choosing a machine and
 cuda_visible_devices). Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
+To run the same command several times in a row (e.g. with different seeds), pass series
+to launch_run: one run, one container, the repetitions one after the other.
 """
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -65,6 +67,28 @@ ParamsArg = Annotated[
         "split as a shell would; missing or empty: nothing is inserted."
     ),
 ]
+SeriesArg = Annotated[
+    SeriesRequest | None,
+    Field(
+        description="Optional: repeat the run count times in a row, in the same container "
+        "(a single run). random: free parameters drawn at random for each repetition, e.g. "
+        '{"seed": {"min": 0, "max": 99999}}; the series stops at the first failure unless '
+        "continue_on_failure. Each repetition gets TRAINHUB_SERIES_INDEX (1, 2…)."
+    ),
+]
+
+
+def series_summary(run: Run) -> dict[str, Any] | None:
+    s = run.series
+    if s is None:
+        return None
+    return {
+        "count": s.count,
+        "current": s.current,
+        "exit_codes": s.exit_codes,
+        "values": s.values,
+        "continue_on_failure": s.continue_on_failure,
+    }
 
 
 def run_summary(run: Run) -> dict[str, Any]:
@@ -87,6 +111,7 @@ def run_summary(run: Run) -> dict[str, Any]:
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "container_alive": run.container_alive,
         "allowed_actions": allowed_actions(run.status, container_alive=run.container_alive),
+        "series": series_summary(run),
     }
 
 
@@ -214,9 +239,10 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        series: SeriesArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
-            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+            project, machine, image, venv, config, overrides, cuda_visible_devices, params, series
         )
         p = await call(svc.preview(sel))
         return {"command": p.command, "full_command": p.text, "exact": p.exact}
@@ -398,9 +424,10 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        series: SeriesArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
-            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+            project, machine, image, venv, config, overrides, cuda_visible_devices, params, series
         )
         run = await call(svc.launch(sel, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
         return run_summary(run)
@@ -441,7 +468,8 @@ def build_mcp(
     @mcp.tool(
         annotations=WRITE,
         description="Create a new run with the same parameters (project, machine, image, "
-        "venv, config, overrides) and the current project command. Finished status required.",
+        "venv, config, overrides, series with the same values) and the current project "
+        "command. Finished status required.",
     )
     async def relaunch_run(run_id: RunIdArg) -> dict[str, Any]:
         run = await call(svc.relaunch(run_id, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
@@ -495,6 +523,7 @@ def _selection(
     overrides: list[str] | None,
     cuda: str | None,
     params: dict[str, str] | None = None,
+    series: SeriesRequest | None = None,
 ) -> Selection:
     return Selection(
         project=project,
@@ -505,6 +534,7 @@ def _selection(
         overrides=overrides or [],
         cuda_visible_devices=cuda,
         params=params or {},
+        series=series,
     )
 
 

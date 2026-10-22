@@ -168,6 +168,32 @@ describe("main store", async () => {
     app.removeDraft("seg", d.key)
   })
 
+  it("series: number of runs in the selection, carried over by relaunch", () => {
+    app.addDraft("seg")
+    const d = app.state.drafts.seg!.at(-1)!
+    expect(app.draftSelection("seg", d)?.series).toBeNull()
+    app.updateDraft("seg", d.key, { count: "3", continueOnFailure: true })
+    expect(app.draftSelection("seg", app.state.drafts.seg!.at(-1)!)?.series).toEqual({
+      count: 3,
+      random: {},
+      continue_on_failure: true,
+    })
+    app.updateDraft("seg", d.key, { count: "0" })
+    expect(app.draftSelection("seg", app.state.drafts.seg!.at(-1)!)).toBeNull()
+    app.removeDraft("seg", d.key)
+
+    const done = run("r8", {
+      status: "succeeded",
+      series: { count: 5, continue_on_failure: false, values: [], current: 5, exit_codes: [0, 0, 0, 0, 0] },
+    })
+    ws.emit({ type: "run.created", seq: 30, run: done })
+    app.draftFromRun("r8")
+    const again = app.state.drafts.seg!.at(-1)!
+    expect(again).toMatchObject({ count: "5", continueOnFailure: false })
+    expect(app.draftSelection("seg", again)?.series?.count).toBe(5)
+    app.removeDraft("seg", again.key)
+  })
+
   it("log subscriptions are reference counted", () => {
     const chunks: string[] = []
     const off1 = logs.subscribeLogs("r1", {

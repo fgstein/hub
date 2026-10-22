@@ -557,6 +557,31 @@ class MlflowInfo(BaseModel):
 MLFLOW_TERMINAL = frozenset({"FINISHED", "FAILED", "KILLED"})
 
 
+class Series(BaseModel):
+    """A run repeated ``count`` times in a row in its container (see :mod:`.series`)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    count: int = Field(description="Number of repetitions")
+    continue_on_failure: bool = Field(
+        default=False,
+        description="Go on with the next repetitions after a failure (default: stop the series)",
+    )
+    random: dict[str, tuple[int, int]] = Field(
+        default_factory=dict, description="Parameters drawn at random: name → [min, max]"
+    )
+    values: list[dict[str, str]] = Field(
+        description="For each repetition, the values of the parameters that change "
+        "(override the run's params)"
+    )
+    current: int = Field(
+        default=0, description="Repetition in progress or last started, from 1 (0: none yet)"
+    )
+    exit_codes: list[int] = Field(
+        default_factory=list, description="Exit codes of the finished repetitions, in order"
+    )
+
+
 class RunSource(StrEnum):
     UI = "ui"
     MCP = "mcp"
@@ -598,4 +623,7 @@ class Run(BaseModel):
     )
     mlflow: MlflowInfo | None = Field(
         default=None, description="Matching MLflow run (projects with MLflow only)"
+    )
+    series: Series | None = Field(
+        default=None, description="Repetitions of the command in the container (None: run once)"
     )

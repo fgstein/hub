@@ -17,6 +17,8 @@ The ``docker_*`` functions return the “remote” argv (what runs on the machin
 
 from __future__ import annotations
 
+import contextlib
+import json
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -29,9 +31,11 @@ from .models import (
     Image,
     Machine,
     Project,
+    Series,
     SourceFile,
     Venv,
 )
+from .series import INDEX_ENV, INDEX_TAG, describe_values, end_marker, halt_message, start_marker
 
 SSH_CONTROL_OPTIONS: tuple[str, ...] = (
     "-o",
@@ -51,6 +55,8 @@ LABEL_MACHINE = "trainhub.machine"
 LABEL_IMAGE = "trainhub.image"
 LABEL_VENV = "trainhub.venv"
 LABEL_CONFIG = "trainhub.config"
+LABEL_SERIES = "trainhub.series"
+LABEL_SERIES_CONTINUE = "trainhub.series_continue"
 
 PS_FORMAT = "{{json .}}"
 
@@ -82,6 +88,8 @@ class RunSpec:
     """Values of the free parameters (non-reserved ``{name}``) of the command."""
     extra_env: Mapping[str, str] = field(default_factory=dict)
     """Variables added by TrainHub to the container (e.g. MLflow tagging)."""
+    series: Series | None = None
+    """Repetitions of the command in the container (``None``: run once)."""
 
     @property
     def template(self) -> str:
@@ -90,6 +98,12 @@ class RunSpec:
     @property
     def container_name(self) -> str:
         return container_name(self.project.id, self.run_id)
+
+    def params_at(self, index: int | None = None) -> Mapping[str, str]:
+        """Parameters of repetition ``index`` (from 1) of a series; ``params`` otherwise."""
+        if self.series is None or index is None:
+            return self.params
+        return {**self.params, **self.series.values[index - 1]}
 
 
 @dataclass(frozen=True)
@@ -162,15 +176,21 @@ def resolve_command(
     return PLACEHOLDER_RE.sub(repl, template)
 
 
-def resolved_command(spec: RunSpec) -> str:
-    """Resolved generic command, including extra arguments (overrides)."""
+def resolved_command(spec: RunSpec, index: int | None = None) -> str:
+    """Resolved generic command, including extra arguments (overrides).
+
+    For a series, ``index`` (from 1) picks the values of a repetition; without it, the first
+    one is used.
+    """
+    if spec.series is not None and index is None:
+        index = 1
     cmd = resolve_command(
         spec.template,
         config=spec.config,
         run_id=spec.run_id,
         machine=spec.machine.id,
         project=spec.project.id,
-        params=spec.params,
+        params=spec.params_at(index),
     )
     if spec.overrides:
         cmd += " " + " ".join(shlex.quote(o) for o in spec.overrides)
@@ -239,9 +259,23 @@ def inner_script(spec: RunSpec) -> str:
     setup += [_source_snippet(f, export=True) for f in spec.project.env_files]
     setup += [_source_snippet(f, export=False) for f in spec.project.source]
     tty = _tty_prefix(spec)
-    if not spec.project.docker.keep_alive:
+    keep_alive = spec.project.docker.keep_alive
+    if spec.series is not None:
+        body = _series_body(spec)
+    elif not keep_alive:
         return "; ".join([*tty, " && ".join([*setup, f"exec {resolved_command(spec)}"])])
+    else:
+        body = [
+            f"{resolved_command(spec)} & pid=$!",
+            "trap 'stop=1; kill -TERM $pid 2>/dev/null' TERM INT HUP",
+            "wait $pid",
+            "code=$?",
+            "while kill -0 $pid 2>/dev/null; do wait $pid; code=$?; done",
+            'if [ -n "$stop" ]; then exit $code; fi',
+        ]
     f = EXIT_FILE
+    if not keep_alive:  # series without a kept container: exit with the series' code
+        return "; ".join([*tty, *(f"{s} || exit 1" for s in setup), *body, "exit $code"])
     msg = (
         r"\n[trainhub] command finished (code %s): container kept, "
         r"shell available from TrainHub\n"
@@ -251,18 +285,69 @@ def inner_script(spec: RunSpec) -> str:
             f"rm -f {f}",
             *tty,
             *(f"{s} || exit 1" for s in setup),
-            f"{resolved_command(spec)} & pid=$!",
-            "trap 'stop=1; kill -TERM $pid 2>/dev/null' TERM INT HUP",
-            "wait $pid",
-            "code=$?",
-            "while kill -0 $pid 2>/dev/null; do wait $pid; code=$?; done",
-            'if [ -n "$stop" ]; then exit $code; fi',
+            *body,
             f"echo $code > {f}",
             f"printf {shlex.quote(msg)} $code",
             "trap 'exit $code' TERM INT HUP",
             "while :; do sleep 3600 & wait $!; done",
         ]
     )
+
+
+def _series_body(spec: RunSpec) -> list[str]:
+    """Script lines running the repetitions of a series one after the other.
+
+    Each repetition runs in the background like a single command (``SIGTERM`` forwarded: a
+    stop ends the whole series) between a start and an end marker, read by TrainHub. After a
+    failure, the next repetitions are skipped unless ``continue_on_failure``. At the end,
+    ``$code`` is 0 if every repetition succeeded, else the code of the last failure.
+    """
+    series = spec.series
+    assert series is not None
+    n = series.count
+    on_failure = "" if series.continue_on_failure else " halt=1;"
+    lines = [
+        "trap 'stop=1; kill -TERM $pid 2>/dev/null' TERM INT HUP",
+        "last=0; halt=; failed=",
+        # $1: index of the repetition whose command was just started in the background.
+        "th_wait() { wait $pid; code=$?; "
+        "while kill -0 $pid 2>/dev/null; do wait $pid; code=$?; done; "
+        'if [ -n "$stop" ]; then exit $code; fi; '
+        f"printf '\\n%s\\n' \"{end_marker('$1', n, '$code')}\"; "
+        f"if [ $code -ne 0 ]; then last=$code; failed=$1;{on_failure} fi; }}",
+    ]
+    context = spec.extra_env.get("MLFLOW_RUN_CONTEXT")
+    if "MLFLOW_RUN_CONTEXT" in spec.project.docker.env:
+        context = None  # the project's own value wins
+    for k in range(1, n + 1):
+        start = start_marker(k, n)
+        values = describe_values(series.values[k - 1])
+        if values:
+            start += f" · {values}"
+        env = [f"export {INDEX_ENV}={k}"]
+        if context is not None:
+            # MLflow tags of the repetition: the run's, plus its index.
+            with contextlib.suppress(ValueError, TypeError):
+                tags = {**json.loads(context), INDEX_TAG: str(k)}
+                env.append(f"export MLFLOW_RUN_CONTEXT={shlex.quote(json.dumps(tags))}")
+        step = "; ".join(
+            [
+                f"printf '%s\\n' {shlex.quote(start)}",
+                *env,
+                f"{resolved_command(spec, k)} & pid=$!",
+                f"th_wait {k}",
+            ]
+        )
+        # A stop received between two repetitions must not start the next one.
+        lines.append(f'[ -n "$halt$stop" ] || {{ {step}; }}')
+    lines.append('if [ -n "$stop" ]; then exit 143; fi')
+    if not series.continue_on_failure and n > 1:
+        lines.append(
+            f'if [ -n "$halt" ] && [ "$failed" != {n} ]; then '
+            f"printf '%s\\n' \"{halt_message('$failed', n)}\"; fi"
+        )
+    lines.append("code=$last")
+    return lines
 
 
 def _docker_run_groups(spec: RunSpec) -> _Groups:
@@ -292,6 +377,11 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
         "--label",
         f"{LABEL_CONFIG}={spec.config}",
     )
+    if spec.series is not None:
+        series_labels = ["--label", f"{LABEL_SERIES}={spec.series.count}"]
+        if spec.series.continue_on_failure:
+            series_labels += ["--label", f"{LABEL_SERIES_CONTINUE}=1"]
+        g.add(*series_labels)
     opts: list[str] = []
     if d.gpus:
         opts += ["--gpus", d.gpus]
@@ -348,6 +438,12 @@ def validate_spec(spec: RunSpec) -> None:
         )
     for name, value in spec.params.items():
         param_words(name, value)
+    if spec.series is not None:
+        if len(spec.series.values) != spec.series.count:
+            raise ValueError("series: one set of values per repetition expected")
+        for values in spec.series.values:
+            for name, value in values.items():
+                param_words(name, value)
 
 
 def docker_run(spec: RunSpec) -> list[str]:

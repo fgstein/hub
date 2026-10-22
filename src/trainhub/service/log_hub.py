@@ -188,6 +188,9 @@ class _Channel:
 
 OpenStream = Callable[[str], Awaitable[LogStream]]
 IsFinished = Callable[[str], Awaitable[bool]]
+#: Called with every chunk of logs received for a run, and with ``None`` when its history
+#: starts over (new ``docker logs`` session).
+Observer = Callable[[str, bytes | None], None]
 
 
 class LogHub:
@@ -203,8 +206,10 @@ class LogHub:
         idle_timeout: float = IDLE_TIMEOUT_S,
         retry_delay: float = RETRY_DELAY_S,
         finish_grace: float = FINISH_GRACE_S,
+        observer: Observer | None = None,
     ) -> None:
         self._open = open_stream
+        self._observer = observer
         self._is_finished = is_finished
         self.log_dir = log_dir
         self.buffer_size = buffer_size
@@ -410,7 +415,16 @@ class LogHub:
         if not ch.complete:
             self._complete(ch, saved=True)
 
+    def _observe(self, ch: _Channel, data: bytes | None) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer(ch.run_id, data)
+        except Exception:
+            log.exception("error in the log observer", extra={"run_id": ch.run_id})
+
     def _append(self, ch: _Channel, data: bytes) -> None:
+        self._observe(ch, data)
         ch.buffer += data
         excess = len(ch.buffer) - self.buffer_size
         if excess > 0:
@@ -429,6 +443,7 @@ class LogHub:
                 # docker logs returns the whole history: start over from scratch.
                 ch.buffer.clear()
                 ch.broadcast(LogMessage("reset"))
+                self._observe(ch, None)
                 if ch.file is not None:
                     ch.file.begin()
                 async for chunk in stream:

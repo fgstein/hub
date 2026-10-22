@@ -288,3 +288,35 @@ blue: finished); a tab showing the CPU and GPU load of every machine of the inve
 - `fake` mode: simulated MLflow (state of the simulated training: epochs, FINISHED/FAILED/KILLED)
   and simulated `/proc` (64 cores, ~8 busy cores per running command); enabled in
   `dev/inventory.dev.yaml` (except `llm-finetune`).
+
+## Change — series: the same run several times in a row (October 22)
+
+Request: launch several identical runs in a row, with one field drawn at random (e.g. the
+seed); sequential; by default the series stops at the first failure, with an option to go on;
+all the runs in the same container; integer range; only command parameters can be drawn.
+
+- **One run, one container**: a series is a single TrainHub run whose script runs the command
+  `count` times. TrainHub's model is one run = one container (logs, pause, stop, monitoring,
+  import), so the repetitions are not separate runs; their state lives in `Run.series`
+  (`series` column, JSON): count, `continue_on_failure`, ranges, values of each repetition,
+  repetition in progress, exit codes.
+- **Script** (`commands._series_body`): the repetitions are unrolled (each one is the resolved
+  command with its values, run in the background like a single command, `SIGTERM` forwarded),
+  between a start and an end marker. A stop ends the series (also between two repetitions);
+  after a failure the next ones are skipped unless `continue_on_failure`. The final code (kept
+  container or not) is 0, or the code of the last failure. `TRAINHUB_SERIES_INDEX` is exported
+  for each repetition, and `MLFLOW_RUN_CONTEXT` gets `trainhub.series_index`.
+- **Progress** read from the markers in the logs (`SeriesTracker`, observer of the log hub): no
+  extra command on the machine. Logs read again from the start (new `docker logs` session) only
+  move the progress forward; restart resets it.
+- **Values drawn at launch** (server side, `SystemRandom`, distinct when the range allows it),
+  stored: a relaunch (API/MCP) reproduces them, the interface's “Relaunch…” draft keeps the
+  count and ranges and draws again. Default range `0`–`2³¹−1`. At most 100 repetitions.
+- **Interface**: `×` field (number of runs) next to “Launch”, die next to each parameter (the
+  value field becomes min – max), “continue after a failure” when there are several runs. Run
+  row: `2/5` and one cell per repetition (green running, blue succeeded, red failed), tooltip
+  with values and codes. The series settings are not remembered in the last selection.
+- MLflow: during an active series, the MLflow run is searched again at each poll (the latest
+  one carrying the TrainHub run id is the repetition in progress).
+- `fake` mode: labels `trainhub.series` / `trainhub.series_continue` on the container; the
+  simulation plays each repetition (its own MLflow run) with the markers of the real script.

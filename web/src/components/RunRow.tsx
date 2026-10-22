@@ -1,8 +1,9 @@
 import { Tooltip } from "@kobalte/core/tooltip"
-import { createEffect, createSignal, type JSX, on, onCleanup, Show } from "solid-js"
+import { createEffect, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js"
 import { prettyCommand, shellJoin } from "~/lib/command"
 import { elapsedSeconds, formatDateTime, formatDuration, pausedSeconds } from "~/lib/format"
 import { formatEpoch, progress, trainingState } from "~/lib/mlflow"
+import { describeValues, type RepetitionState, repetitions } from "~/lib/series"
 import { isActive, isFinished, type RunView, shellAvailable } from "~/lib/types"
 import {
   displayStatus,
@@ -18,7 +19,7 @@ import {
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
 import { ActionButton } from "./ActionButton"
-import { IconAgent, IconChevronDown, IconCopy, IconExternal, IconTerminal } from "./Icons"
+import { IconAgent, IconChevronDown, IconCopy, IconExternal, IconRepeat, IconTerminal } from "./Icons"
 import { LogTerminal } from "./LogTerminal"
 import { ShellTerminal } from "./ShellTerminal"
 import { StatusDot, statusLabel, trainingLabel } from "./StatusDot"
@@ -107,6 +108,71 @@ function MlflowProgress(props: { run: RunView; color: string }) {
   )
 }
 
+const REPETITION_COLOR: Record<RepetitionState, string> = {
+  // same colors as the training status: green running, blue finished, red failed
+  done: "var(--status-blue)",
+  failed: "var(--status-red)",
+  running: "var(--status-green)",
+  pending: "var(--color-surface-active)",
+  skipped: "var(--color-surface-active)",
+}
+const REPETITION_LABEL: Record<RepetitionState, string> = {
+  done: "succeeded",
+  failed: "failed",
+  running: "running",
+  pending: "waiting",
+  skipped: "not launched",
+}
+
+/** Series: current run / number of runs, one cell per run; details in the tooltip. */
+function SeriesProgress(props: { run: RunView }) {
+  const series = () => props.run.series!
+  const states = () => repetitions(series(), isActive(props.run.status))
+  const shown = () => (isActive(props.run.status) ? series().current : (series().exit_codes ?? []).length)
+  return (
+    <Tip
+      class="flex shrink-0 items-center gap-1.5"
+      content={
+        <div class="space-y-0.5 font-mono">
+          <div>
+            series: {series().count} runs in a row, same container
+            {series().continue_on_failure ? " · continues after a failure" : " · stops at the first failure"}
+          </div>
+          <For each={states()}>
+            {(st, i) => (
+              <div class="flex gap-2">
+                <span style={{ color: REPETITION_COLOR[st] }}>●</span>
+                <span class="tabular">
+                  {i() + 1}/{series().count}
+                </span>
+                <span>{describeValues(series().values[i()]) || "—"}</span>
+                <span class="text-fg-weak">
+                  {REPETITION_LABEL[st]}
+                  {st === "failed" ? ` (code ${series().exit_codes?.[i()]})` : ""}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      }
+    >
+      <span data-testid="run-series">
+        <IconRepeat size={12} class="text-icon" />
+      </span>
+      <Show when={series().count <= 20}>
+        <span class="flex items-center gap-px" aria-hidden="true">
+          <For each={states()}>
+            {(st) => <span class="h-2.5 w-1 rounded-sm" style={{ background: REPETITION_COLOR[st] }} />}
+          </For>
+        </span>
+      </Show>
+      <span class="font-mono text-xs text-fg tabular" data-testid="run-series-progress">
+        {shown()}/{series().count}
+      </span>
+    </Tip>
+  )
+}
+
 const TRAINING_COLOR = {
   healthy: "var(--status-green)",
   failed: "var(--status-red)",
@@ -184,6 +250,9 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
           </Tip>
         </Show>
       </div>
+      <Show when={run().series}>
+        <SeriesProgress run={run()} />
+      </Show>
       <MlflowProgress run={run()} color={training() ? TRAINING_COLOR[training()!] : "var(--status-grey)"} />
       <Show when={run().container_alive && isFinished(run().status)}>
         <Tip

@@ -20,6 +20,8 @@ export type GpuView = S["GpuView"]
 export type MlflowInfo = S["MlflowInfo"]
 export type MachineLoad = S["MachineLoad"]
 export type CpuView = S["CpuView"]
+export type Series = S["Series"]
+export type SeriesRequest = S["SeriesRequest"]
 
 export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close"
 export type MenuAction = RunAction | "delete"

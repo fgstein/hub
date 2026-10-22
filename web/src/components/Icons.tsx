@@ -169,3 +169,16 @@ export const IconServer = (p: P) => (
     <path d="M5 4.75h.01M5 11.25h.01" />
   </Svg>
 )
+export const IconDice = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+    <circle cx="5.75" cy="5.75" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="10.25" cy="10.25" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
+  </Svg>
+)
+export const IconRepeat = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 7.5V6a2 2 0 0 1 2-2h7.5M10.5 2l2 2-2 2M13 8.5V10a2 2 0 0 1-2 2H3.5M5.5 14l-2-2 2-2" />
+  </Svg>
+)

@@ -260,3 +260,33 @@ test("Machines tab: a click on a GPU prepares a draft on that machine and GPU", 
   // the machine is already chosen: its list does not open
   await expect(page.getByRole("listbox")).toHaveCount(0)
 })
+
+test("series: several runs in a row, a parameter drawn at random", async ({ page }) => {
+  await page.request.patch("/api/projects/det", {
+    data: { command: "python -m det.train --config-name {config} seed={seed}" },
+  })
+  try {
+    const draft = await newDraft(page, "det")
+    await pickConfig(page, "yolo_m")
+    await draft.getByTestId("toggle-random-seed").click()
+    await expect(draft.getByTestId("field-param-seed")).toHaveCount(0)
+    await draft.getByTestId("field-min-seed").fill("5")
+    await draft.getByTestId("field-max-seed").fill("1")
+    await expect(draft.getByTestId("draft-launch")).toBeDisabled()
+    await draft.getByTestId("field-max-seed").fill("7")
+    await draft.getByTestId("field-count").fill("3")
+    await expect(draft.getByTestId("field-continue-on-failure")).not.toBeChecked()
+    await draft.getByTestId("draft-launch").click()
+
+    const row = page.locator('[data-testid=run-row][data-status="running"]').filter({ hasText: "yolo_m" })
+    await expect(row).toHaveCount(1, { timeout: 10_000 })
+    await expect(row.getByTestId("run-series-progress")).toHaveText("1/3", { timeout: 10_000 })
+    await row.getByTestId("run-line").click()
+    await expect(row.getByTestId("run-command-text")).toContainText(/seed=[567]/)
+    const runId = await row.getAttribute("data-run-id")
+    const logs = await (await page.request.get(`/api/runs/${runId}/logs`)).text()
+    expect(logs).toMatch(/series run 1\/3 started · seed=[567]/)
+  } finally {
+    await page.request.patch("/api/projects/det", { data: { reset: true } })
+  }
+})

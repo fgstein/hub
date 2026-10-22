@@ -35,11 +35,13 @@ from ..core.models import (
     Run,
     RunSource,
     RunStatus,
+    Series,
     UnknownResourceError,
     command_params,
     validate_command_template,
 )
 from ..core.selection import SelectionError, make_spec
+from ..core.series import SeriesTracker
 from ..core.status import ContainerState, parse_inspect, status_from_container, utcnow
 from ..executors.base import (
     ACTION_TIMEOUT_S,
@@ -72,6 +74,7 @@ from .schemas import (
     ProjectView,
     RunView,
     Selection,
+    SeriesRequest,
     Snapshot,
     UiState,
     VenvView,
@@ -215,7 +218,10 @@ class RunService:
             log_dir=log_dir,
             idle_timeout=log_idle_timeout,
             finish_grace=min(1.5, log_idle_timeout),
+            observer=self._observe_logs,
         )
+        self._series_trackers: dict[str, SeriesTracker] = {}
+        self._series_lock = asyncio.Lock()
         self.machine_status: dict[str, MachineStatus] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
@@ -457,7 +463,7 @@ class RunService:
 
     # -- preview and launch --------------------------------------------------------------
 
-    def _spec(self, sel: Selection, run_id: str) -> RunSpec:
+    def _spec(self, sel: Selection, run_id: str, series: Series | None = None) -> RunSpec:
         try:
             spec = make_spec(
                 self.inventory,
@@ -471,6 +477,7 @@ class RunService:
                 overrides=sel.overrides,
                 cuda_visible_devices=sel.cuda_visible_devices,
                 params=sel.params,
+                series=series,
             )
             cmd.validate_spec(spec)
         except UnknownResourceError as exc:
@@ -481,7 +488,7 @@ class RunService:
 
     async def preview(self, sel: Selection, run_id: str = "rxxxxx") -> PreviewResult:
         """Full command for a selection, without running anything."""
-        spec = self._spec(sel, run_id)
+        spec = self._spec(sel, run_id, (sel.series.plan() if sel.series else None))
         remote = cmd.docker_run(spec)
         argv = self.executor.full_argv(spec.machine, remote)
         return PreviewResult(
@@ -520,7 +527,8 @@ class RunService:
         ``wait=True`` waits for the ``docker run`` to finish; a number waits at most that long.
         """
         run_id = await self._new_run_id()
-        spec = self._spec(sel, run_id)
+        series = sel.series.plan() if sel.series else None
+        spec = self._spec(sel, run_id, series)
         await self._validate_config(sel)
         remote = cmd.docker_run(spec)
         run = Run(
@@ -539,6 +547,7 @@ class RunService:
             overrides=list(spec.overrides),
             cuda_visible_devices=spec.cuda_visible_devices,
             params=dict(spec.params),
+            series=series,
         )
         lock = self._lock(run_id)
         await lock.acquire()
@@ -817,6 +826,7 @@ class RunService:
                 stop_requested=False,
                 container_alive=True,
                 mlflow=None,  # the command starts over: a new MLflow run will be created
+                **_reset_series(run),
             )
             self.logs.restart(run.id)
             return run
@@ -875,6 +885,18 @@ class RunService:
         """New run with the same parameters (current project command)."""
         run = await self.get_run(run_id)
         self._check_allowed(run, RunAction.RELAUNCH)
+        current = command_params(self.project_command(run.project_id))
+        series = None
+        if run.series is not None:
+            # same repetitions, same values (those still in the current command)
+            series = SeriesRequest(
+                count=run.series.count,
+                continue_on_failure=run.series.continue_on_failure,
+                values=[
+                    {k: v for k, v in values.items() if k in current}
+                    for values in run.series.values
+                ],
+            )
         sel = Selection(
             project=run.project_id,
             machine=run.machine_id,
@@ -884,11 +906,8 @@ class RunService:
             overrides=run.overrides,
             cuda_visible_devices=run.cuda_visible_devices,
             # parameters still present in the current project command
-            params={
-                k: v
-                for k, v in run.params.items()
-                if k in command_params(self.project_command(run.project_id))
-            },
+            params={k: v for k, v in run.params.items() if k in current},
+            series=series,
         )
         return await self.launch(sel, source=source, wait=wait)
 
@@ -912,6 +931,7 @@ class RunService:
                     raise ServiceError(f"delete failed: {res.error_message()}")
             await self.store.delete_run(run.id)
             self.logs.discard(run.id)
+            self._series_trackers.pop(run.id, None)
             self.bus.publish("run.deleted", {"id": run.id, "project_id": run.project_id})
         finally:
             lock.release()
@@ -1187,6 +1207,34 @@ class RunService:
         if run is not None and run.started_at == started_at:
             await self._update(run, mlflow=info)
 
+    # -- series ----------------------------------------------------------------------------
+
+    def _observe_logs(self, run_id: str, data: bytes | None) -> None:
+        """Follow the progress of series from the markers of their logs."""
+        if data is None:  # the history starts over: it will be read again
+            self._series_trackers[run_id] = SeriesTracker()
+            return
+        tracker = self._series_trackers.setdefault(run_id, SeriesTracker())
+        if tracker.feed(data):
+            self._spawn(
+                self._apply_series_progress(run_id, tracker.current, list(tracker.exit_codes))
+            )
+
+    async def _apply_series_progress(self, run_id: str, current: int, codes: list[int]) -> None:
+        async with self._series_lock:
+            run = await self.store.get_run(run_id)
+            if run is None or run.series is None:
+                return
+            s = run.series
+            # Only move forward: logs read again from the start replay the past states.
+            if current + len(codes) <= s.current + len(s.exit_codes):
+                return
+            codes = codes[: s.count]
+            await self._update(
+                run,
+                series=s.model_copy(update={"current": min(current, s.count), "exit_codes": codes}),
+            )
+
     # -- updates and monitoring ----------------------------------------------------------
 
     async def _inspect(self, run: Run) -> ContainerState | None:
@@ -1337,6 +1385,7 @@ class RunService:
                 finished_at=None,
                 exit_code=None,
                 stop_requested=False,
+                **_reset_series(run),
             )
             self.logs.restart(run.id)
         updated = await self._update(run, **changes)
@@ -1407,6 +1456,13 @@ def _complete_utf8(data: bytes) -> int:
             need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4
             return len(data) if back >= need else len(data) - back
     return len(data)
+
+
+def _reset_series(run: Run) -> dict[str, Any]:
+    """Fields to update when the command of a series starts over."""
+    if run.series is None:
+        return {}
+    return {"series": run.series.model_copy(update={"current": 0, "exit_codes": []})}
 
 
 def _close_pause(run: Run) -> dict[str, Any]:

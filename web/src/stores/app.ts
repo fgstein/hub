@@ -6,6 +6,7 @@ import { batch, createRoot, createSignal } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { ApiError, api } from "~/lib/api"
 import { shellJoin, splitArgs } from "~/lib/command"
+import { draftSeries, type RangeDraft, seriesRequest } from "~/lib/series"
 import type {
   ConfigList,
   InventoryView,
@@ -38,6 +39,12 @@ export interface Draft {
   overrides: string
   /** Values of the free command parameters (``{name}``), by name. */
   params: Record<string, string>
+  /** Number of runs in a row, in the same container (empty: 1). */
+  count: string
+  /** Parameters drawn at random for each run of the series, with their range. */
+  random: Record<string, RangeDraft | undefined>
+  /** Series: go on with the next runs after a failure (default: stop). */
+  continueOnFailure: boolean
   launching: boolean
   /** Draft created by “Relaunch”: highlighted and scrolled into view. */
   focus?: boolean
@@ -261,6 +268,9 @@ export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
     cuda: last.cuda_visible_devices ?? "",
     overrides: "",
     params: { ...(last.params ?? {}) },
+    count: "",
+    random: {},
+    continueOnFailure: false,
     launching: false,
     ...init,
   }
@@ -301,6 +311,7 @@ export function draftFromRun(runId: string): void {
     cuda: r.cuda_visible_devices ?? "",
     overrides: shellJoin(r.overrides ?? []),
     params: { ...(state.ui.last_selection?.[r.project_id]?.params ?? {}), ...(r.params ?? {}) },
+    ...draftSeries(r.series),
     focus: true,
   })
   if (state.ui.active_tab !== r.project_id) setActiveTab(r.project_id)
@@ -342,16 +353,24 @@ export function removeDraft(projectId: string, key: number): void {
 export function draftParamErrors(projectId: string, d: Draft): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of project(projectId)?.params ?? []) {
+    if (d.random[k]) continue // drawn at random: the range is checked by draftSeries
     const err = splitArgs(d.params[k] ?? "").error
     if (err) out[k] = err
   }
   return out
 }
 
+/** Series of a draft (null: a single run) and its errors (``count`` or a parameter name). */
+export function draftSeriesRequest(projectId: string, d: Draft) {
+  return seriesRequest(d.count, d.random, d.continueOnFailure, project(projectId)?.params ?? [])
+}
+
 export function draftSelection(projectId: string, d: Draft): Selection | null {
   if (!d.machine || !d.image || !d.venv || !d.config) return null
   const { args, error } = splitArgs(d.overrides)
   if (error || Object.keys(draftParamErrors(projectId, d)).length) return null
+  const series = draftSeriesRequest(projectId, d)
+  if (Object.keys(series.errors).length) return null
   const names = project(projectId)?.params ?? []
   return {
     project: projectId,
@@ -362,6 +381,7 @@ export function draftSelection(projectId: string, d: Draft): Selection | null {
     overrides: args,
     cuda_visible_devices: d.cuda.trim() || null,
     params: Object.fromEntries(names.map((k) => [k, d.params[k] ?? ""])),
+    series: series.request,
   }
 }
 
@@ -372,12 +392,17 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
   if (!sel) {
     const err = splitArgs(d.overrides).error
     const paramErr = Object.entries(draftParamErrors(projectId, d))[0]
+    const seriesErr = Object.entries(draftSeriesRequest(projectId, d).errors)[0]
     toast(
       err
         ? `invalid overrides: ${err}`
         : paramErr
           ? `invalid parameter {${paramErr[0]}}: ${paramErr[1]}`
-          : "incomplete selection: machine, image, venv and config are required",
+          : seriesErr
+            ? seriesErr[0] === "count"
+              ? `invalid ${seriesErr[1]}`
+              : `invalid range of {${seriesErr[0]}}: ${seriesErr[1]}`
+            : "incomplete selection: machine, image, venv and config are required",
       "error",
     )
     return
