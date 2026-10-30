@@ -1,5 +1,11 @@
 /** Checkpoints tab: filtering, sorting and selection over a source listing (pure functions). */
-import type { CheckpointFile, CheckpointGroup, CheckpointListing, CheckpointRun } from "./types"
+import type {
+  CheckpointFile,
+  CheckpointGroup,
+  CheckpointInference,
+  CheckpointListing,
+  CheckpointRun,
+} from "./types"
 
 export type SortKey = "date" | "name" | "size"
 
@@ -28,6 +34,12 @@ export function runFiles(run: Pick<CheckpointRun, "groups" | "others">): Checkpo
   return [...run.groups.flatMap((g) => g.files), ...(run.others ?? [])]
 }
 
+/** The search names one of the MLflow runs of the directory (run name or id). */
+const mlflowMatches = (run: CheckpointRun, q: string) =>
+  (run.mlflow_runs ?? []).some(
+    (m) => m.run_id.toLowerCase().startsWith(q) || m.run_name?.toLowerCase().includes(q),
+  )
+
 const byDate = (a: CheckpointRun, b: CheckpointRun) =>
   (b.mtime ?? "").localeCompare(a.mtime ?? "") || a.name.localeCompare(b.name)
 
@@ -37,7 +49,7 @@ export function viewRuns(listing: CheckpointListing | undefined, opts: ViewOptio
   const out: RunRowView[] = []
   for (const run of listing.runs) {
     if (opts.hideEmpty && run.count === 0) continue
-    if (!q || run.name.toLowerCase().includes(q)) {
+    if (!q || run.name.toLowerCase().includes(q) || mlflowMatches(run, q)) {
       out.push({ run, groups: run.groups, others: run.others ?? [], expand: false })
       continue
     }
@@ -117,4 +129,48 @@ export function pruneSelection(
   for (const r of listing.runs) for (const f of runFiles(r)) present.add(f.path)
   for (const f of listing.others ?? []) present.add(f.path)
   return new Set([...selected].filter((p) => present.has(p)))
+}
+
+// -- inferences ----------------------------------------------------------------------------
+
+export type InferenceState = "running" | "finished" | "failed" | "other"
+
+/** State of an inference: its MLflow run if known, else its TrainHub run. */
+export function inferenceState(inf: CheckpointInference): InferenceState {
+  const ml = inf.mlflow?.status
+  if (ml) {
+    if (ml === "RUNNING" || ml === "SCHEDULED") return "running"
+    if (ml === "FINISHED") return "finished"
+    return "failed"
+  }
+  switch (inf.status) {
+    case "launching":
+    case "running":
+    case "paused":
+    case "stopping":
+      return "running"
+    case "succeeded":
+      return "finished"
+    case "failed":
+    case "unreachable":
+      return "failed"
+    default:
+      return "other"
+  }
+}
+
+/** Inferences of a run per checkpoint (path relative to the root), most recent first. */
+export function inferencesByFile(run: Pick<CheckpointRun, "inferences">): Map<string, CheckpointInference[]> {
+  const out = new Map<string, CheckpointInference[]>()
+  for (const inf of run.inferences ?? []) {
+    const list = out.get(inf.checkpoint)
+    if (list) list.push(inf)
+    else out.set(inf.checkpoint, [inf])
+  }
+  return out
+}
+
+/** Checkpoint of an inference as shown under its run: path without the run directory. */
+export function inferenceCheckpoint(run: string, inf: CheckpointInference): string {
+  return inf.checkpoint.startsWith(`${run}/`) ? inf.checkpoint.slice(run.length + 1) : inf.checkpoint
 }

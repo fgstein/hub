@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import posixpath
-from collections.abc import Iterable, Sequence
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 
 NAME = "{name}"
@@ -253,6 +253,29 @@ def parse_delete_output(output: str, files: Sequence[str]) -> DeleteOutcome:
         if f not in done:
             failed[f] = "root not found" if root_missing else "no result (interrupted?)"
     return DeleteOutcome(deleted, failed, removed, root_missing)
+
+
+# -- MLflow ---------------------------------------------------------------------------
+
+
+def path_from_run(value: str, names: Container[str]) -> str | None:
+    """Path relative to the root of a path logged to MLflow, from its run directory.
+
+    The path may be seen from the container (other prefix than ``root``): only the
+    components are compared, and the last one that is a run of ``names`` wins, e.g.
+    ``/workspace/logs/runs/run_a/checkpoints/last.ckpt`` → ``run_a/checkpoints/last.ckpt``.
+    """
+    parts = [p for p in value.strip().replace("\\", "/").split("/") if p]
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] in names:
+            return "/".join(parts[i:])
+    return None
+
+
+def run_in_path(value: str, names: Container[str]) -> str | None:
+    """Run directory named in a path logged to MLflow (see :func:`path_from_run`)."""
+    rel = path_from_run(value, names)
+    return rel.split("/", 1)[0] if rel else None
 
 
 # -- paths in the container -----------------------------------------------------------

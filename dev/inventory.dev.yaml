@@ -115,6 +115,12 @@ checkpoints:
     machine: gpu-01
     root: /home/alice/seg/outputs
     layout: "{name}/checkpoints/{group}/*.ckpt"
+    mlflow:                    # MLflow run of each directory: the one that logged its path
+      match: params.callbacks/model_checkpoint/dirpath
+      inference:               # inferences made with these checkpoints (other experiment)
+        match: params.ckpt_path
+        experiments: [seg-inference]
+        show: [params.data.dataset, params.trainer.precision]
   - id: scratch
     label: Scratch (shared disk)
     machine: gpu-02

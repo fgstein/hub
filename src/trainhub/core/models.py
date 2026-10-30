@@ -409,6 +409,88 @@ def resolve_extends(projects: list[object]) -> list[object]:
     ]
 
 
+def split_mlflow_key(v: str) -> tuple[Literal["params", "tags"], str]:
+    """``params.<key>`` / ``tags.<key>`` → (kind, key); raise ``ValueError`` otherwise."""
+    kind, _, key = v.partition(".")
+    if kind not in ("params", "tags") or not key:
+        raise ValueError(f"{v!r}: params.<key> or tags.<key> expected")
+    if any(c in key for c in "`'\"\n"):
+        raise ValueError(f"{v!r}: invalid MLflow key (quote character)")
+    return ("params" if kind == "params" else "tags"), key
+
+
+class CheckpointInferenceMlflow(_Strict):
+    """MLflow runs of inferences made with the checkpoints of a source.
+
+    An inference belongs to the checkpoint whose path is logged under ``match`` (e.g.
+    ``params.ckpt_path``), possibly seen from the container: the run directory is the last
+    component of the path that is a run of the source, the rest is the checkpoint.
+    """
+
+    match: str = Field(
+        description="MLflow key holding the path of the checkpoint: params.<key> or "
+        "tags.<key> (e.g. params.ckpt_path)",
+    )
+    experiments: list[str] | None = Field(
+        default=None,
+        description="Experiments of the inferences (default: those of the mlflow section)",
+    )
+    show: list[str] = Field(
+        default_factory=list,
+        description="Parameters or tags shown for each inference (params.<key> / tags.<key>)",
+    )
+
+    @field_validator("match")
+    @classmethod
+    def _check_match(cls, v: str) -> str:
+        split_mlflow_key(v)
+        return v
+
+    @field_validator("show")
+    @classmethod
+    def _check_show(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_mlflow_key(key)
+        return v
+
+
+class CheckpointMlflow(_Strict):
+    """Link between the run directories of a checkpoint source and the MLflow runs.
+
+    A run directory ``{name}`` belongs to the MLflow run whose parameter or tag ``match``
+    holds a path with ``{name}`` as a component, e.g. the checkpoint directory logged by
+    Lightning (``params.callbacks/model_checkpoint/dirpath`` =
+    ``/workspace/logs/train/runs/2026-10-30_14-02-11/checkpoints``). Paths may be seen from
+    the container: only the components are compared. The MLflow server is the global one.
+    """
+
+    enabled: bool = True
+    match: str | None = Field(
+        default=None,
+        description="MLflow key holding the path of the run directory: params.<key> or "
+        "tags.<key> (e.g. params.callbacks/model_checkpoint/dirpath)",
+    )
+    experiments: list[str] | None = Field(
+        default=None, description="Experiment names searched (default: those of mlflow)"
+    )
+    inference: CheckpointInferenceMlflow | None = Field(
+        default=None, description="MLflow runs of the inferences made with the checkpoints"
+    )
+
+    @field_validator("match")
+    @classmethod
+    def _check_match(cls, v: str | None) -> str | None:
+        if v is not None:
+            split_mlflow_key(v)
+        return v
+
+    @model_validator(mode="after")
+    def _something(self) -> CheckpointMlflow:
+        if self.match is None and self.inference is None:
+            raise ValueError("mlflow: define 'match' and/or 'inference'")
+        return self
+
+
 class CheckpointSource(_Strict):
     """Directory of runs on a machine, whose checkpoints are listed in the Checkpoints tab.
 
@@ -429,6 +511,9 @@ class CheckpointSource(_Strict):
     layout: str = Field(
         default="{name}/checkpoints/{group}/*.ckpt",
         description="Tree under the root, e.g. {name}/checkpoints/{group}/*.ckpt",
+    )
+    mlflow: CheckpointMlflow | None = Field(
+        default=None, description="Find the MLflow run of each run directory"
     )
 
     @field_validator("root")
@@ -524,6 +609,23 @@ class Inventory(_Strict):
             return None
         return MlflowConfig.model_validate(merged)
 
+    def checkpoint_mlflow(
+        self, src: CheckpointSource, *, inference: bool = False
+    ) -> MlflowConfig | None:
+        """MLflow server and experiments to search for the training runs of ``src``, or its
+        inferences (``None``: not configured)."""
+        ml = src.mlflow
+        if ml is None or not ml.enabled or (ml.inference is None if inference else not ml.match):
+            return None
+        if self.mlflow is None or not self.mlflow.enabled or not self.mlflow.tracking_uri:
+            return None
+        experiments = ml.inference.experiments if inference and ml.inference else ml.experiments
+        return MlflowConfig(
+            tracking_uri=self.mlflow.tracking_uri,
+            experiments=experiments or self.mlflow.experiments,
+            run_tag=self.mlflow.run_tag or MlflowConfig.model_fields["run_tag"].default,
+        )
+
     @property
     def mlflow_poll_interval(self) -> float:
         return (self.mlflow.poll_interval_s if self.mlflow else None) or 10.0
@@ -561,6 +663,14 @@ class Inventory(_Strict):
         for c in self.checkpoints:
             if c.machine is not None and c.machine not in machines:
                 raise ValueError(f"checkpoints '{c.id}': unknown machine '{c.machine}'")
+            if (
+                c.mlflow is not None
+                and c.mlflow.enabled
+                and not (self.mlflow and self.mlflow.tracking_uri)
+            ):
+                raise ValueError(
+                    f"checkpoints '{c.id}': mlflow needs the global mlflow.tracking_uri"
+                )
         return self
 
     # -- access --------------------------------------------------------------
@@ -674,6 +784,35 @@ class MlflowInfo(BaseModel):
     max_epochs: float | None = Field(default=None, description="Maximum epoch (parameter)")
     url: str | None = Field(default=None, description="Page of the run in the MLflow UI")
     error: str | None = Field(default=None, description="Last error querying MLflow")
+
+
+class MlflowRunRef(BaseModel):
+    """An MLflow run found for a run directory of a checkpoint source."""
+
+    run_id: str
+    run_name: str | None = None
+    experiment_id: str | None = None
+    status: str | None = Field(
+        default=None, description="MLflow status: RUNNING, SCHEDULED, FINISHED, FAILED, KILLED"
+    )
+    started_at: datetime | None = None
+    url: str | None = Field(default=None, description="Page of the run in the MLflow UI")
+
+
+class CheckpointInference(BaseModel):
+    """An inference made with a checkpoint: TrainHub run, MLflow run, or both."""
+
+    checkpoint: str = Field(description="Checkpoint, relative to the source root")
+    exists: bool = Field(description="The checkpoint is still on disk (last scan)")
+    started_at: datetime | None = None
+    trainhub_run: str | None = Field(default=None, description="TrainHub run id")
+    project: str | None = Field(default=None, description="TrainHub project")
+    config: str | None = Field(default=None, description="TrainHub config")
+    status: str | None = Field(default=None, description="Status of the TrainHub run")
+    mlflow: MlflowRunRef | None = None
+    logged: dict[str, str] = Field(
+        default_factory=dict, description="Values of the keys of mlflow.inference.show"
+    )
 
 
 #: MLflow statuses after which the MLflow run no longer changes.

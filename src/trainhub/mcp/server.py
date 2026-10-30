@@ -19,7 +19,7 @@ from ..core.logs_clean import readable_logs
 from ..core.models import Run, RunSource, RunStatus
 from ..core.status import elapsed_seconds, format_duration, paused_seconds
 from ..service import RunService, ServiceError, allowed_actions
-from ..service.schemas import Selection, SeriesRequest
+from ..service.schemas import MlflowOrphanListing, Selection, SeriesRequest
 
 INSTRUCTIONS = """\
 TrainHub launches and monitors training commands on remote GPU machines
@@ -281,7 +281,8 @@ def build_mcp(
         annotations=READ,
         description="Runs and checkpoints of a source, most recent run first: for each run "
         "its groups (e.g. topk, last) and checkpoint files (path relative to the root, "
-        "size in bytes, date, inference runs already launched with it). The absolute path "
+        "size in bytes, date, inference runs already launched with it), its MLflow runs and "
+        "the inferences made with its checkpoints (TrainHub and MLflow). The absolute path "
         "to pass as checkpoint is root + '/' + path. Scan cached 5 min (refresh to force).",
     )
     async def list_checkpoints(
@@ -316,10 +317,41 @@ def build_mcp(
                     "mtime": r.mtime.isoformat() if r.mtime else None,
                     "groups": {g.name: [file(f) for f in g.files] for g in r.groups},
                     **({"others": [file(f) for f in r.others]} if r.others else {}),
+                    **(
+                        {"mlflow_runs": [m.model_dump(mode="json") for m in r.mlflow_runs]}
+                        if r.mlflow_runs
+                        else {}
+                    ),
+                    **(
+                        {
+                            "inferences": [
+                                i.model_dump(mode="json", exclude_none=True) for i in r.inferences
+                            ]
+                        }
+                        if r.inferences
+                        else {}
+                    ),
                 }
                 for r in runs[:limit]
             ],
         }
+
+    @mcp.tool(
+        annotations=READ,
+        description="MLflow runs without a directory on disk: runs of the checkpoint sources "
+        "with mlflow.match whose logged directory exists in no source (deleted, or written "
+        "elsewhere). scan_errors lists sources that could not be scanned: their runs may be "
+        "reported by mistake. Cached 5 min (refresh to force).",
+    )
+    async def list_mlflow_orphans(
+        limit: Annotated[int, Field(description="Maximum number of runs", ge=1, le=1000)] = 100,
+        refresh: Annotated[bool, Field(description="Rescan the disks and MLflow")] = False,
+    ) -> dict[str, Any]:
+        lst: MlflowOrphanListing = await call(svc.checkpoints.mlflow_orphans(refresh=refresh))
+        out: dict[str, Any] = lst.model_dump(mode="json", exclude={"runs"})
+        out["runs_total"] = len(lst.runs)
+        out["runs"] = [o.model_dump(mode="json", exclude_none=True) for o in lst.runs[:limit]]
+        return out
 
     @mcp.tool(
         annotations=READ,
@@ -648,6 +680,7 @@ READ_TOOLS = frozenset(
         "get_gpus",
         "list_checkpoint_sources",
         "list_checkpoints",
+        "list_mlflow_orphans",
         "get_machine_load",
     }
 )

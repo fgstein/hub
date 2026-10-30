@@ -21,6 +21,9 @@ from ..service.schemas import (
     InventoryView,
     MachineGpus,
     MachineLoad,
+    MlflowDeleteRequest,
+    MlflowDeleteResult,
+    MlflowOrphanListing,
     PreviewResult,
     ProjectView,
     RunView,
@@ -100,6 +103,20 @@ async def patch_project(project_id: str, patch: ProjectPatch, svc: Svc) -> Proje
 async def checkpoint_sources(svc: Svc) -> list[CheckpointSourceView]:
     """Checkpoint sources, with the total size and count of their last scan."""
     return svc.checkpoints.sources()
+
+
+@router.get("/mlflow-orphans", response_model=MlflowOrphanListing, tags=["checkpoints"])
+async def mlflow_orphans(svc: Svc, refresh: bool = False) -> MlflowOrphanListing:
+    """MLflow runs whose logged directory is in no checkpoint source (scans and searches
+    cached 5 min, ``refresh`` forces them)."""
+    return await svc.checkpoints.mlflow_orphans(refresh=refresh)
+
+
+@router.post("/mlflow-orphans/delete", response_model=MlflowDeleteResult, tags=["checkpoints"])
+async def delete_mlflow_orphans(req: MlflowDeleteRequest, svc: Svc) -> MlflowDeleteResult:
+    """Delete MLflow runs without directory (MLflow trash, until ``mlflow gc``); a run that
+    is not an orphan is refused."""
+    return await svc.checkpoints.delete_mlflow_orphans(req.run_ids)
 
 
 @router.get("/checkpoints/{source_id}", response_model=CheckpointListing, tags=["checkpoints"])

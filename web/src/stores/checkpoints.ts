@@ -1,7 +1,13 @@
 /** Checkpoints tab: listings per source (loaded on demand) and deletion. */
 import { createStore } from "solid-js/store"
 import { api } from "~/lib/api"
-import type { CheckpointDeleteResult, CheckpointListing, CheckpointSourceView } from "~/lib/types"
+import type {
+  CheckpointDeleteResult,
+  CheckpointListing,
+  CheckpointSourceView,
+  MlflowDeleteResult,
+  MlflowOrphanListing,
+} from "~/lib/types"
 import { toastError } from "./toasts"
 
 interface ListingState {
@@ -13,6 +19,23 @@ interface ListingState {
 const [listings, setListings] = createStore<Record<string, ListingState>>({})
 
 export { listings }
+
+const [orphans, setOrphans] = createStore<{ loading: boolean; data?: MlflowOrphanListing; error?: string }>({
+  loading: false,
+})
+
+export { orphans }
+
+/** MLflow runs without a directory in any source; ``refresh``: the server rescans everything. */
+export async function loadOrphans(mode: "cached" | "reload" | "rescan" = "cached"): Promise<void> {
+  if (orphans.loading || (orphans.data && mode === "cached")) return
+  setOrphans({ loading: true, error: undefined })
+  try {
+    setOrphans({ loading: false, data: await api.mlflowOrphans(mode === "rescan") })
+  } catch (e) {
+    setOrphans({ loading: false, error: e instanceof Error ? e.message : String(e) })
+  }
+}
 
 /**
  * Load a source listing. ``cached``: only if not loaded yet; ``reload``: ask the server again
@@ -44,6 +67,18 @@ export function onSourceUpdated(src: CheckpointSourceView): void {
   const cur = listings[src.id]
   if (!cur?.data || cur.loading) return
   if (src.count !== cur.data.count || src.size !== cur.data.size) void loadCheckpoints(src.id, "reload")
+}
+
+/** Delete orphan MLflow runs (MLflow trash), then reload the orphans from the server cache. */
+export async function deleteOrphans(runIds: string[]): Promise<MlflowDeleteResult | null> {
+  try {
+    const res = await api.deleteMlflowOrphans(runIds)
+    await loadOrphans("reload")
+    return res
+  } catch (e) {
+    toastError(e)
+    return null
+  }
 }
 
 export async function deleteCheckpoints(

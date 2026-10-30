@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -17,10 +19,19 @@ from trainhub.api.app import create_app
 from trainhub.config import Settings
 from trainhub.core import checkpoints as ck
 from trainhub.core.inventory import InventoryError, parse_inventory
-from trainhub.core.models import CheckpointSource, RunStatus
+from trainhub.core.models import (
+    CheckpointSource,
+    MlflowConfig,
+    MlflowInfo,
+    MlflowRunRef,
+    Run,
+    RunStatus,
+)
+from trainhub.executors.base import MachineUnreachableError
 from trainhub.mcp.server import build_mcp
 from trainhub.service import InvalidRequestError, NotFoundError, RunService, Selection
 from trainhub.service.checkpoints import build_listing
+from trainhub.service.mlflow import HttpMlflow, MlflowError, MlflowHit, MlflowSource
 
 from .conftest import BASIC_INVENTORY
 from .helpers import SIMULATION, make_service, wait_for
@@ -531,3 +542,434 @@ async def test_service_server_source(tmp_path: Path) -> None:
         assert res.deleted == [path]
     finally:
         await s.close()
+
+
+# -- MLflow ---------------------------------------------------------------------------
+
+ML_INVENTORY = (
+    CKPT_INVENTORY.replace(
+        "    root: /home/alice/seg/outputs\n",
+        "    root: /home/alice/seg/outputs\n"
+        "    mlflow: {match: params.callbacks/model_checkpoint/dirpath}\n",
+        1,
+    )
+    + "mlflow:\n  tracking_uri: http://mlflow.lab:5000\n  experiments: [seg]\n"
+)
+
+
+def test_path_from_run() -> None:
+    names = {"run_a"}
+    assert ck.path_from_run("/ws/out/run_a/checkpoints/last.ckpt", names) == (
+        "run_a/checkpoints/last.ckpt"
+    )
+    assert ck.path_from_run("run_a//x.ckpt", names) == "run_a/x.ckpt"
+    assert ck.path_from_run("/ws/out/run_b/x.ckpt", names) is None
+
+
+def test_run_in_path() -> None:
+    names = {"run_a", "run_b", "checkpoints"}
+    assert ck.run_in_path("/workspace/out/run_a/checkpoints", {"run_a"}) == "run_a"
+    assert ck.run_in_path("/workspace/out/run_a/ckpt/", names) == "run_a"
+    assert ck.run_in_path("run_b", names) == "run_b"
+    assert ck.run_in_path("C:\\out\\run_b\\x", names) == "run_b"
+    assert ck.run_in_path("/workspace/out/run_z/x", names) is None
+    # the last component that is a run wins
+    assert ck.run_in_path("/x/run_a/run_b/checkpoints", {"run_a", "run_b"}) == "run_b"
+
+
+def test_inventory_checkpoint_mlflow() -> None:
+    inv = parse_inventory(ML_INVENTORY, "t.yaml")
+    seg = inv.checkpoint_source("seg")
+    assert seg.mlflow is not None
+    assert seg.mlflow.match == "params.callbacks/model_checkpoint/dirpath"
+    cfg = inv.checkpoint_mlflow(seg)
+    assert cfg is not None and cfg.tracking_uri == "http://mlflow.lab:5000"
+    assert cfg.experiments == ["seg"]
+    assert inv.checkpoint_mlflow(inv.checkpoint_source("flat")) is None
+    with pytest.raises(InventoryError, match=r"needs the global mlflow\.tracking_uri"):
+        parse_inventory(ML_INVENTORY.rsplit("mlflow:\n", 1)[0], "t.yaml")
+    for bad in ("dirpath", "metrics.x", "params.", "params.a`b"):
+        with pytest.raises(InventoryError, match=r"expected|invalid MLflow key"):
+            parse_inventory(ML_INVENTORY.replace("params.callbacks/model_checkpoint/dirpath", bad))
+    with pytest.raises(InventoryError, match="'match' and/or 'inference'"):
+        parse_inventory(
+            ML_INVENTORY.replace("{match: params.callbacks/model_checkpoint/dirpath}", "{}")
+        )
+
+
+def _ml(run_id: str, path: str | None, start: int = 1_700_000_000_000) -> dict[str, Any]:
+    params = [{"key": "callbacks/model_checkpoint/dirpath", "value": path}] if path else []
+    return {
+        "info": {
+            "run_id": run_id,
+            "run_name": f"name-{run_id}",
+            "experiment_id": "7",
+            "status": "FINISHED",
+            "start_time": start,
+        },
+        "data": {"params": [{"key": "lr", "value": "0.1"}, *params]},
+    }
+
+
+async def test_http_search_by_key() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path.removeprefix("/api/2.0/mlflow/")
+        if path == "experiments/get-by-name":
+            return httpx.Response(200, json={"experiment": {"experiment_id": "7"}})
+        assert path == "runs/search"
+        body = json.loads(req.content)
+        bodies.append(body)
+        if "page_token" not in body:
+            runs = [_ml("m1", "/ws/out/run_a/checkpoints"), _ml("m0", None)]
+            return httpx.Response(200, json={"runs": runs, "next_page_token": "p2"})
+        return httpx.Response(200, json={"runs": [_ml("m2", "/ws/out/run_b/checkpoints")]})
+
+    client = HttpMlflow(transport=httpx.MockTransport(handler))
+    cfg = MlflowConfig(tracking_uri="http://mlflow.lab:5000", experiments=["seg"])
+    try:
+        hits, truncated = await client.search_by_key(
+            cfg, "params.callbacks/model_checkpoint/dirpath", ["params.lr", "tags.nope"]
+        )
+    finally:
+        await client.close()
+    assert not truncated
+    assert [(h.value, h.ref.run_id) for h in hits] == [
+        ("/ws/out/run_a/checkpoints", "m1"),
+        ("/ws/out/run_b/checkpoints", "m2"),
+    ]
+    assert hits[0].logged == {"params.lr": "0.1"}
+    ref = hits[0].ref
+    assert ref.run_name == "name-m1" and ref.status == "FINISHED" and ref.started_at
+    assert ref.url == "http://mlflow.lab:5000/#/experiments/7/runs/m1"
+    assert bodies[0]["filter"] == "params.`callbacks/model_checkpoint/dirpath` LIKE '%'"
+    assert bodies[0]["experiment_ids"] == ["7"] and bodies[1]["page_token"] == "p2"
+
+
+class _StubMlflow(MlflowSource):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.fail = False
+        self.inferences: list[MlflowHit] = []
+        self.extra: list[MlflowHit] = []
+        self.deleted: list[str] = []
+        self.delete_error: str | None = None
+        self.info = MlflowInfo(run_id="th-ml", experiment_id="9")
+        self.inference: tuple[MlflowConfig, list[str]] | None = None
+
+    async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
+        return self.info
+
+    async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
+        if self.delete_error:
+            raise MlflowError(self.delete_error)
+        self.deleted.append(run_id)
+
+    async def search_by_key(
+        self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
+    ) -> tuple[list[MlflowHit], bool]:
+        self.calls += 1
+        if self.fail:
+            raise MlflowError("MLflow unreachable")
+        ref = MlflowRunRef
+        if match == "params.ckpt_path":
+            self.inference = (cfg, list(extra))
+            return self.inferences, False
+        return [
+            *self.extra,
+            MlflowHit("/ws/out/run_a/checkpoints", ref(run_id="new", status="RUNNING")),
+            MlflowHit("/ws/out/run_a/checkpoints", ref(run_id="old", status="FAILED")),
+            MlflowHit("/ws/out/run_c/checkpoints", ref(run_id="c")),
+            MlflowHit("/ws/out/elsewhere/checkpoints", ref(run_id="x")),
+        ], False
+
+
+async def test_service_listing_with_mlflow(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    stub = _StubMlflow()
+    svc.mlflow.source = stub
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        runs = {r.name: [m.run_id for m in r.mlflow_runs] for r in lst.runs}
+        assert runs == {"run_a": ["new", "old"], "run_b": [], "run_c": ["c"]}
+        assert lst.mlflow is not None and lst.mlflow.searched == 4 and not lst.mlflow.error
+        assert lst.mlflow.match == "params.callbacks/model_checkpoint/dirpath"
+        # cached with the scan, refreshed with it
+        await svc.checkpoints.listing("seg")
+        assert stub.calls == 1
+        # an outage keeps the last result, with the error
+        stub.fail = True
+        lst = await svc.checkpoints.listing("seg", refresh=True)
+        assert stub.calls == 2 and lst.mlflow is not None
+        assert lst.mlflow.error == "MLflow unreachable"
+        assert [m.run_id for m in lst.runs[0].mlflow_runs] == ["new", "old"]
+        # no mlflow section: no search
+        flat = await svc.checkpoints.listing("flat")
+        assert flat.mlflow is None and stub.calls == 2
+    finally:
+        await svc.close()
+
+
+async def test_fake_mlflow_listing(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        found = {r.name: bool(r.mlflow_runs) for r in lst.runs}
+        assert found == {"run_a": True, "run_b": False, "run_c": True}
+        assert lst.runs[0].mlflow_runs[0].url
+    finally:
+        await svc.close()
+
+
+INF_INVENTORY = ML_INVENTORY.replace(
+    "    mlflow: {match: params.callbacks/model_checkpoint/dirpath}\n",
+    "    mlflow:\n"
+    "      match: params.callbacks/model_checkpoint/dirpath\n"
+    "      inference:\n"
+    "        match: params.ckpt_path\n"
+    "        experiments: [seg-infer]\n"
+    "        show: [params.data]\n",
+    1,
+)
+
+
+async def test_service_inferences(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=INF_INVENTORY)
+    await svc.start()
+    stub = _StubMlflow()
+    svc.mlflow.source = stub
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        a = next(r for r in lst.runs if r.name == "run_a")
+        ckpt = a.groups[1].files[0]
+        # a TrainHub inference on a checkpoint of run_a, already linked to its MLflow run
+        run = await svc.launch(
+            INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True
+        )
+        await svc.set_mlflow(run.id, stub.info, started_at=run.started_at)
+        ref = MlflowRunRef
+        stub.inferences = [
+            # the MLflow run of the TrainHub inference: merged into it
+            MlflowHit(
+                f"/workspace/seg/outputs/{ckpt.path}",
+                ref(run_id="th-ml", run_name="infer-th"),
+                {"params.data": "ade20k", "tags.trainhub.run_id": run.id},
+            ),
+            # launched outside TrainHub, on a checkpoint deleted since
+            MlflowHit(
+                "/elsewhere/run_a/checkpoints/topk/epoch0000999.ckpt",
+                ref(run_id="ext", run_name="infer-ext"),
+                {"params.data": "coco"},
+            ),
+            MlflowHit("/elsewhere/unknown/x.ckpt", ref(run_id="lost")),
+        ]
+        lst = await svc.checkpoints.listing("seg", refresh=True)
+        assert stub.inference is not None
+        cfg, extra = stub.inference
+        assert cfg.experiments == ["seg-infer"]
+        assert extra == ["params.data", "tags.trainhub.run_id"]
+        a = next(r for r in lst.runs if r.name == "run_a")
+        by_ml = {i.mlflow.run_id if i.mlflow else None: i for i in a.inferences}
+        assert set(by_ml) == {"th-ml", "ext"}
+        th = by_ml["th-ml"]
+        assert th.trainhub_run == run.id and th.project == "seg-infer"
+        assert th.config == "baseline" and th.checkpoint == ckpt.path and th.exists
+        assert th.mlflow is not None and th.mlflow.run_name == "infer-th"
+        assert th.logged == {"params.data": "ade20k"}
+        ext = by_ml["ext"]
+        assert ext.trainhub_run is None and not ext.exists and ext.logged == {"params.data": "coco"}
+        assert ext.checkpoint == "run_a/checkpoints/topk/epoch0000999.ckpt"
+        assert all(not r.inferences for r in lst.runs if r.name != "run_a")
+        assert lst.mlflow_inference is not None and lst.mlflow_inference.searched == 3
+        assert lst.mlflow_inference.match == "params.ckpt_path"
+    finally:
+        await svc.close()
+
+
+async def test_trainhub_inferences_without_mlflow(svc: RunService) -> None:
+    lst = await svc.checkpoints.listing("seg")
+    ckpt = lst.runs[0].groups[1].files[0]
+    run = await svc.launch(
+        INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True
+    )
+    lst = await svc.checkpoints.listing("seg")
+    [inf] = lst.runs[0].inferences
+    assert inf.trainhub_run == run.id and inf.config == "baseline" and inf.mlflow is None
+    assert lst.mlflow is None and lst.mlflow_inference is None
+
+
+async def test_fake_mlflow_inferences(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=INF_INVENTORY)
+    await svc.start()
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        a = next(r for r in lst.runs if r.name == "run_a")
+        assert len(a.inferences) == 2
+        assert {i.exists for i in a.inferences} == {True, False}
+        assert all(set(i.logged) == {"params.data"} for i in a.inferences)
+    finally:
+        await svc.close()
+
+
+def test_inventory_inference_settings() -> None:
+    inv = parse_inventory(INF_INVENTORY, "t.yaml")
+    seg = inv.checkpoint_source("seg")
+    cfg = inv.checkpoint_mlflow(seg, inference=True)
+    assert cfg is not None and cfg.experiments == ["seg-infer"] and cfg.run_tag == "trainhub.run_id"
+    assert inv.checkpoint_mlflow(seg) is not None
+    assert inv.checkpoint_mlflow(inv.checkpoint_source("flat"), inference=True) is None
+    with pytest.raises(InventoryError, match=r"params\.<key> or tags\.<key>"):
+        parse_inventory(INF_INVENTORY.replace("show: [params.data]", "show: [data]"), "t.yaml")
+
+
+async def test_mlflow_orphans(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    stub = _StubMlflow()
+    svc.mlflow.source = stub
+    try:
+        lst = await svc.checkpoints.mlflow_orphans()
+        assert lst.enabled and lst.searched == 4 and lst.linked == 3
+        [o] = lst.runs
+        assert o.run.run_id == "x" and o.path == "/ws/out/elsewhere/checkpoints"
+        assert o.sources == ["seg"] and o.match == "params.callbacks/model_checkpoint/dirpath"
+        assert not lst.scan_errors and not lst.mlflow_errors
+        # a directory of another source (flat, without mlflow) is not an orphan
+        flat = await svc.checkpoints.listing("flat")
+        flat_hit = MlflowHit(f"/mnt/{flat.runs[0].name}/x", MlflowRunRef(run_id="f"))
+        stub.extra = [flat_hit]
+        lst = await svc.checkpoints.mlflow_orphans(refresh=True)
+        assert [o.run.run_id for o in lst.runs] == ["x"] and lst.linked == 4
+        # MLflow down: the error is reported
+        stub.fail = True
+        svc.checkpoints.clear()
+        lst = await svc.checkpoints.mlflow_orphans(refresh=True)
+        assert lst.mlflow_errors == {"seg": "MLflow unreachable"} and not lst.runs
+    finally:
+        await svc.close()
+
+
+async def test_mlflow_orphans_disabled(svc: RunService) -> None:
+    lst = await svc.checkpoints.mlflow_orphans()
+    assert not lst.enabled and not lst.runs and lst.searched == 0
+
+
+async def test_mlflow_orphans_scan_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    svc.mlflow.source = _StubMlflow()
+    real = svc.executor.exec
+
+    async def exec_(machine: Any, argv: list[str], **kw: Any) -> Any:
+        if machine.id == "gpu-01":
+            raise MachineUnreachableError("gpu-01", "unreachable")
+        return await real(machine, argv, **kw)
+
+    monkeypatch.setattr(svc.executor, "exec", exec_)
+    try:
+        lst = await svc.checkpoints.mlflow_orphans()
+        # the directories of seg are unknown: its MLflow runs all look like orphans
+        assert set(lst.scan_errors) == {"seg"} and "unreachable" in lst.scan_errors["seg"]
+        assert len(lst.runs) == 4
+    finally:
+        await svc.close()
+
+
+async def test_fake_mlflow_orphans_and_mcp(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    try:
+        lst = await svc.checkpoints.mlflow_orphans()
+        names = sorted(o.path.split("/")[-2] for o in lst.runs)
+        assert names == ["segformer_b0_debug", "unet_small_2026-08-14"]
+        views = {v.id: v for v in svc.checkpoints.sources()}
+        assert views["seg"].mlflow_match == "params.callbacks/model_checkpoint/dirpath"
+        assert views["flat"].mlflow_match is None
+        async with create_connected_server_and_client_session(build_mcp(svc)._mcp_server) as c:
+            res = await c.call_tool("list_mlflow_orphans", {"limit": 1})
+            assert not res.isError
+            data = json.loads(res.content[0].text)  # type: ignore[union-attr]
+            assert data["runs_total"] == 2 and len(data["runs"]) == 1
+            res = await c.call_tool("list_checkpoints", {"source": "seg"})
+            data = json.loads(res.content[0].text)  # type: ignore[union-attr]
+            assert any("mlflow_runs" in r for r in data["runs"])
+    finally:
+        await svc.close()
+
+
+async def test_http_delete_run() -> None:
+    calls: list[tuple[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        calls.append((req.url.path, body))
+        if body["run_id"] == "gone":
+            return httpx.Response(404, json={"error_code": "RESOURCE_DOES_NOT_EXIST"})
+        return httpx.Response(200, json={})
+
+    client = HttpMlflow(transport=httpx.MockTransport(handler))
+    cfg = MlflowConfig(tracking_uri="http://mlflow.lab:5000")
+    try:
+        await client.delete_run(cfg, "abc")
+        with pytest.raises(MlflowError, match="not found"):
+            await client.delete_run(cfg, "gone")
+    finally:
+        await client.close()
+    assert calls[0] == ("/api/2.0/mlflow/runs/delete", {"run_id": "abc"})
+
+
+async def test_delete_mlflow_orphans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    await svc.start()
+    stub = _StubMlflow()
+    svc.mlflow.source = stub
+    stub.extra = [MlflowHit("/ws/out/gone_b/checkpoints", MlflowRunRef(run_id="y"))]
+    try:
+        # a run whose directory exists is refused, whatever the others
+        with pytest.raises(InvalidRequestError, match="not an MLflow run without directory"):
+            await svc.checkpoints.delete_mlflow_orphans(["x", "new"])
+        assert not stub.deleted
+        stub.delete_error = "MLflow 403: Permission denied"
+        res = await svc.checkpoints.delete_mlflow_orphans(["x"])
+        assert not res.deleted and res.failed == {"x": "MLflow 403: Permission denied"}
+        stub.delete_error = None
+        res = await svc.checkpoints.delete_mlflow_orphans(["x", "x"])
+        assert res.deleted == ["x"] and not res.failed and res.remaining == 1
+        assert stub.deleted == ["x"]
+        # gone from the cached searches, without asking MLflow again
+        calls = stub.calls
+        lst = await svc.checkpoints.mlflow_orphans()
+        assert [o.run.run_id for o in lst.runs] == ["y"] and stub.calls == calls
+
+        # a source that cannot be scanned: everything is refused
+        real = svc.executor.exec
+
+        async def exec_(machine: Any, argv: list[str], **kw: Any) -> Any:
+            if machine.id == "gpu-01":
+                raise MachineUnreachableError("gpu-01", "unreachable")
+            return await real(machine, argv, **kw)
+
+        monkeypatch.setattr(svc.executor, "exec", exec_)
+        svc.checkpoints.clear()
+        with pytest.raises(InvalidRequestError, match="could not be scanned"):
+            await svc.checkpoints.delete_mlflow_orphans(["y"])
+        assert stub.deleted == ["x"]
+    finally:
+        await svc.close()
+
+
+def test_api_mlflow_orphans(tmp_path: Path) -> None:
+    svc = make_service(tmp_path, text=ML_INVENTORY)
+    with TestClient(create_app(Settings(), svc)) as client:
+        lst = client.get("/api/mlflow-orphans").json()
+        assert lst["enabled"] and len(lst["runs"]) == 2
+        ids = [r["run"]["run_id"] for r in lst["runs"]]
+        bad = client.post("/api/mlflow-orphans/delete", json={"run_ids": ["nope"]})
+        assert bad.status_code == 422
+        res = client.post("/api/mlflow-orphans/delete", json={"run_ids": ids[:1]}).json()
+        assert res["deleted"] == ids[:1] and res["remaining"] == 1
+        lst = client.get("/api/mlflow-orphans?refresh=true").json()
+        assert [r["run"]["run_id"] for r in lst["runs"]] == ids[1:]

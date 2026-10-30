@@ -93,3 +93,10 @@ projects:
 #     # {name}: one directory per run; {group}: optional level (topk, last…);
 #     # last component: file pattern
 #     layout: "{name}/checkpoints/{group}/*.ckpt"
+#     mlflow:                           # optional: MLflow run of each directory (global server)
+#       match: params.callbacks/model_checkpoint/dirpath   # key holding the directory path
+#       # experiments: [segmentation]   # default: those of the mlflow section
+#       # inference:                    # inferences made with these checkpoints
+#       #   match: params.ckpt_path     # key holding the checkpoint path
+#       #   experiments: [seg-inference]
+#       #   show: [params.data.dataset] # values shown for each inference
