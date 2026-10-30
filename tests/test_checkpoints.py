@@ -396,8 +396,9 @@ async def test_inference_with_checkpoint(svc: RunService) -> None:
         await svc.preview(INFER)
     with pytest.raises(InvalidRequestError, match="no \\{checkpoint\\}"):
         await svc.preview(INFER.model_copy(update={"project": "segmentation", "checkpoint": host}))
-    with pytest.raises(InvalidRequestError, match="not mounted"):
-        await svc.preview(INFER.model_copy(update={"checkpoint": "/elsewhere/e.ckpt"}))
+    # no volume covers it: the machine path is passed as is (mounted by a wrapper…)
+    p = await svc.preview(INFER.model_copy(update={"checkpoint": "/elsewhere/e.ckpt"}))
+    assert p.command.endswith("--ckpt /elsewhere/e.ckpt")
     with pytest.raises(InvalidRequestError, match="absolute"):
         await svc.preview(INFER.model_copy(update={"checkpoint": "rel/e.ckpt"}))
 

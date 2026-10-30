@@ -163,6 +163,13 @@ export const IconDatabase = (p: P) => (
     <path d="M3 4v8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V4M3 8c0 1 2.2 1.8 5 1.8S13 9 13 8" />
   </Svg>
 )
+export const IconHelp = (p: P) => (
+  <Svg {...p}>
+    <circle cx="8" cy="8" r="5.5" />
+    <path d="M6.3 6.4a1.8 1.8 0 0 1 3.5.6c0 1.2-1.8 1.5-1.8 2.6" />
+    <circle cx="8" cy="11.4" r=".4" fill="currentColor" />
+  </Svg>
+)
 export const IconFlag = (p: P) => (
   <Svg {...p}>
     <path d="M4 14V2.5M4 3h7.5l-1.8 2.75L11.5 8.5H4" />

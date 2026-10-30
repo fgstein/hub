@@ -90,7 +90,8 @@ class RunSpec:
     checkpoint: str | None = None
     """``{checkpoint}``: path of the checkpoint on the machine."""
     checkpoint_in_container: str | None = None
-    """Same file seen from the container (through the volumes): the value inserted."""
+    """Same file seen from the container (through the volumes, else unchanged): the value
+    inserted."""
     extra_env: Mapping[str, str] = field(default_factory=dict)
     """Variables added by TrainHub to the container (e.g. MLflow tagging)."""
     series: Series | None = None
@@ -454,11 +455,6 @@ def validate_spec(spec: RunSpec) -> None:
         raise ValueError("this command takes a {checkpoint}: choose a checkpoint")
     if spec.checkpoint and not wants:
         raise ValueError("checkpoint given but the command has no {checkpoint} placeholder")
-    if spec.checkpoint and not spec.checkpoint_in_container:
-        raise ValueError(
-            f"checkpoint {spec.checkpoint!r} is not mounted in the container: "
-            "add a docker volume covering it to the project"
-        )
     if spec.series is not None:
         if len(spec.series.values) != spec.series.count:
             raise ValueError("series: one set of values per repetition expected")

@@ -355,6 +355,32 @@ export function draftsFromCheckpoints(projectId: string, machine: string | null,
   return paths.length
 }
 
+/** Draft waiting for a checkpoint chosen in the Checkpoints tab (draft → Checkpoints tab). */
+export interface CheckpointPick {
+  projectId: string
+  key: number
+}
+const [checkpointPick, setCheckpointPick] = createSignal<CheckpointPick | null>(null)
+
+export { checkpointPick, setCheckpointPick }
+
+/** Fill the waiting draft with a checkpoint (path on the machine), on the source's machine when
+ * the project allows it. Returns the project of the draft, ``null`` if it no longer exists. */
+export function pickCheckpoint(machine: string | null, path: string): string | null {
+  const pick = checkpointPick()
+  setCheckpointPick(null)
+  if (!pick) return null
+  const p = project(pick.projectId)
+  if (!p || !state.drafts[pick.projectId]?.some((d) => d.key === pick.key)) return null
+  updateDraft(pick.projectId, pick.key, {
+    checkpoint: path,
+    ...(machine && p.machines.includes(machine) ? { machine } : {}),
+    focus: true,
+  })
+  setActiveTab(pick.projectId)
+  return pick.projectId
+}
+
 /** TrainHub runs launched with each checkpoint (path on the machine), live. */
 export function runsByCheckpoint(): Record<string, RunView[]> {
   const out: Record<string, RunView[]> = {}

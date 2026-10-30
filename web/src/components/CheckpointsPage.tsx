@@ -15,7 +15,16 @@ import {
 } from "~/lib/checkpoints"
 import { formatAgo, formatBytes, formatDateTime } from "~/lib/format"
 import type { CheckpointFile, CheckpointGroup, CheckpointSourceView, RunView } from "~/lib/types"
-import { checkpointProjects, draftsFromCheckpoints, runsByCheckpoint, state } from "~/stores/app"
+import {
+  checkpointPick,
+  checkpointProjects,
+  draftsFromCheckpoints,
+  pickCheckpoint,
+  project,
+  runsByCheckpoint,
+  setCheckpointPick,
+  state,
+} from "~/stores/app"
 import { deleteCheckpoints, listings, loadCheckpoints } from "~/stores/checkpoints"
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
@@ -203,7 +212,10 @@ export function CheckpointsPage(props: { source?: string }) {
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      if (deleteMode()) {
+      if (picking()) {
+        e.preventDefault()
+        cancelPick()
+      } else if (deleteMode()) {
         e.preventDefault()
         exitDelete()
       } else if (toSend().size) {
@@ -214,6 +226,8 @@ export function CheckpointsPage(props: { source?: string }) {
     window.addEventListener("keydown", onKey)
     onCleanup(() => window.removeEventListener("keydown", onKey))
   })
+  // Leaving the tab without choosing cancels the pick.
+  onCleanup(() => setCheckpointPick(null))
 
   const confirmDelete = async () => {
     const src = sourceId()
@@ -239,6 +253,27 @@ export function CheckpointsPage(props: { source?: string }) {
     } else {
       exitDelete()
     }
+  }
+
+  // -- draft → checkpoint: the clicked checkpoint fills the waiting draft ----------------
+
+  const picking = () => (deleteMode() ? null : checkpointPick())
+  const pickingLabel = () => {
+    const pid = checkpointPick()?.projectId
+    return project(pid)?.label ?? pid
+  }
+  const backToDraft = (pid: string) => navigate(`/p/${encodeURIComponent(pid)}`)
+  const cancelPick = () => {
+    const pid = checkpointPick()?.projectId
+    setCheckpointPick(null)
+    if (pid) backToDraft(pid)
+  }
+  const pickFile = (file: CheckpointFile) => {
+    const src = source()
+    if (!src) return
+    const pid = pickCheckpoint(src.machine ?? null, hostPath(src.root, file.path))
+    if (pid) backToDraft(pid)
+    else toast("the draft no longer exists", "error")
   }
 
   const sendTo = () => {
@@ -275,7 +310,8 @@ export function CheckpointsPage(props: { source?: string }) {
     const runs = (): RunView[] => byCheckpoint()[path()] ?? []
     const selected = () => (deleteMode() ? toDelete() : toSend()).has(fp.file.path)
     const toggle = () => {
-      if (deleteMode()) {
+      if (picking()) pickFile(fp.file)
+      else if (deleteMode()) {
         if (fp.deletable) setToDelete((s) => toggleFiles([fp.file], s))
       } else setToSend((s) => toggleFiles([fp.file], s))
     }
@@ -293,9 +329,12 @@ export function CheckpointsPage(props: { source?: string }) {
         data-path={fp.file.path}
       >
         <Show
-          when={!deleteMode() || fp.deletable}
+          when={!picking() && (!deleteMode() || fp.deletable)}
           fallback={
-            <span class="size-3.5 shrink-0" title="Not under a run directory: cannot be deleted here" />
+            <span
+              class="size-3.5 shrink-0"
+              title={picking() ? undefined : "Not under a run directory: cannot be deleted here"}
+            />
           }
         >
           <Check
@@ -626,6 +665,22 @@ export function CheckpointsPage(props: { source?: string }) {
             </button>
           </Show>
         </div>
+        <Show when={picking()}>
+          <div
+            class="flex shrink-0 items-center gap-2 border-b border-line-weak bg-surface-active px-4 py-1.5 text-xs text-fg-strong"
+            data-testid="ckpt-pick-bar"
+          >
+            Click a checkpoint to use it in the draft of <span class="font-medium">{pickingLabel()}</span>
+            <div class="flex-1" />
+            <button
+              type="button"
+              class="h-6 rounded px-2 text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+              onClick={cancelPick}
+            >
+              Cancel
+            </button>
+          </div>
+        </Show>
         <Show when={entry()?.error}>
           <div class="shrink-0 border-b border-line-weaker bg-critical-bg px-4 py-1.5 text-xs text-fg-critical">
             {entry()?.error}
@@ -708,7 +763,7 @@ export function CheckpointsPage(props: { source?: string }) {
             />
           </div>
         </Show>
-        <Show when={!deleteMode() && toSend().size > 0}>
+        <Show when={!deleteMode() && !picking() && toSend().size > 0}>
           <div
             class="flex shrink-0 flex-wrap items-center gap-2 border-t border-line-weak bg-bg-stronger px-4 py-2.5"
             data-testid="ckpt-send-bar"

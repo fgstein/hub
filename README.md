@@ -368,7 +368,8 @@ still listed, as an “other” file of the run. Hidden directories are ignored.
   removed (`rmdir`), nothing else.
 - **Sending to a project**: `{checkpoint}` receives the path **in the container**, translated
   from the machine path through the project's `docker.volumes` (the most specific mount wins).
-  A checkpoint that no volume covers is refused. The run keeps the machine path: each
+  A checkpoint that no volume covers is passed as is (e.g. mounted by a `docker_command`
+  wrapper at the same path). The run keeps the machine path: each
   checkpoint shows how many runs were launched with it.
 
 Several sources may point to the same shared disk (NFS) from different machines.

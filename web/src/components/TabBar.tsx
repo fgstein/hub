@@ -4,7 +4,16 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { formatBytes } from "~/lib/format"
 import { activeCount, closeTab, moveTab, project, setActiveTab, state } from "~/stores/app"
 import { cycleTheme, themePref } from "~/stores/theme"
-import { IconClose, IconDatabase, IconMonitor, IconMoon, IconPlus, IconServer, IconSun } from "./Icons"
+import {
+  IconClose,
+  IconDatabase,
+  IconHelp,
+  IconMonitor,
+  IconMoon,
+  IconPlus,
+  IconServer,
+  IconSun,
+} from "./Icons"
 
 export function TabBar() {
   const navigate = useNavigate()
@@ -45,7 +54,10 @@ export function TabBar() {
         <IconServer size={13} />
         <span class="font-medium">Machines</span>
       </button>
-      <div class="flex min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]" role="tablist">
+      <div
+        class="-mb-px flex min-w-0 items-stretch overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
+        role="tablist"
+      >
         <Show when={state.inventory?.checkpoint_sources?.length}>
           <CheckpointsTab active={onCheckpoints()} onClick={() => navigate("/checkpoints")} />
         </Show>
@@ -104,7 +116,7 @@ export function TabBar() {
                   <span class="absolute inset-y-1 right-0 w-0.5 rounded bg-line-selected" />
                 </Show>
                 <Show when={active()}>
-                  <span class="absolute inset-x-0 bottom-[-1px] h-px bg-bg" />
+                  <span class="absolute inset-x-0 bottom-0 h-px bg-bg" />
                   <span class="absolute inset-x-0 top-0 h-px bg-fg-strong opacity-60" />
                 </Show>
                 <span class="truncate font-medium">{p()?.label ?? id}</span>
@@ -129,6 +141,7 @@ export function TabBar() {
       </div>
       <AddTabMenu onPick={(id) => go(id)} />
       <div class="flex-1" />
+      <HelpButton />
       <ThemeButton />
     </nav>
   )
@@ -157,7 +170,7 @@ function CheckpointsTab(props: { active: boolean; onClick: () => void }) {
       title="Runs already executed and their checkpoints"
     >
       <Show when={props.active}>
-        <span class="absolute inset-x-0 bottom-[-1px] h-px bg-bg" />
+        <span class="absolute inset-x-0 bottom-0 h-px bg-bg" />
         <span class="absolute inset-x-0 top-0 h-px bg-fg-strong opacity-60" />
       </Show>
       <IconDatabase size={13} class="shrink-0 text-icon" />
@@ -255,6 +268,54 @@ function AddTabMenu(props: { onPick: (id: string) => void }) {
               )}
             </For>
           </Show>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover>
+  )
+}
+
+/** Special placeholders of the commands, filled in by TrainHub. */
+const PLACEHOLDERS: [string, string][] = [
+  ["{config}", "Config chosen in the draft: path relative to configs.root, without extension"],
+  ["{config_name}", "Basename of the config only"],
+  [
+    "{checkpoint}",
+    "Checkpoint chosen in the draft or sent from the Checkpoints tab; translated to the container " +
+      "path through the project's volumes, else passed as is",
+  ],
+  ["{run_id}", "Short run identifier generated at launch"],
+  ["{machine}", "Machine id"],
+  ["{project}", "Project id"],
+]
+
+function HelpButton() {
+  return (
+    <Popover placement="bottom-end" gutter={4}>
+      <Popover.Trigger
+        class="flex w-9 items-center justify-center text-icon hover:text-icon-hover"
+        title="Help: command placeholders"
+        aria-label="Help"
+        data-testid="help"
+      >
+        <IconHelp />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content class="menu-content z-[70] w-[26rem] rounded-md bg-float p-3 text-xs text-fg shadow-float outline-none">
+          <div class="mb-2 text-sm font-medium text-fg-strong">Command placeholders</div>
+          <dl class="space-y-1.5">
+            <For each={PLACEHOLDERS}>
+              {([name, text]) => (
+                <div class="flex gap-3">
+                  <dt class="w-28 shrink-0 font-mono text-fg-warning">{name}</dt>
+                  <dd class="text-fg">{text}</dd>
+                </div>
+              )}
+            </For>
+          </dl>
+          <p class="mt-2.5 text-fg-weak">
+            Any other <span class="font-mono">{"{name}"}</span> is a run parameter (one field per draft).{" "}
+            <span class="font-mono">{"${VAR}"}</span> is left untouched.
+          </p>
         </Popover.Content>
       </Popover.Portal>
     </Popover>

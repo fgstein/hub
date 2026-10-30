@@ -1,4 +1,5 @@
 import { Combobox } from "@kobalte/core/combobox"
+import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, For, on, onMount, Show } from "solid-js"
 import { splitArgs } from "~/lib/command"
 import { DEFAULT_MAX, DEFAULT_MIN, MAX_SERIES, parseCount } from "~/lib/series"
@@ -16,12 +17,13 @@ import {
   loadConfigs,
   machineReachable,
   removeDraft,
+  setCheckpointPick,
   state,
   updateDraft,
 } from "~/stores/app"
 import { ConfigPicker } from "./ConfigPicker"
 import { GpuPicker } from "./GpuPicker"
-import { IconChevronDown, IconClose, IconDice, IconRefresh, IconSpinner } from "./Icons"
+import { IconChevronDown, IconClose, IconDatabase, IconDice, IconRefresh, IconSpinner } from "./Icons"
 import { StatusDot } from "./StatusDot"
 
 interface FieldProps {
@@ -173,13 +175,24 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
   const params = () => p().params ?? []
   const takesCheckpoint = () => !!p().accepts_checkpoint
   /** Source and run of the checkpoint, when it comes from a checkpoint source. */
-  const checkpointOrigin = () => {
+  const checkpointSource = () => {
     const path = d().checkpoint.trim()
     for (const src of state.inventory?.checkpoint_sources ?? []) {
       const root = `${src.root.replace(/\/+$/, "")}/`
-      if (path.startsWith(root)) return `${src.label} · ${path.slice(root.length).split("/")[0]}`
+      if (path.startsWith(root)) return { src, rest: path.slice(root.length) }
     }
     return null
+  }
+  const checkpointOrigin = () => {
+    const o = checkpointSource()
+    return o ? `${o.src.label} · ${o.rest.split("/")[0]}` : null
+  }
+  const navigate = useNavigate()
+  /** Draft → Checkpoints tab: the checkpoint clicked there fills this draft. */
+  const browseCheckpoints = () => {
+    setCheckpointPick({ projectId: p().id, key: d().key })
+    const src = checkpointSource()?.src.id
+    navigate(src ? `/checkpoints/${encodeURIComponent(src)}` : "/checkpoints")
   }
   const paramErrors = () => draftParamErrors(p().id, d())
   const seriesErrors = () => draftSeriesRequest(p().id, d()).errors
@@ -367,6 +380,18 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                   "border-line-critical": !d().checkpoint.trim(),
                 }}
               />
+              <Show when={state.inventory?.checkpoint_sources?.length}>
+                <button
+                  type="button"
+                  class="flex size-7 shrink-0 items-center justify-center rounded border border-line-weak text-icon hover:bg-surface-hover hover:text-icon-hover"
+                  onClick={browseCheckpoints}
+                  title="Pick it in the Checkpoints tab"
+                  aria-label="Pick the checkpoint in the Checkpoints tab"
+                  data-testid="checkpoint-browse"
+                >
+                  <IconDatabase size={12} />
+                </button>
+              </Show>
               <Show when={checkpointOrigin()}>
                 <span class="shrink-0 truncate text-xs text-fg-weak" data-testid="checkpoint-origin">
                   {checkpointOrigin()}

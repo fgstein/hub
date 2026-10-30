@@ -96,7 +96,8 @@ class Selection(BaseModel):
     checkpoint: str | None = Field(
         default=None,
         description="{checkpoint}: absolute path of the checkpoint on the machine (as listed "
-        "by a checkpoint source); translated to the container path through the volumes",
+        "by a checkpoint source); translated to the container path through the volumes "
+        "(unchanged if none covers it)",
     )
     series: SeriesRequest | None = Field(
         default=None, description="Repeat the run several times in a row (same container)"

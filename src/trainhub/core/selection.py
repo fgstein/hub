@@ -96,7 +96,9 @@ def make_spec(
         cuda_visible_devices=cvd or None,
         params={k: (params or {}).get(k, "") for k in wanted},
         checkpoint=ckpt,
-        checkpoint_in_container=container_path(ckpt, proj.docker.volumes) if ckpt else None,
+        checkpoint_in_container=(
+            (container_path(ckpt, proj.docker.volumes) or ckpt) if ckpt else None
+        ),
         extra_env=extra_env,
         series=series,
     )
