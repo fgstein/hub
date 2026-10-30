@@ -36,7 +36,7 @@ are a common case, see the [examples](#examples).
 - **Series**: run the same command N times in a row in a single container, with some
   parameters (e.g. `{seed}`) drawn at random for each repetition. See [Series](#series).
 - **Checkpoints tab**: the runs already executed on disk (by TrainHub or not), their checkpoints
-  with sizes and the total per source; send checkpoints to an inference project (`{checkpoint}`,
+  with sizes and the total per source, their MLflow run and the inferences made with them; send checkpoints to an inference project (`{checkpoint}`,
   `extends`), delete checkpoints or groups. See [Checkpoints](#checkpoints).
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete,
   and **mark as finished** for a run stuck active whose machine or container is dead (nothing is
@@ -374,6 +374,72 @@ still listed, as an “other” file of the run. Hidden directories are ignored.
 
 Several sources may point to the same shared disk (NFS) from different machines.
 
+**Link with MLflow.** With an `mlflow` block, each run directory is linked to the MLflow run that
+logged its path, under a parameter or tag. The tab then shows a column with a green dot and a
+link to the run in the MLflow UI (an orange `orphan` label: no MLflow run found), and `MLflow 6/7` next to
+the root (directories linked / directories). The search box also finds a directory from the
+name or id of its MLflow run.
+
+```yaml
+mlflow:
+  tracking_uri: http://mlflow.lab:5000     # required: the global MLflow server is used
+
+checkpoints:
+  - id: seg-outputs
+    root: /home/alice/seg/outputs
+    mlflow:
+      match: params.callbacks/model_checkpoint/dirpath  # params.<key> or tags.<key>
+      # experiments: [segmentation]        # default: those of the mlflow section
+```
+
+The value of `match` is a path containing the directory, e.g. the checkpoint directory that
+Lightning logs as a hyperparameter (`/workspace/logs/train/runs/2026-10-30_14-02-11/checkpoints`).
+It may be a path seen from the container: only its components are compared, and its last
+component that is a run directory of the source wins. Every MLflow run having the key is read
+(most recent first, up to 10,000), with the same 5-minute cache as the scan (↻ refreshes both).
+A directory logged by several MLflow runs (resumes, relaunches) links to the most recent one; the
+tooltip lists the others. If MLflow is unreachable, the last result stays displayed with ⚠.
+
+**Orphans.** As soon as a source has `mlflow.match`, a last button, “Orphans”, lists the MLflow
+runs (of the sources' searches) whose logged directory exists in **no** source: deleted since, or
+written outside every source. Every source is scanned for this, so a run is listed only if no
+disk has its directory. If a source cannot be scanned (machine unreachable, no earlier listing),
+a banner warns that runs of its directories may be listed by mistake.
+
+Tick orphans (or all those shown, after a search) then **drag the slider to the end** to delete
+them in MLflow (`runs/delete`: MLflow trash, restorable until `mlflow gc`). The server deletes
+only runs that are orphans at that moment, and nothing while a source cannot be scanned. Also
+`/api/mlflow-orphans` (`POST /api/mlflow-orphans/delete`) and the MCP tool `list_mlflow_orphans`
+(read only).
+
+**Inferences.** Each run directory also lists the inferences made with its checkpoints: `⇢ N` on
+the run and on each checkpoint. A click on `⇢ N` shows the inferences under their checkpoint
+(hidden by default; on the run: those of all its checkpoints): status dot, name, config, logged
+values, date, links to TrainHub and MLflow. Inferences of checkpoints deleted since are grouped
+at the bottom of the run. They come from:
+
+- the TrainHub runs launched with a `{checkpoint}` of the source (always, MLflow or not), with
+  their project and config;
+- with `mlflow.inference`, the MLflow runs, typically of a separate experiment, that logged the
+  path of a checkpoint of the source. An MLflow run tagged `trainhub.run_id` (`run_tag`) by a
+  TrainHub run is merged into it.
+
+```yaml
+checkpoints:
+  - id: seg-outputs
+    root: /home/alice/seg/outputs
+    mlflow:
+      match: params.callbacks/model_checkpoint/dirpath   # optional: the training runs
+      inference:
+        match: params.ckpt_path                # key holding the checkpoint path
+        experiments: [seg-inference]           # default: those of the mlflow section
+        show: [params.data.dataset]            # params / tags shown for each inference
+```
+
+As for the directories, the path may be seen from the container: from its last component that
+is a run directory, the rest is the checkpoint. An inference whose checkpoint was deleted since
+stays listed, struck through.
+
 With `machine: null` (or no `machine`), `find` and `rm` run directly on the host of the TrainHub
 server, without SSH, with its user (in the Docker image, mount the directory into the container
 at the same path). Sending such a checkpoint to a project leaves the machine to pick in the draft.
@@ -598,7 +664,7 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
 `list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `get_machine_load`,
-`list_checkpoint_sources`, `list_checkpoints`, `pause_run`, `resume_run`,
+`list_checkpoint_sources`, `list_checkpoints`, `list_mlflow_orphans`, `pause_run`, `resume_run`,
 `stop_run`, `force_finish_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
 `set_project_command`) call the same service layer as the interface: a run launched by an agent
 shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text

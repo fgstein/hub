@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest"
-import { checkState, hostPath, pruneSelection, selectionSummary, toggleFiles, viewRuns } from "./checkpoints"
+import {
+  checkState,
+  hostPath,
+  inferenceCheckpoint,
+  inferenceState,
+  inferencesByFile,
+  pruneSelection,
+  selectionSummary,
+  toggleFiles,
+  viewRuns,
+} from "./checkpoints"
 import { formatAgo, formatBytes } from "./format"
-import type { CheckpointFile, CheckpointListing, CheckpointRun } from "./types"
+import type { CheckpointFile, CheckpointInference, CheckpointListing, CheckpointRun } from "./types"
 
 const f = (path: string, size = 10, mtime = "2026-10-20T10:00:00Z"): CheckpointFile => ({
   path,
@@ -76,6 +86,16 @@ describe("viewRuns", () => {
     expect(byName).toHaveLength(1)
     expect(byName[0]?.expand).toBe(false)
     expect(byName[0]?.groups.map((g) => g.files.length)).toEqual([1, 2])
+    const withMlflow: CheckpointListing = {
+      ...LISTING,
+      runs: LISTING.runs.map((r) =>
+        r.name === "beta" ? { ...r, mlflow_runs: [{ run_id: "a1b2c3d4", run_name: "unet-large" }] } : r,
+      ),
+    }
+    for (const query of ["UNET-LA", "a1b2"]) {
+      const byMlflow = viewRuns(withMlflow, { ...opts, query })
+      expect(byMlflow.map((r) => [r.run.name, r.expand])).toEqual([["beta", false]])
+    }
     const byFile = viewRuns(LISTING, { ...opts, query: "epoch0000007" })
     expect(byFile.map((r) => r.run.name)).toEqual(["alpha"])
     expect(byFile[0]?.expand).toBe(true)
@@ -140,5 +160,33 @@ describe("formatBytes / formatAgo", () => {
     expect(formatAgo("2026-10-29T09:00:00Z", now)).toBe("3 h ago")
     expect(formatAgo("2026-10-25T12:00:00Z", now)).toBe("4 d ago")
     expect(formatAgo(null, now)).toBe("—")
+  })
+})
+
+describe("inferences", () => {
+  const inf = (checkpoint: string, extra: Partial<CheckpointInference> = {}): CheckpointInference => ({
+    checkpoint,
+    exists: true,
+    ...extra,
+  })
+
+  it("takes the state of the MLflow run, else of the TrainHub run", () => {
+    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "RUNNING" }, status: "failed" }))).toBe(
+      "running",
+    )
+    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "KILLED" } }))).toBe("failed")
+    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "FINISHED" } }))).toBe("finished")
+    expect(inferenceState(inf("a/x", { status: "succeeded" }))).toBe("finished")
+    expect(inferenceState(inf("a/x", { status: "stopped" }))).toBe("other")
+    expect(inferenceState(inf("a/x"))).toBe("other")
+  })
+
+  it("groups by checkpoint and strips the run directory", () => {
+    const run = { inferences: [inf("a/c/x.ckpt"), inf("a/c/y.ckpt"), inf("a/c/x.ckpt", { config: "b" })] }
+    const by = inferencesByFile(run)
+    expect(by.get("a/c/x.ckpt")?.map((i) => i.config ?? null)).toEqual([null, "b"])
+    expect(by.get("a/c/y.ckpt")).toHaveLength(1)
+    expect(inferenceCheckpoint("a", inf("a/c/x.ckpt"))).toBe("c/x.ckpt")
+    expect(inferenceCheckpoint("b", inf("a/c/x.ckpt"))).toBe("a/c/x.ckpt")
   })
 })

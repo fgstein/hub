@@ -7,7 +7,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..core.models import DockerOptions, Run, RunStatus, Series
+from ..core.models import (
+    CheckpointInference,
+    DockerOptions,
+    MlflowRunRef,
+    Run,
+    RunStatus,
+    Series,
+)
 from ..core.series import DEFAULT_RANGE, MAX_SERIES, draw_values
 from ..core.status import elapsed_seconds, paused_seconds
 
@@ -222,6 +229,9 @@ class CheckpointSourceView(BaseModel):
     )
     count: int | None = Field(default=None, description="Number of checkpoints (last scan)")
     scanned_at: datetime | None = None
+    mlflow_match: str | None = Field(
+        default=None, description="MLflow key linking its run directories (mlflow.match)"
+    )
 
 
 class CheckpointFile(BaseModel):
@@ -253,6 +263,27 @@ class CheckpointRun(BaseModel):
     others: list[CheckpointFile] = Field(
         default_factory=list, description="Checkpoint files of the run outside the layout"
     )
+    inferences: list[CheckpointInference] = Field(
+        default_factory=list,
+        description="Inferences made with the checkpoints of this directory (TrainHub runs "
+        "and MLflow runs of mlflow.inference), most recent first",
+    )
+    mlflow_runs: list[MlflowRunRef] = Field(
+        default_factory=list,
+        description="MLflow runs logged from this directory, most recent first (empty: none "
+        "found, or the source has no mlflow section)",
+    )
+
+
+class CheckpointMlflowStatus(BaseModel):
+    """Search of the MLflow runs of a checkpoint source."""
+
+    match: str = Field(description="MLflow key holding the path (params.<key> / tags.<key>)")
+    tracking_uri: str
+    searched: int = Field(description="MLflow runs having the key")
+    truncated: bool = Field(default=False, description="Search stopped before the end")
+    searched_at: datetime | None = None
+    error: str | None = None
 
 
 class CheckpointListing(BaseModel):
@@ -268,6 +299,55 @@ class CheckpointListing(BaseModel):
     )
     error: str | None = None
     scanned_at: datetime | None = None
+    mlflow: CheckpointMlflowStatus | None = Field(
+        default=None,
+        description="Link of the run directories with MLflow (None: no mlflow.match)",
+    )
+    mlflow_inference: CheckpointMlflowStatus | None = Field(
+        default=None, description="Search of the MLflow inferences (None: no mlflow.inference)"
+    )
+
+
+class MlflowOrphan(BaseModel):
+    """MLflow run whose logged directory is in no checkpoint source (deleted, or elsewhere)."""
+
+    run: MlflowRunRef
+    path: str = Field(description="Directory logged by the run (value of match)")
+    match: str = Field(description="MLflow key holding it")
+    sources: list[str] = Field(description="Sources whose MLflow search found the run")
+
+
+class MlflowOrphanListing(BaseModel):
+    """MLflow runs without a directory on disk, over every checkpoint source."""
+
+    enabled: bool = Field(description="At least one source has mlflow.match")
+    runs: list[MlflowOrphan] = Field(description="Most recent first")
+    searched: int = Field(description="MLflow runs read (all sources)")
+    linked: int = Field(description="Of which with a directory in a source")
+    truncated: bool = Field(default=False, description="An MLflow search stopped early")
+    searched_at: datetime | None = Field(default=None, description="Oldest search used")
+    mlflow_errors: dict[str, str] = Field(
+        default_factory=dict, description="Source → MLflow error (its runs may be missing)"
+    )
+    scan_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description="Source → scan error without any listing: runs of its directories may be "
+        "shown as orphans by mistake",
+    )
+
+
+class MlflowDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_ids: list[str] = Field(
+        min_length=1, max_length=1000, description="MLflow runs to delete (orphans only)"
+    )
+
+
+class MlflowDeleteResult(BaseModel):
+    deleted: list[str] = Field(description="Deleted MLflow runs (MLflow trash)")
+    failed: dict[str, str] = Field(default_factory=dict, description="Run id → error")
+    remaining: int = Field(description="Orphans left")
 
 
 class CheckpointDeleteRequest(BaseModel):

@@ -5,6 +5,10 @@ import {
   type CheckState,
   checkState,
   hostPath,
+  type InferenceState,
+  inferenceCheckpoint,
+  inferenceState,
+  inferencesByFile,
   pruneSelection,
   type RunRowView,
   runFiles,
@@ -14,7 +18,15 @@ import {
   viewRuns,
 } from "~/lib/checkpoints"
 import { formatAgo, formatBytes, formatDateTime } from "~/lib/format"
-import type { CheckpointFile, CheckpointGroup, CheckpointSourceView, RunView } from "~/lib/types"
+import type {
+  CheckpointFile,
+  CheckpointGroup,
+  CheckpointInference,
+  CheckpointListing,
+  CheckpointSourceView,
+  MlflowRunRef,
+  RunView,
+} from "~/lib/types"
 import {
   checkpointPick,
   checkpointProjects,
@@ -25,22 +37,26 @@ import {
   setCheckpointPick,
   state,
 } from "~/stores/app"
-import { deleteCheckpoints, listings, loadCheckpoints } from "~/stores/checkpoints"
+import { deleteCheckpoints, listings, loadCheckpoints, loadOrphans, orphans } from "~/stores/checkpoints"
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
 import {
   IconChevronRight,
   IconClose,
   IconCopy,
+  IconExternal,
   IconRefresh,
   IconSearch,
   IconSpinner,
   IconTrash,
 } from "./Icons"
+import { MlflowOrphansView } from "./MlflowOrphans"
 import { SlideToConfirm } from "./SlideToConfirm"
 import { statusLabel } from "./StatusDot"
 
 const SOURCE_KEY = "trainhub.checkpoints.source"
+/** Pseudo source “Orphans”: MLflow runs without a directory (not a valid source id). */
+const ORPHANS = "~mlflow"
 /** A checkpoint modified less than this long ago may still be being written. */
 const WRITING_MS = 60_000
 
@@ -118,12 +134,201 @@ function Cols(props: { count?: JSX.Element; size: number; date?: string | null; 
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
+/** MLflow column of a run directory: green dot and link if an MLflow run logged from it. */
+function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
+  const latest = () => props.runs[0]
+  return (
+    <Tip
+      class="flex w-16 shrink-0 items-center justify-center gap-1"
+      content={
+        <Show
+          when={latest()}
+          fallback={
+            <span>
+              Orphan: no MLflow run has <code class="font-mono">{props.match}</code> under this directory.
+            </span>
+          }
+        >
+          {(ml) => (
+            <div class="space-y-0.5">
+              <div>
+                MLflow run <span class="font-mono text-fg-strong">{ml().run_name ?? ml().run_id}</span>
+                {ml().status ? ` · ${ml().status}` : ""}
+              </div>
+              <Show when={ml().started_at}>
+                <div class="text-fg-weak">started {formatDateTime(ml().started_at)}</div>
+              </Show>
+              <Show when={props.runs.length > 1}>
+                <div class="text-fg-weak">
+                  {plural(props.runs.length - 1, "earlier MLflow run")} also logged from this directory:{" "}
+                  <span class="font-mono">
+                    {props.runs
+                      .slice(1, 6)
+                      .map((m) => m.run_name ?? m.run_id)
+                      .join(", ")}
+                  </span>
+                  {props.runs.length > 6 ? "…" : ""}
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
+      }
+    >
+      <Show
+        when={latest()}
+        fallback={
+          <span
+            class="rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-fg-warning"
+            data-testid="ckpt-mlflow-orphan"
+          >
+            orphan
+          </span>
+        }
+      >
+        <span
+          class="dot"
+          style={{ "--dot-color": "var(--status-green)" }}
+          role="img"
+          aria-label="MLflow run found"
+          data-testid="ckpt-mlflow-dot"
+        />
+      </Show>
+      <Show when={latest()?.url}>
+        <a
+          href={latest()!.url!}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+          aria-label="Open the run in MLflow"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          data-testid="ckpt-mlflow-link"
+        >
+          <IconExternal size={11} />
+        </a>
+      </Show>
+    </Tip>
+  )
+}
+
+const INFERENCE_COLOR: Record<InferenceState, string> = {
+  running: "var(--status-green)",
+  finished: "var(--status-blue)",
+  failed: "var(--status-red)",
+  other: "var(--status-grey)",
+}
+
+/** Short description of an inference: name, project · config, logged values. */
+function inferenceName(inf: CheckpointInference): string {
+  return inf.mlflow?.run_name ?? inf.trainhub_run ?? inf.mlflow?.run_id ?? "?"
+}
+
+/** Inference count of a run or a checkpoint, with the list in its tooltip. */
+function InferenceBadge(props: {
+  inferences: CheckpointInference[]
+  run: string
+  testid: string
+  active?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <Tip
+      class="shrink-0"
+      content={
+        <div class="space-y-0.5">
+          <div>
+            {plural(props.inferences.length, "inference")} with{" "}
+            {props.testid === "ckpt-file-inferences" ? "this checkpoint" : "the checkpoints of this run"}:
+          </div>
+          <For each={props.inferences.slice(0, 8)}>
+            {(inf) => (
+              <div class="flex items-center gap-1.5 font-mono">
+                <span class="dot" style={{ "--dot-color": INFERENCE_COLOR[inferenceState(inf)] }} />
+                {inferenceName(inf)}
+                <span class="text-fg-weak">
+                  {inf.config ? ` · ${inf.config}` : ""}
+                  {props.testid === "ckpt-file-inferences" ? "" : ` · ${inferenceCheckpoint(props.run, inf)}`}
+                  {inf.started_at ? ` · ${formatAgo(inf.started_at, now())}` : ""}
+                </span>
+              </div>
+            )}
+          </For>
+          <Show when={props.inferences.length > 8}>
+            <div>…</div>
+          </Show>
+        </div>
+      }
+    >
+      <button
+        type="button"
+        class="flex h-5 items-center rounded px-1.5 font-mono text-xs hover:bg-surface-hover hover:text-fg-strong"
+        classList={{
+          "bg-surface text-fg-weak": !props.active,
+          "bg-surface-active text-fg-strong": !!props.active,
+        }}
+        aria-expanded={props.active}
+        onClick={(e) => {
+          e.stopPropagation()
+          props.onClick?.()
+        }}
+        onKeyDown={(e) => e.stopPropagation()}
+        aria-label={plural(props.inferences.length, "inference")}
+        data-testid={props.testid}
+      >
+        ⇢ {props.inferences.length}
+      </button>
+    </Tip>
+  )
+}
+
+/** Toolbar summary of the MLflow link of a source: directories linked, errors. */
+function MlflowSummary(props: { listing: CheckpointListing }) {
+  const ml = () => props.listing.mlflow!
+  const linked = () => props.listing.runs.filter((r) => r.mlflow_runs?.length).length
+  return (
+    <Tip
+      class="shrink-0 text-xs"
+      content={
+        <div class="space-y-0.5">
+          <div>
+            Run directories linked to the MLflow run that logged their path in{" "}
+            <code class="font-mono">{ml().match}</code> ({ml().tracking_uri}).
+          </div>
+          <div class="text-fg-weak">
+            {plural(ml().searched, "MLflow run")} have this key
+            {ml().searched_at ? ` — searched ${formatDateTime(ml().searched_at)}` : ""}, cached with the scan.
+          </div>
+          <Show when={ml().truncated}>
+            <div class="text-fg-warning">
+              Search stopped early: only the most recent MLflow runs are linked.
+            </div>
+          </Show>
+          <Show when={ml().error}>
+            <div class="text-fg-critical">{ml().error}</div>
+          </Show>
+        </div>
+      }
+    >
+      <span
+        classList={{ "text-fg-weaker": !ml().error, "text-fg-warning": !!ml().error }}
+        data-testid="ckpt-mlflow-summary"
+      >
+        · MLflow {linked()}/{props.listing.runs.length}
+        {ml().error ? " ⚠" : ""}
+      </span>
+    </Tip>
+  )
+}
+
 export function CheckpointsPage(props: { source?: string }) {
   const navigate = useNavigate()
   const sources = () => state.inventory?.checkpoint_sources ?? []
+  const mlflowEnabled = () => sources().some((s) => s.mlflow_match)
   const sourceId = createMemo(() => {
     const ids = sources().map((s) => s.id)
     const wanted = props.source ?? remembered()
+    if (wanted === ORPHANS && mlflowEnabled()) return ORPHANS
     return wanted && ids.includes(wanted) ? wanted : (ids[0] ?? null)
   })
   const source = () => sources().find((s) => s.id === sourceId())
@@ -140,6 +345,15 @@ export function CheckpointsPage(props: { source?: string }) {
   const [toSend, setToSend] = createSignal<Set<string>>(new Set())
   const [deleting, setDeleting] = createSignal(false)
   const [target, setTarget] = createSignal<string | null>(null)
+  /** Checkpoints whose inferences are shown under them (hidden by default). */
+  const [openInf, setOpenInf] = createSignal<Set<string>>(new Set())
+  const toggleInf = (path: string) =>
+    setOpenInf((s) => {
+      const n = new Set(s)
+      if (n.has(path)) n.delete(path)
+      else n.add(path)
+      return n
+    })
 
   // Every source is loaded (the server caches the scans): their totals show in the header.
   createEffect(
@@ -150,12 +364,17 @@ export function CheckpointsPage(props: { source?: string }) {
       },
     ),
   )
+  // The MLflow runs without a directory: their count shows on their button.
+  createEffect(() => {
+    if (mlflowEnabled()) void loadOrphans()
+  })
   createEffect(
     on(sourceId, (id) => {
       if (!id) return
       remember(id)
       setExpanded(new Set<string>())
       setCollapsedGroups(new Set<string>())
+      setOpenInf(new Set<string>())
       setToDelete(new Set<string>())
       setToSend(new Set<string>())
       setDeleteMode(false)
@@ -171,6 +390,14 @@ export function CheckpointsPage(props: { source?: string }) {
 
   const rows = createMemo(() => viewRuns(listing(), { query: query(), sort: sort(), hideEmpty: hideEmpty() }))
   const byCheckpoint = createMemo(runsByCheckpoint)
+  /** Inferences per checkpoint of the listing (path relative to the root). */
+  const inferencesByPath = createMemo(() => {
+    const out = new Map<string, CheckpointInference[]>()
+    for (const r of listing()?.runs ?? []) for (const [k, v] of inferencesByFile(r)) out.set(k, v)
+    return out
+  })
+  const showInferences = () =>
+    !!listing()?.mlflow_inference || (listing()?.runs ?? []).some((r) => r.inferences?.length)
   const targets = createMemo(checkpointProjects)
   const targetId = () => {
     const t = target()
@@ -316,81 +543,102 @@ export function CheckpointsPage(props: { source?: string }) {
       } else setToSend((s) => toggleFiles([fp.file], s))
     }
     const writing = () => now() - Date.parse(fp.file.mtime) < WRITING_MS
+    const infs = () => inferencesByPath().get(fp.file.path)
     return (
-      <div
-        class={`flex h-8 cursor-pointer items-center gap-2 pr-4 hover:bg-surface-hover ${fp.indent}`}
-        classList={{
-          "bg-surface-active": selected() && !deleteMode(),
-          "bg-critical-bg": selected() && deleteMode(),
-          "opacity-50": deleteMode() && !fp.deletable,
-        }}
-        onClick={toggle}
-        data-testid="ckpt-file"
-        data-path={fp.file.path}
-      >
-        <Show
-          when={!picking() && (!deleteMode() || fp.deletable)}
-          fallback={
-            <span
-              class="size-3.5 shrink-0"
-              title={picking() ? undefined : "Not under a run directory: cannot be deleted here"}
-            />
-          }
+      <>
+        <div
+          class={`flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 hover:bg-surface-hover ${fp.indent}`}
+          classList={{
+            "bg-surface-active": selected() && !deleteMode(),
+            "bg-critical-bg": selected() && deleteMode(),
+            "opacity-50": deleteMode() && !fp.deletable,
+          }}
+          onClick={toggle}
+          data-testid="ckpt-file"
+          data-path={fp.file.path}
         >
-          <Check
-            state={selected() ? "all" : "none"}
-            onToggle={toggle}
-            label={`Select ${fp.file.name}`}
-            danger={deleteMode()}
-            testid="ckpt-file-check"
-          />
-        </Show>
-        <span class="min-w-0 flex-1 truncate font-mono text-sm text-fg-strong" title={path()}>
-          {fp.file.name}
-        </span>
-        <Show when={writing()}>
-          <Tip
-            class="shrink-0 text-xs text-fg-warning"
-            content="Modified less than a minute ago: maybe still being written"
-          >
-            writing?
-          </Tip>
-        </Show>
-        <Show when={runs().length}>
-          <Tip
-            class="shrink-0"
-            content={
-              <div class="space-y-0.5 font-mono">
-                <For each={runs().slice(0, 8)}>
-                  {(r) => (
-                    <div>
-                      {r.id} · {r.project_id} · {statusLabel(r.status)} · {formatDateTime(r.created_at)}
-                    </div>
-                  )}
-                </For>
-                <Show when={runs().length > 8}>
-                  <div>…</div>
-                </Show>
-              </div>
+          <Show
+            when={!picking() && (!deleteMode() || fp.deletable)}
+            fallback={
+              <span
+                class="size-3.5 shrink-0"
+                title={picking() ? undefined : "Not under a run directory: cannot be deleted here"}
+              />
             }
           >
-            <button
-              type="button"
-              class="flex h-5 items-center rounded bg-surface px-1.5 font-mono text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
-              onClick={(e) => {
-                e.stopPropagation()
-                const r = runs()[0]
-                if (r) navigate(`/p/${encodeURIComponent(r.project_id)}`)
-              }}
-              aria-label={`${plural(runs().length, "run")} launched with this checkpoint`}
-              data-testid="ckpt-file-runs"
+            <Check
+              state={selected() ? "all" : "none"}
+              onToggle={toggle}
+              label={`Select ${fp.file.name}`}
+              danger={deleteMode()}
+              testid="ckpt-file-check"
+            />
+          </Show>
+          <span class="min-w-0 flex-1 truncate font-mono text-sm text-fg-strong" title={path()}>
+            {fp.file.name}
+          </span>
+          <Show when={writing()}>
+            <Tip
+              class="shrink-0 text-xs text-fg-warning"
+              content="Modified less than a minute ago: maybe still being written"
             >
-              ⟲ {runs().length}
-            </button>
-          </Tip>
+              writing?
+            </Tip>
+          </Show>
+          <Show when={infs()}>
+            {(list) => (
+              <InferenceBadge
+                inferences={list()}
+                run=""
+                testid="ckpt-file-inferences"
+                active={openInf().has(fp.file.path)}
+                onClick={() => toggleInf(fp.file.path)}
+              />
+            )}
+          </Show>
+          <Show when={runs().length}>
+            <Tip
+              class="shrink-0"
+              content={
+                <div class="space-y-0.5 font-mono">
+                  <For each={runs().slice(0, 8)}>
+                    {(r) => (
+                      <div>
+                        {r.id} · {r.project_id} · {statusLabel(r.status)} · {formatDateTime(r.created_at)}
+                      </div>
+                    )}
+                  </For>
+                  <Show when={runs().length > 8}>
+                    <div>…</div>
+                  </Show>
+                </div>
+              }
+            >
+              <button
+                type="button"
+                class="flex h-5 items-center rounded bg-surface px-1.5 font-mono text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const r = runs()[0]
+                  if (r) navigate(`/p/${encodeURIComponent(r.project_id)}`)
+                }}
+                aria-label={`${plural(runs().length, "run")} launched with this checkpoint`}
+                data-testid="ckpt-file-runs"
+              >
+                ⟲ {runs().length}
+              </button>
+            </Tip>
+          </Show>
+          <Cols size={fp.file.size} date={fp.file.mtime} dateTitle={formatDateTime(fp.file.mtime)} />
+        </div>
+        <Show when={openInf().has(fp.file.path) && infs()}>
+          {(list) => (
+            <For each={list()}>
+              {(inf) => <InferenceRow run="" inf={inf} indent="pl-24" showCheckpoint={false} />}
+            </For>
+          )}
         </Show>
-        <Cols size={fp.file.size} date={fp.file.mtime} dateTitle={formatDateTime(fp.file.mtime)} />
-      </div>
+      </>
     )
   }
 
@@ -400,7 +648,7 @@ export function CheckpointsPage(props: { source?: string }) {
     return (
       <div data-testid="ckpt-group" data-group={gp.group.name}>
         <div
-          class="flex h-8 cursor-pointer items-center gap-2 pr-4 pl-10 hover:bg-surface-hover"
+          class="flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 pl-10 hover:bg-surface-hover"
           onClick={() => toggleGroup(gp.run, gp.group.name)}
         >
           <IconChevronRight
@@ -426,6 +674,138 @@ export function CheckpointsPage(props: { source?: string }) {
             {(f) => <FileRow file={f} indent="pl-16" deletable={gp.deletable} />}
           </For>
         </Show>
+      </div>
+    )
+  }
+
+  /** Inferences made with checkpoints of a run deleted since (the others are under their file). */
+  const InferenceList = (ip: { run: string; inferences: CheckpointInference[] }) => {
+    const [open, setOpen] = createSignal(false)
+    return (
+      <div data-testid="ckpt-inferences">
+        <div
+          class="flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 pl-10 hover:bg-surface-hover"
+          role="button"
+          tabIndex={0}
+          aria-expanded={open()}
+          onClick={() => setOpen(!open())}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault()
+              setOpen(!open())
+            }
+          }}
+        >
+          <IconChevronRight
+            size={11}
+            class={`shrink-0 text-icon transition-transform duration-150 ${open() ? "rotate-90" : ""}`}
+          />
+          <span class="min-w-0 flex-1 truncate text-sm text-fg">inferences on deleted checkpoints</span>
+          <span class="w-24 shrink-0 text-right text-xs tabular text-fg-weak">
+            {plural(ip.inferences.length, "run")}
+          </span>
+          <span class="w-20 shrink-0" />
+          <span class="w-24 shrink-0" />
+        </div>
+        <Show when={open()}>
+          <For each={ip.inferences}>
+            {(inf) => <InferenceRow run={ip.run} inf={inf} indent="pl-16" showCheckpoint={true} />}
+          </For>
+        </Show>
+      </div>
+    )
+  }
+
+  const InferenceRow = (rp: {
+    run: string
+    inf: CheckpointInference
+    indent: string
+    showCheckpoint: boolean
+  }) => {
+    const inf = () => rp.inf
+    const ckpt = () => inferenceCheckpoint(rp.run, inf())
+    const state = () => inferenceState(inf())
+    return (
+      <div
+        class={`flex h-8 items-center gap-2 border-t border-line-weaker bg-surface pr-4 hover:bg-surface-hover ${rp.indent}`}
+        data-testid="ckpt-inference"
+      >
+        <span
+          class="dot"
+          style={{ "--dot-color": INFERENCE_COLOR[state()] }}
+          role="img"
+          aria-label={inf().mlflow?.status ?? inf().status ?? "unknown status"}
+          title={[
+            inf().mlflow?.status && `MLflow: ${inf().mlflow!.status}`,
+            inf().status && `TrainHub: ${inf().status}`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        />
+        <span class="w-40 shrink-0 truncate font-mono text-sm text-fg-strong" title={inferenceName(inf())}>
+          {inferenceName(inf())}
+        </span>
+        <span
+          class="min-w-0 flex-1 truncate font-mono text-xs"
+          classList={{ "text-fg": inf().exists, "text-fg-weaker line-through": !inf().exists }}
+          title={inf().exists ? inf().checkpoint : `${inf().checkpoint} (deleted since)`}
+          data-testid="ckpt-inference-checkpoint"
+        >
+          {rp.showCheckpoint ? ckpt() : ""}
+        </span>
+        <Show when={!inf().exists && rp.showCheckpoint}>
+          <span class="shrink-0 text-xs text-fg-weaker">deleted</span>
+        </Show>
+        <Show when={inf().config}>
+          <span
+            class="shrink-0 rounded bg-surface px-1.5 font-mono text-xs text-fg"
+            title={`TrainHub: project ${inf().project}, config ${inf().config}`}
+          >
+            {inf().config}
+          </span>
+        </Show>
+        <For each={Object.entries(inf().logged ?? {})}>
+          {([k, v]) => (
+            <span
+              class="max-w-40 shrink-0 truncate rounded bg-surface px-1.5 font-mono text-xs text-fg-weak"
+              title={`${k} = ${v}`}
+            >
+              {v}
+            </span>
+          )}
+        </For>
+        <span class="flex w-12 shrink-0 justify-center gap-0.5">
+          <Show when={inf().trainhub_run && inf().project}>
+            <button
+              type="button"
+              class="flex size-5 items-center justify-center rounded font-mono text-xs text-icon hover:bg-surface-hover hover:text-icon-hover"
+              title={`TrainHub run ${inf().trainhub_run} (${inf().project})`}
+              aria-label="Open the TrainHub project"
+              onClick={() => navigate(`/p/${encodeURIComponent(inf().project!)}`)}
+              data-testid="ckpt-inference-trainhub"
+            >
+              ⟲
+            </button>
+          </Show>
+          <Show when={inf().mlflow?.url}>
+            <a
+              href={inf().mlflow!.url!}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+              aria-label="Open the inference in MLflow"
+              data-testid="ckpt-inference-mlflow"
+            >
+              <IconExternal size={11} />
+            </a>
+          </Show>
+        </span>
+        <span
+          class="w-24 shrink-0 text-right text-xs tabular text-fg-weak"
+          title={formatDateTime(inf().started_at)}
+        >
+          {inf().started_at ? formatAgo(inf().started_at, now()) : ""}
+        </span>
       </div>
     )
   }
@@ -473,6 +853,25 @@ export function CheckpointsPage(props: { source?: string }) {
               {filesSelected()} selected
             </span>
           </Show>
+          <Show when={listing()?.mlflow}>
+            {(ml) => <MlflowCell runs={run().mlflow_runs ?? []} match={ml().match} />}
+          </Show>
+          <Show when={showInferences()}>
+            <span class="flex w-12 shrink-0 justify-center">
+              <Show when={run().inferences?.length}>
+                <InferenceBadge
+                  inferences={run().inferences ?? []}
+                  run={run().name}
+                  testid="ckpt-run-inferences"
+                  onClick={() => {
+                    if (!open()) toggleRun(run().name)
+                    const paths = (run().inferences ?? []).filter((i) => i.exists).map((i) => i.checkpoint)
+                    setOpenInf((s) => new Set([...s, ...paths]))
+                  }}
+                />
+              </Show>
+            </span>
+          </Show>
           <Cols
             count={
               run().count ? plural(run().count, "ckpt") : <span class="text-fg-weaker">no checkpoint</span>
@@ -506,6 +905,12 @@ export function CheckpointsPage(props: { source?: string }) {
                 }}
                 label="other files (outside the layout)"
                 deletable={true}
+              />
+            </Show>
+            <Show when={(run().inferences ?? []).some((i) => !i.exists)}>
+              <InferenceList
+                run={run().name}
+                inferences={(run().inferences ?? []).filter((i) => !i.exists)}
               />
             </Show>
             <Show when={run().count === 0}>
@@ -548,6 +953,35 @@ export function CheckpointsPage(props: { source?: string }) {
     )
   }
 
+  const OrphansButton = () => {
+    const active = () => sourceId() === ORPHANS
+    const count = () => orphans.data?.runs.length
+    return (
+      <button
+        type="button"
+        class="flex h-12 shrink-0 flex-col items-start justify-center rounded-md border border-dashed px-3 text-left transition-colors"
+        classList={{
+          "border-line bg-surface-active": active(),
+          "border-line-weak hover:bg-surface-hover": !active(),
+        }}
+        onClick={() => navigate(`/checkpoints/${encodeURIComponent(ORPHANS)}`)}
+        title="Orphans: MLflow runs whose logged directory is in no checkpoint source"
+        data-testid="ckpt-source-mlflow-orphans"
+        aria-pressed={active()}
+      >
+        <span class="text-sm font-medium text-fg-strong">Orphans</span>
+        <span class="flex items-center gap-1 text-xs tabular text-fg-weak">
+          <Show when={count() != null} fallback={orphans.loading ? "searching…" : "not searched"}>
+            <span classList={{ "text-fg-warning": !!count() }}>{plural(count() ?? 0, "MLflow run")}</span>
+          </Show>
+          <Show when={orphans.loading && count() != null}>
+            <IconSpinner size={10} />
+          </Show>
+        </span>
+      </button>
+    )
+  }
+
   return (
     <div class="flex min-h-0 flex-1 flex-col" data-testid="checkpoints-page">
       <Show
@@ -564,259 +998,265 @@ export function CheckpointsPage(props: { source?: string }) {
       >
         <div class="flex shrink-0 gap-2 overflow-x-auto border-b border-line-weak px-4 py-2.5">
           <For each={sources()}>{(src) => <SourceButton src={src} />}</For>
-        </div>
-        <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line-weaker px-4 py-2">
-          <span class="min-w-0 truncate font-mono text-xs text-fg-weak" title={source()?.layout}>
-            {source()?.machine ?? "TrainHub server"}:{source()?.root}
-          </span>
-          <Tip
-            class="shrink-0 text-xs text-fg-weaker"
-            content={`Scanned ${formatDateTime(listing()?.scanned_at)} — cached 5 min on the server`}
-          >
-            <Show when={listing()?.scanned_at}>· scanned {formatAgo(listing()?.scanned_at, now())}</Show>
-          </Tip>
-          <button
-            type="button"
-            class="flex size-6 shrink-0 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover disabled:opacity-40"
-            title="Rescan the disk"
-            aria-label="Rescan the disk"
-            disabled={entry()?.loading}
-            onClick={() => sourceId() && void loadCheckpoints(sourceId()!, "rescan")}
-            data-testid="ckpt-refresh"
-          >
-            <Show when={entry()?.loading} fallback={<IconRefresh size={12} />}>
-              <IconSpinner size={12} />
-            </Show>
-          </button>
-          <div class="flex-1" />
-          <label class="flex h-7 w-56 items-center gap-1.5 rounded border border-line-weak bg-input px-2 focus-within:border-line">
-            <IconSearch size={12} class="shrink-0 text-icon" />
-            <input
-              value={query()}
-              onInput={(e) => setQuery(e.currentTarget.value)}
-              placeholder="Search runs, checkpoints…"
-              aria-label="Search runs and checkpoints"
-              spellcheck={false}
-              class="h-full min-w-0 flex-1 bg-transparent text-sm text-fg-strong outline-none placeholder:text-fg-weaker"
-              data-testid="ckpt-search"
-            />
-          </label>
-          <div
-            class="flex h-7 items-center rounded border border-line-weak p-0.5 text-xs"
-            role="group"
-            aria-label="Sort"
-          >
-            <For each={["date", "name", "size"] as SortKey[]}>
-              {(k) => (
-                <button
-                  type="button"
-                  class="h-full rounded px-2"
-                  classList={{
-                    "bg-surface-active text-fg-strong": sort() === k,
-                    "text-fg-weak hover:text-fg-strong": sort() !== k,
-                  }}
-                  onClick={() => setSort(k)}
-                  aria-pressed={sort() === k}
-                >
-                  {k}
-                </button>
-              )}
-            </For>
-          </div>
-          <label class="flex items-center gap-1.5 text-xs text-fg-weak">
-            <input
-              type="checkbox"
-              class="size-3.5"
-              checked={hideEmpty()}
-              onChange={(e) => setHideEmpty(e.currentTarget.checked)}
-            />
-            hide empty
-          </label>
-          <button
-            type="button"
-            class="h-7 rounded px-2 text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
-            onClick={() =>
-              setExpanded(allOpen() ? new Set<string>() : new Set(rows().map((r) => r.run.name)))
-            }
-          >
-            {allOpen() ? "collapse all" : "expand all"}
-          </button>
-          <Show
-            when={deleteMode()}
-            fallback={
-              <button
-                type="button"
-                class="flex h-7 items-center gap-1.5 rounded border border-line-weak px-2 text-xs text-fg hover:border-line-critical hover:text-fg-critical"
-                onClick={enterDelete}
-                disabled={!listing()?.count}
-                data-testid="ckpt-delete-mode"
-              >
-                <IconTrash size={12} /> Delete…
-              </button>
-            }
-          >
-            <button
-              type="button"
-              class="flex h-7 items-center gap-1.5 rounded bg-critical-bg px-2 text-xs text-fg-critical"
-              onClick={exitDelete}
-              data-testid="ckpt-delete-mode"
-            >
-              <IconClose size={10} /> Exit delete mode
-            </button>
+          <Show when={mlflowEnabled()}>
+            <OrphansButton />
           </Show>
         </div>
-        <Show when={picking()}>
-          <div
-            class="flex shrink-0 items-center gap-2 border-b border-line-weak bg-surface-active px-4 py-1.5 text-xs text-fg-strong"
-            data-testid="ckpt-pick-bar"
-          >
-            Click a checkpoint to use it in the draft of <span class="font-medium">{pickingLabel()}</span>
-            <div class="flex-1" />
+        <Show when={sourceId() !== ORPHANS} fallback={<MlflowOrphansView />}>
+          <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line-weaker px-4 py-2">
+            <span class="min-w-0 truncate font-mono text-xs text-fg-weak" title={source()?.layout}>
+              {source()?.machine ?? "TrainHub server"}:{source()?.root}
+            </span>
+            <Tip
+              class="shrink-0 text-xs text-fg-weaker"
+              content={`Scanned ${formatDateTime(listing()?.scanned_at)} — cached 5 min on the server`}
+            >
+              <Show when={listing()?.scanned_at}>· scanned {formatAgo(listing()?.scanned_at, now())}</Show>
+            </Tip>
+            <Show when={listing()?.mlflow && listing()}>{(l) => <MlflowSummary listing={l()} />}</Show>
             <button
               type="button"
-              class="h-6 rounded px-2 text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
-              onClick={cancelPick}
+              class="flex size-6 shrink-0 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover disabled:opacity-40"
+              title="Rescan the disk"
+              aria-label="Rescan the disk"
+              disabled={entry()?.loading}
+              onClick={() => sourceId() && void loadCheckpoints(sourceId()!, "rescan")}
+              data-testid="ckpt-refresh"
             >
-              Cancel
-            </button>
-          </div>
-        </Show>
-        <Show when={entry()?.error}>
-          <div class="shrink-0 border-b border-line-weaker bg-critical-bg px-4 py-1.5 text-xs text-fg-critical">
-            {entry()?.error}
-          </div>
-        </Show>
-        <div class="min-h-0 flex-1 overflow-y-auto" data-testid="ckpt-list">
-          <Show
-            when={listing()}
-            fallback={
-              <div class="flex items-center gap-2 px-4 py-6 text-sm text-fg-weak">
-                <Show when={entry()?.loading}>
-                  <IconSpinner size={12} /> Scanning {source()?.root}…
-                </Show>
-              </div>
-            }
-          >
-            <Show when={deleteMode()}>
-              <div class="border-b border-line-weaker px-4 py-1.5 text-xs text-fg-critical">
-                Delete mode: tick checkpoints or whole groups, then slide to confirm at the bottom.
-              </div>
-            </Show>
-            <For
-              each={rows()}
-              fallback={
-                <div class="px-4 py-6 text-sm text-fg-weak">
-                  {query() ? "Nothing matches the search." : "No run directory under the root."}
-                </div>
-              }
-            >
-              {(row) => <RunBlock row={row} />}
-            </For>
-            <Show when={!deleteMode() && (listing()?.others?.length ?? 0) > 0 && !query()}>
-              <div class="border-b border-line-weaker">
-                <div class="flex h-10 items-center px-4 text-xs text-fg-weak">
-                  Checkpoints directly under the root (no run directory)
-                </div>
-                <For each={listing()?.others ?? []}>
-                  {(f) => <FileRow file={f} indent="pl-10" deletable={false} />}
-                </For>
-              </div>
-            </Show>
-          </Show>
-        </div>
-        <Show when={deleteMode()}>
-          <div
-            class="flex shrink-0 flex-wrap items-center gap-3 border-t border-line-critical bg-bg-stronger px-4 py-2.5"
-            data-testid="ckpt-delete-bar"
-          >
-            <span class="text-sm text-fg-strong" data-testid="ckpt-delete-summary">
-              <Show
-                when={deleteSummary().files}
-                fallback={<span class="text-fg-weak">Nothing selected</span>}
-              >
-                <Show when={deleteSummary().groups}>{plural(deleteSummary().groups, "group")}, </Show>
-                {plural(deleteSummary().files, "checkpoint")} in {plural(deleteSummary().runs, "run")} ·{" "}
-                <span class="font-mono font-medium text-fg-critical">
-                  {formatBytes(deleteSummary().size)}
-                </span>
+              <Show when={entry()?.loading} fallback={<IconRefresh size={12} />}>
+                <IconSpinner size={12} />
               </Show>
-            </span>
+            </button>
             <div class="flex-1" />
+            <label class="flex h-7 w-56 items-center gap-1.5 rounded border border-line-weak bg-input px-2 focus-within:border-line">
+              <IconSearch size={12} class="shrink-0 text-icon" />
+              <input
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+                placeholder="Search runs, checkpoints…"
+                aria-label="Search runs and checkpoints"
+                spellcheck={false}
+                class="h-full min-w-0 flex-1 bg-transparent text-sm text-fg-strong outline-none placeholder:text-fg-weaker"
+                data-testid="ckpt-search"
+              />
+            </label>
+            <div
+              class="flex h-7 items-center rounded border border-line-weak p-0.5 text-xs"
+              role="group"
+              aria-label="Sort"
+            >
+              <For each={["date", "name", "size"] as SortKey[]}>
+                {(k) => (
+                  <button
+                    type="button"
+                    class="h-full rounded px-2"
+                    classList={{
+                      "bg-surface-active text-fg-strong": sort() === k,
+                      "text-fg-weak hover:text-fg-strong": sort() !== k,
+                    }}
+                    onClick={() => setSort(k)}
+                    aria-pressed={sort() === k}
+                  >
+                    {k}
+                  </button>
+                )}
+              </For>
+            </div>
+            <label class="flex items-center gap-1.5 text-xs text-fg-weak">
+              <input
+                type="checkbox"
+                class="size-3.5"
+                checked={hideEmpty()}
+                onChange={(e) => setHideEmpty(e.currentTarget.checked)}
+              />
+              hide empty
+            </label>
             <button
               type="button"
-              class="h-7 rounded px-2 text-xs text-fg-weak hover:text-fg-strong"
-              onClick={() => setToDelete(new Set<string>())}
-              disabled={!toDelete().size}
-            >
-              Clear selection
-            </button>
-            <SlideToConfirm
-              label={
-                deleteSummary().files
-                  ? `Slide to delete ${plural(deleteSummary().files, "checkpoint")}`
-                  : "Select checkpoints"
+              class="h-7 rounded px-2 text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+              onClick={() =>
+                setExpanded(allOpen() ? new Set<string>() : new Set(rows().map((r) => r.run.name)))
               }
-              disabled={!deleteSummary().files}
-              busy={deleting()}
-              onConfirm={() => void confirmDelete()}
-              testid="ckpt-slide"
-            />
-          </div>
-        </Show>
-        <Show when={!deleteMode() && !picking() && toSend().size > 0}>
-          <div
-            class="flex shrink-0 flex-wrap items-center gap-2 border-t border-line-weak bg-bg-stronger px-4 py-2.5"
-            data-testid="ckpt-send-bar"
-          >
-            <span class="text-sm text-fg-strong">
-              {plural(sendSummary().files, "checkpoint")} selected ·{" "}
-              <span class="font-mono text-fg-weak">{formatBytes(sendSummary().size)}</span>
-            </span>
-            <button
-              type="button"
-              class="h-7 rounded px-2 text-xs text-fg-weak hover:text-fg-strong"
-              onClick={() => setToSend(new Set<string>())}
             >
-              Clear
-            </button>
-            <div class="flex-1" />
-            <button
-              type="button"
-              class="flex h-7 items-center gap-1.5 rounded px-2 text-xs text-fg hover:bg-surface-hover hover:text-fg-strong"
-              onClick={() => void copyPaths()}
-              title="Copy the paths on the machine, one per line"
-            >
-              <IconCopy size={12} /> Copy paths
+              {allOpen() ? "collapse all" : "expand all"}
             </button>
             <Show
-              when={targets().length}
+              when={deleteMode()}
               fallback={
-                <span class="text-xs text-fg-weak">
-                  No project takes a <code class="font-mono">{"{checkpoint}"}</code> (add one with{" "}
-                  <code class="font-mono">extends</code>)
-                </span>
+                <button
+                  type="button"
+                  class="flex h-7 items-center gap-1.5 rounded border border-line-weak px-2 text-xs text-fg hover:border-line-critical hover:text-fg-critical"
+                  onClick={enterDelete}
+                  disabled={!listing()?.count}
+                  data-testid="ckpt-delete-mode"
+                >
+                  <IconTrash size={12} /> Delete…
+                </button>
               }
             >
-              <span class="text-xs text-fg-weak">Send to</span>
-              <select
-                class="h-7 rounded border border-line-weak bg-input px-1.5 text-sm text-fg-strong outline-none focus:border-line"
-                value={targetId() ?? ""}
-                onChange={(e) => setTarget(e.currentTarget.value)}
-                aria-label="Target project"
-                data-testid="ckpt-target"
-              >
-                <For each={targets()}>{(p) => <option value={p.id}>{p.label}</option>}</For>
-              </select>
               <button
                 type="button"
-                class="h-7 rounded-md bg-primary px-3 text-sm font-medium text-primary-fg"
-                onClick={sendTo}
-                data-testid="ckpt-send"
+                class="flex h-7 items-center gap-1.5 rounded bg-critical-bg px-2 text-xs text-fg-critical"
+                onClick={exitDelete}
+                data-testid="ckpt-delete-mode"
               >
-                Create {plural(toSend().size, "draft")}
+                <IconClose size={10} /> Exit delete mode
               </button>
             </Show>
           </div>
+          <Show when={picking()}>
+            <div
+              class="flex shrink-0 items-center gap-2 border-b border-line-weak bg-surface-active px-4 py-1.5 text-xs text-fg-strong"
+              data-testid="ckpt-pick-bar"
+            >
+              Click a checkpoint to use it in the draft of <span class="font-medium">{pickingLabel()}</span>
+              <div class="flex-1" />
+              <button
+                type="button"
+                class="h-6 rounded px-2 text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+                onClick={cancelPick}
+              >
+                Cancel
+              </button>
+            </div>
+          </Show>
+          <Show when={entry()?.error}>
+            <div class="shrink-0 border-b border-line-weaker bg-critical-bg px-4 py-1.5 text-xs text-fg-critical">
+              {entry()?.error}
+            </div>
+          </Show>
+          <div class="min-h-0 flex-1 overflow-y-auto" data-testid="ckpt-list">
+            <Show
+              when={listing()}
+              fallback={
+                <div class="flex items-center gap-2 px-4 py-6 text-sm text-fg-weak">
+                  <Show when={entry()?.loading}>
+                    <IconSpinner size={12} /> Scanning {source()?.root}…
+                  </Show>
+                </div>
+              }
+            >
+              <Show when={deleteMode()}>
+                <div class="border-b border-line-weaker px-4 py-1.5 text-xs text-fg-critical">
+                  Delete mode: tick checkpoints or whole groups, then slide to confirm at the bottom.
+                </div>
+              </Show>
+              <For
+                each={rows()}
+                fallback={
+                  <div class="px-4 py-6 text-sm text-fg-weak">
+                    {query() ? "Nothing matches the search." : "No run directory under the root."}
+                  </div>
+                }
+              >
+                {(row) => <RunBlock row={row} />}
+              </For>
+              <Show when={!deleteMode() && (listing()?.others?.length ?? 0) > 0 && !query()}>
+                <div class="border-b border-line-weaker">
+                  <div class="flex h-10 items-center px-4 text-xs text-fg-weak">
+                    Checkpoints directly under the root (no run directory)
+                  </div>
+                  <For each={listing()?.others ?? []}>
+                    {(f) => <FileRow file={f} indent="pl-10" deletable={false} />}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+          </div>
+          <Show when={deleteMode()}>
+            <div
+              class="flex shrink-0 flex-wrap items-center gap-3 border-t border-line-critical bg-bg-stronger px-4 py-2.5"
+              data-testid="ckpt-delete-bar"
+            >
+              <span class="text-sm text-fg-strong" data-testid="ckpt-delete-summary">
+                <Show
+                  when={deleteSummary().files}
+                  fallback={<span class="text-fg-weak">Nothing selected</span>}
+                >
+                  <Show when={deleteSummary().groups}>{plural(deleteSummary().groups, "group")}, </Show>
+                  {plural(deleteSummary().files, "checkpoint")} in {plural(deleteSummary().runs, "run")} ·{" "}
+                  <span class="font-mono font-medium text-fg-critical">
+                    {formatBytes(deleteSummary().size)}
+                  </span>
+                </Show>
+              </span>
+              <div class="flex-1" />
+              <button
+                type="button"
+                class="h-7 rounded px-2 text-xs text-fg-weak hover:text-fg-strong"
+                onClick={() => setToDelete(new Set<string>())}
+                disabled={!toDelete().size}
+              >
+                Clear selection
+              </button>
+              <SlideToConfirm
+                label={
+                  deleteSummary().files
+                    ? `Slide to delete ${plural(deleteSummary().files, "checkpoint")}`
+                    : "Select checkpoints"
+                }
+                disabled={!deleteSummary().files}
+                busy={deleting()}
+                onConfirm={() => void confirmDelete()}
+                testid="ckpt-slide"
+              />
+            </div>
+          </Show>
+          <Show when={!deleteMode() && !picking() && toSend().size > 0}>
+            <div
+              class="flex shrink-0 flex-wrap items-center gap-2 border-t border-line-weak bg-bg-stronger px-4 py-2.5"
+              data-testid="ckpt-send-bar"
+            >
+              <span class="text-sm text-fg-strong">
+                {plural(sendSummary().files, "checkpoint")} selected ·{" "}
+                <span class="font-mono text-fg-weak">{formatBytes(sendSummary().size)}</span>
+              </span>
+              <button
+                type="button"
+                class="h-7 rounded px-2 text-xs text-fg-weak hover:text-fg-strong"
+                onClick={() => setToSend(new Set<string>())}
+              >
+                Clear
+              </button>
+              <div class="flex-1" />
+              <button
+                type="button"
+                class="flex h-7 items-center gap-1.5 rounded px-2 text-xs text-fg hover:bg-surface-hover hover:text-fg-strong"
+                onClick={() => void copyPaths()}
+                title="Copy the paths on the machine, one per line"
+              >
+                <IconCopy size={12} /> Copy paths
+              </button>
+              <Show
+                when={targets().length}
+                fallback={
+                  <span class="text-xs text-fg-weak">
+                    No project takes a <code class="font-mono">{"{checkpoint}"}</code> (add one with{" "}
+                    <code class="font-mono">extends</code>)
+                  </span>
+                }
+              >
+                <span class="text-xs text-fg-weak">Send to</span>
+                <select
+                  class="h-7 rounded border border-line-weak bg-input px-1.5 text-sm text-fg-strong outline-none focus:border-line"
+                  value={targetId() ?? ""}
+                  onChange={(e) => setTarget(e.currentTarget.value)}
+                  aria-label="Target project"
+                  data-testid="ckpt-target"
+                >
+                  <For each={targets()}>{(p) => <option value={p.id}>{p.label}</option>}</For>
+                </select>
+                <button
+                  type="button"
+                  class="h-7 rounded-md bg-primary px-3 text-sm font-medium text-primary-fg"
+                  onClick={sendTo}
+                  data-testid="ckpt-send"
+                >
+                  Create {plural(toSend().size, "draft")}
+                </button>
+              </Show>
+            </div>
+          </Show>
         </Show>
       </Show>
     </div>

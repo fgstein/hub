@@ -145,6 +145,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mlflow-orphans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mlflow Orphans
+         * @description MLflow runs whose logged directory is in no checkpoint source (scans and searches
+         *     cached 5 min, ``refresh`` forces them).
+         */
+        get: operations["mlflow_orphans_api_mlflow_orphans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mlflow-orphans/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Mlflow Orphans
+         * @description Delete MLflow runs without directory (MLflow trash, until ``mlflow gc``); a run that
+         *     is not an orphan is refused.
+         */
+        post: operations["delete_mlflow_orphans_api_mlflow_orphans_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/checkpoints/{source_id}": {
         parameters: {
             query?: never;
@@ -399,6 +441,52 @@ export interface components {
             /** Files */
             files: components["schemas"]["CheckpointFile"][];
         };
+        /**
+         * CheckpointInference
+         * @description An inference made with a checkpoint: TrainHub run, MLflow run, or both.
+         */
+        CheckpointInference: {
+            /**
+             * Checkpoint
+             * @description Checkpoint, relative to the source root
+             */
+            checkpoint: string;
+            /**
+             * Exists
+             * @description The checkpoint is still on disk (last scan)
+             */
+            exists: boolean;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Trainhub Run
+             * @description TrainHub run id
+             */
+            trainhub_run?: string | null;
+            /**
+             * Project
+             * @description TrainHub project
+             */
+            project?: string | null;
+            /**
+             * Config
+             * @description TrainHub config
+             */
+            config?: string | null;
+            /**
+             * Status
+             * @description Status of the TrainHub run
+             */
+            status?: string | null;
+            mlflow?: components["schemas"]["MlflowRunRef"] | null;
+            /**
+             * Logged
+             * @description Values of the keys of mlflow.inference.show
+             */
+            logged?: {
+                [key: string]: string;
+            };
+        };
         /** CheckpointListing */
         CheckpointListing: {
             /** Source */
@@ -433,6 +521,38 @@ export interface components {
             error?: string | null;
             /** Scanned At */
             scanned_at?: string | null;
+            /** @description Link of the run directories with MLflow (None: no mlflow.match) */
+            mlflow?: components["schemas"]["CheckpointMlflowStatus"] | null;
+            /** @description Search of the MLflow inferences (None: no mlflow.inference) */
+            mlflow_inference?: components["schemas"]["CheckpointMlflowStatus"] | null;
+        };
+        /**
+         * CheckpointMlflowStatus
+         * @description Search of the MLflow runs of a checkpoint source.
+         */
+        CheckpointMlflowStatus: {
+            /**
+             * Match
+             * @description MLflow key holding the path (params.<key> / tags.<key>)
+             */
+            match: string;
+            /** Tracking Uri */
+            tracking_uri: string;
+            /**
+             * Searched
+             * @description MLflow runs having the key
+             */
+            searched: number;
+            /**
+             * Truncated
+             * @description Search stopped before the end
+             * @default false
+             */
+            truncated: boolean;
+            /** Searched At */
+            searched_at?: string | null;
+            /** Error */
+            error?: string | null;
         };
         /**
          * CheckpointRun
@@ -457,6 +577,16 @@ export interface components {
              * @description Checkpoint files of the run outside the layout
              */
             others?: components["schemas"]["CheckpointFile"][];
+            /**
+             * Inferences
+             * @description Inferences made with the checkpoints of this directory (TrainHub runs and MLflow runs of mlflow.inference), most recent first
+             */
+            inferences?: components["schemas"]["CheckpointInference"][];
+            /**
+             * Mlflow Runs
+             * @description MLflow runs logged from this directory, most recent first (empty: none found, or the source has no mlflow section)
+             */
+            mlflow_runs?: components["schemas"]["MlflowRunRef"][];
         };
         /**
          * CheckpointSourceView
@@ -488,6 +618,11 @@ export interface components {
             count?: number | null;
             /** Scanned At */
             scanned_at?: string | null;
+            /**
+             * Mlflow Match
+             * @description MLflow key linking its run directories (mlflow.match)
+             */
+            mlflow_match?: string | null;
         };
         /** ConfigList */
         ConfigList: {
@@ -734,7 +869,7 @@ export interface components {
             };
             /**
              * Checkpoint
-             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
+             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes (unchanged if none covers it)
              */
             checkpoint?: string | null;
             /** @description Repeat the run several times in a row (same container) */
@@ -822,6 +957,34 @@ export interface components {
             port: number | null;
             status: components["schemas"]["MachineStatus"];
         };
+        /** MlflowDeleteRequest */
+        MlflowDeleteRequest: {
+            /**
+             * Run Ids
+             * @description MLflow runs to delete (orphans only)
+             */
+            run_ids: string[];
+        };
+        /** MlflowDeleteResult */
+        MlflowDeleteResult: {
+            /**
+             * Deleted
+             * @description Deleted MLflow runs (MLflow trash)
+             */
+            deleted: string[];
+            /**
+             * Failed
+             * @description Run id → error
+             */
+            failed?: {
+                [key: string]: string;
+            };
+            /**
+             * Remaining
+             * @description Orphans left
+             */
+            remaining: number;
+        };
         /**
          * MlflowInfo
          * @description What TrainHub read of the MLflow run matching a TrainHub run.
@@ -859,6 +1022,103 @@ export interface components {
              * @description Last error querying MLflow
              */
             error?: string | null;
+        };
+        /**
+         * MlflowOrphan
+         * @description MLflow run whose logged directory is in no checkpoint source (deleted, or elsewhere).
+         */
+        MlflowOrphan: {
+            run: components["schemas"]["MlflowRunRef"];
+            /**
+             * Path
+             * @description Directory logged by the run (value of match)
+             */
+            path: string;
+            /**
+             * Match
+             * @description MLflow key holding it
+             */
+            match: string;
+            /**
+             * Sources
+             * @description Sources whose MLflow search found the run
+             */
+            sources: string[];
+        };
+        /**
+         * MlflowOrphanListing
+         * @description MLflow runs without a directory on disk, over every checkpoint source.
+         */
+        MlflowOrphanListing: {
+            /**
+             * Enabled
+             * @description At least one source has mlflow.match
+             */
+            enabled: boolean;
+            /**
+             * Runs
+             * @description Most recent first
+             */
+            runs: components["schemas"]["MlflowOrphan"][];
+            /**
+             * Searched
+             * @description MLflow runs read (all sources)
+             */
+            searched: number;
+            /**
+             * Linked
+             * @description Of which with a directory in a source
+             */
+            linked: number;
+            /**
+             * Truncated
+             * @description An MLflow search stopped early
+             * @default false
+             */
+            truncated: boolean;
+            /**
+             * Searched At
+             * @description Oldest search used
+             */
+            searched_at?: string | null;
+            /**
+             * Mlflow Errors
+             * @description Source → MLflow error (its runs may be missing)
+             */
+            mlflow_errors?: {
+                [key: string]: string;
+            };
+            /**
+             * Scan Errors
+             * @description Source → scan error without any listing: runs of its directories may be shown as orphans by mistake
+             */
+            scan_errors?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * MlflowRunRef
+         * @description An MLflow run found for a run directory of a checkpoint source.
+         */
+        MlflowRunRef: {
+            /** Run Id */
+            run_id: string;
+            /** Run Name */
+            run_name?: string | null;
+            /** Experiment Id */
+            experiment_id?: string | null;
+            /**
+             * Status
+             * @description MLflow status: RUNNING, SCHEDULED, FINISHED, FAILED, KILLED
+             */
+            status?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Url
+             * @description Page of the run in the MLflow UI
+             */
+            url?: string | null;
         };
         /** PreviewResult */
         PreviewResult: {
@@ -1117,7 +1377,7 @@ export interface components {
             };
             /**
              * Checkpoint
-             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
+             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes (unchanged if none covers it)
              */
             checkpoint?: string | null;
             /** @description Repeat the run several times in a row (same container) */
@@ -1433,6 +1693,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CheckpointSourceView"][];
+                };
+            };
+        };
+    };
+    mlflow_orphans_api_mlflow_orphans_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlflowOrphanListing"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mlflow_orphans_api_mlflow_orphans_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MlflowDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlflowDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

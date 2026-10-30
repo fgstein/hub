@@ -6,6 +6,8 @@ import type {
   InventoryView,
   MachineGpus,
   MachineLoad,
+  MlflowDeleteResult,
+  MlflowOrphanListing,
   PreviewResult,
   ProjectView,
   RunAction,
@@ -81,6 +83,10 @@ export const api = {
       "GET",
       `/api/checkpoints/${encodeURIComponent(source)}${refresh ? "?refresh=true" : ""}`,
     ),
+  mlflowOrphans: (refresh = false) =>
+    request<MlflowOrphanListing>("GET", `/api/mlflow-orphans${refresh ? "?refresh=true" : ""}`),
+  deleteMlflowOrphans: (runIds: string[]) =>
+    request<MlflowDeleteResult>("POST", "/api/mlflow-orphans/delete", { run_ids: runIds }),
   deleteCheckpoints: (source: string, paths: string[]) =>
     request<CheckpointDeleteResult>("POST", `/api/checkpoints/${encodeURIComponent(source)}/delete`, {
       paths,

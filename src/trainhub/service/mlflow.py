@@ -18,12 +18,22 @@ import contextlib
 import logging
 import os
 import time
-from datetime import timedelta
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ..core.models import MLFLOW_TERMINAL, MlflowConfig, MlflowInfo, Run, UnknownResourceError
+from ..core.models import (
+    MLFLOW_TERMINAL,
+    MlflowConfig,
+    MlflowInfo,
+    MlflowRunRef,
+    Run,
+    UnknownResourceError,
+    split_mlflow_key,
+)
 from ..core.status import utcnow
 
 if TYPE_CHECKING:
@@ -40,10 +50,24 @@ START_MARGIN = timedelta(minutes=5)
 EXPERIMENTS_TTL_S = 60.0
 #: Queries to MLflow running at the same time.
 MAX_CONCURRENCY = 8
+#: Search of the runs of a checkpoint source: pages of 1000 runs, most recent first.
+SEARCH_PAGE_SIZE = 1000
+SEARCH_MAX_PAGES = 10
 
 
 class MlflowError(Exception):
     """MLflow unreachable or error answer."""
+
+
+@dataclass(frozen=True)
+class MlflowHit:
+    """A run found by :meth:`MlflowSource.search_by_key`."""
+
+    value: str
+    """Value of the searched key."""
+    ref: MlflowRunRef
+    logged: dict[str, str] = field(default_factory=dict)
+    """Values of the extra keys (``params.<key>`` / ``tags.<key>``) the run has."""
 
 
 def read_info(cfg: MlflowConfig, run: dict[str, Any]) -> MlflowInfo:
@@ -65,6 +89,34 @@ def read_info(cfg: MlflowConfig, run: dict[str, Any]) -> MlflowInfo:
     )
 
 
+def read_ref(cfg: MlflowConfig, run: dict[str, Any]) -> MlflowRunRef | None:
+    """:class:`MlflowRunRef` of a run of the REST API (``None`` without run id)."""
+    info = run.get("info") or {}
+    run_id = info.get("run_id") or info.get("run_uuid")
+    if not run_id:
+        return None
+    exp = info.get("experiment_id")
+    start = _number(info.get("start_time"))
+    return MlflowRunRef(
+        run_id=run_id,
+        run_name=info.get("run_name") or None,
+        experiment_id=exp,
+        status=info.get("status"),
+        started_at=datetime.fromtimestamp(start / 1000, UTC) if start else None,
+        url=f"{cfg.tracking_uri}/#/experiments/{exp}/runs/{run_id}" if exp else None,
+    )
+
+
+def logged_value(run: dict[str, Any], full_key: str) -> str | None:
+    """Value of ``params.<key>`` / ``tags.<key>`` in a run of the REST API."""
+    kind, key = split_mlflow_key(full_key)
+    for item in (run.get("data") or {}).get(kind) or []:
+        if item.get("key") == key:
+            value = item.get("value")
+            return value if isinstance(value, str) else None
+    return None
+
+
 def _number(value: object) -> float | None:
     if value is None:
         return None
@@ -80,6 +132,17 @@ class MlflowSource(abc.ABC):
     @abc.abstractmethod
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
         """State of the MLflow run of ``run``; raise :class:`MlflowError` on failure."""
+
+    async def search_by_key(
+        self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
+    ) -> tuple[list[MlflowHit], bool]:
+        """Runs having the key ``match`` (``params.<key>`` / ``tags.<key>``), most recent
+        first, with its value and those of ``extra``; and whether the search stopped early."""
+        raise MlflowError("MLflow search not available")
+
+    async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
+        """Delete an MLflow run (soft: in the MLflow trash until ``mlflow gc``)."""
+        raise MlflowError("MLflow deletion not available")
 
     async def close(self) -> None:  # noqa: B027
         """Release resources."""
@@ -184,6 +247,43 @@ class HttpMlflow(MlflowSource):
         )
         runs = (data or {}).get("runs") or []
         return read_info(cfg, runs[0]) if runs else MlflowInfo()
+
+    async def search_by_key(
+        self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
+    ) -> tuple[list[MlflowHit], bool]:
+        kind, key = split_mlflow_key(match)
+        ids = await self.experiment_ids(cfg)
+        if not ids:
+            names = ", ".join(cfg.experiments or [])
+            raise MlflowError(f"MLflow experiment not found: {names or 'no experiment'}")
+        out: list[MlflowHit] = []
+        token: str | None = None
+        for _ in range(SEARCH_MAX_PAGES):
+            body: dict[str, Any] = {
+                "experiment_ids": ids,
+                # Runs without the key are left out by the filter.
+                "filter": f"{kind}.`{key}` LIKE '%'",
+                "max_results": SEARCH_PAGE_SIZE,
+                "order_by": ["attributes.start_time DESC"],
+            }
+            if token:
+                body["page_token"] = token
+            data = await self._call(cfg, "POST", "runs/search", json=body) or {}
+            for run in data.get("runs") or []:
+                value = logged_value(run, match)
+                ref = read_ref(cfg, run)
+                if value is None or ref is None:
+                    continue
+                logged = {k: v for k in extra if (v := logged_value(run, k)) is not None}
+                out.append(MlflowHit(value, ref, logged))
+            token = data.get("next_page_token")
+            if not token:
+                return out, False
+        return out, True
+
+    async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
+        if await self._call(cfg, "POST", "runs/delete", json={"run_id": run_id}) is None:
+            raise MlflowError(f"MLflow run not found: {run_id}")
 
 
 class MlflowTracker:

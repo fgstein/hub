@@ -44,11 +44,12 @@ from ..core.models import (
     Machine,
     MlflowConfig,
     MlflowInfo,
+    MlflowRunRef,
     Run,
     SimulationSettings,
 )
 from ..core.series import end_marker, halt_message, start_marker
-from ..service.mlflow import MlflowSource
+from ..service.mlflow import MlflowHit, MlflowSource
 from .base import (
     ExecResult,
     Executor,
@@ -1024,6 +1025,8 @@ class FakeMlflow(MlflowSource):
 
     def __init__(self, executor: FakeExecutor) -> None:
         self.executor = executor
+        #: MLflow runs deleted (they no longer show in the searches)
+        self.deleted: set[str] = set()
 
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
         c = self.executor.find_container(run.id)
@@ -1039,6 +1042,98 @@ class FakeMlflow(MlflowSource):
             max_epochs=c.ml_epochs,
             url=f"{cfg.tracking_uri}/#/experiments/{exp}/runs/{ml_id}",
         )
+
+    async def search_by_key(
+        self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
+    ) -> tuple[list[MlflowHit], bool]:
+        """Simulated MLflow runs of the checkpoint sources: a training run logged from each
+        run directory but the second one; zero to three inferences per directory, one of
+        them on a checkpoint deleted since."""
+        inv = self.executor.inventory
+        out: list[MlflowHit] = []
+        for src in inv.checkpoints if inv else []:
+            ml = src.mlflow
+            if ml is None:
+                continue
+            exp = str(int(hashlib.sha1(src.id.encode()).hexdigest()[:4], 16))
+            names = self.executor.settings.checkpoints.get(src.id) or _DEFAULT_CKPT_RUNS
+
+            def ref(seed: str, name: str, status: str, days: float, exp: str = exp) -> MlflowRunRef:
+                ml_id = hashlib.sha1(seed.encode()).hexdigest()[:32]
+                return MlflowRunRef(
+                    run_id=ml_id,
+                    run_name=f"{name.split('_')[0]}-{ml_id[:6]}",
+                    experiment_id=exp,
+                    status=status,
+                    started_at=datetime.fromtimestamp(time.time() - days * 86400, UTC),
+                    url=f"{cfg.tracking_uri}/#/experiments/{exp}/runs/{ml_id}",
+                )
+
+            if ml.match == match:
+                rng = random.Random(f"mlflow-{src.id}")
+                for i, name in enumerate(names):
+                    if i == 1:
+                        continue
+                    status = "RUNNING" if i == 0 else rng.choice(["FINISHED"] * 3 + ["FAILED"])
+                    out.append(
+                        MlflowHit(
+                            f"/workspace/outputs/{name}/checkpoints",
+                            ref(f"{src.id}-{name}", name, status, i * 2.5 + 1),
+                        )
+                    )
+                # directories deleted since: orphans
+                for k, gone in enumerate(["unet_small_2026-08-14", "segformer_b0_debug"]):
+                    out.append(
+                        MlflowHit(
+                            f"/workspace/outputs/{gone}/checkpoints",
+                            ref(
+                                f"{src.id}-{gone}",
+                                gone,
+                                rng.choice(["FINISHED", "FAILED"]),
+                                40 + k * 7,
+                            ),
+                        )
+                    )
+            if ml.inference is not None and ml.inference.match == match:
+                rng = random.Random(f"mlflow-inference-{src.id}")
+                tree = self.executor._checkpoint_tree(src.root) or {}
+                for i, name in enumerate(names):
+                    files = sorted(
+                        p for p, v in tree.items() if v[0] == "f" and p.startswith(f"{name}/")
+                    )
+                    if not files:
+                        continue
+                    for k in range(rng.randrange(0, 4) if i else 2):
+                        path = (
+                            rng.choice(files)
+                            if k
+                            else files[0].rsplit("/", 1)[0] + "/epoch0000099.ckpt"
+                        )
+                        logged = {
+                            key: rng.choice(["cityscapes", "ade20k", "coco-stuff"])
+                            if "data" in key
+                            else rng.choice(["fp16", "fp32"])
+                            for key in extra
+                            if key.startswith("params.")
+                        }
+                        out.append(
+                            MlflowHit(
+                                f"/workspace/outputs/{path}",
+                                ref(
+                                    f"{src.id}-{name}-inf{k}",
+                                    "infer",
+                                    rng.choice(["FINISHED"] * 4 + ["FAILED"]),
+                                    i * 2.5 + 0.5 - k * 0.1,
+                                ),
+                                logged,
+                            )
+                        )
+        out = [h for h in out if h.ref.run_id not in self.deleted]
+        out.sort(key=lambda h: h.ref.started_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return out, False
+
+    async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
+        self.deleted.add(run_id)
 
 
 class _FakeShell(ShellSession):
