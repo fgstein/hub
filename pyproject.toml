@@ -33,6 +33,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/trainhub"]
 
+# Built front end, committed in web/dist (see CLAUDE.md): shipped as trainhub/static so that a
+# plain `pip install .` serves the interface (api.app.find_static_dir).
+[tool.hatch.build.targets.wheel.force-include]
+"web/dist" = "trainhub/static"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

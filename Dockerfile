@@ -15,6 +15,7 @@ WORKDIR /src
 RUN pip install --no-cache-dir build
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY --from=web /web/dist ./web/dist
 RUN python -m build --wheel --outdir /dist
 
 # --- 3. final image -------------------------------------------------------------------
@@ -33,12 +34,10 @@ RUN groupadd -g ${GID} th \
 
 COPY --from=wheel /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
-COPY --from=web /web/dist /opt/trainhub/static
 COPY inventory.example.yaml /etc/trainhub/inventory.example.yaml
 
 ENV TRAINHUB_INVENTORY=/etc/trainhub/inventory.yaml \
     TRAINHUB_DATA_DIR=/var/lib/trainhub \
-    TRAINHUB_STATIC_DIR=/opt/trainhub/static \
     TRAINHUB_HOST=127.0.0.1 \
     TRAINHUB_PORT=8420 \
     TRAINHUB_EXECUTOR=ssh \

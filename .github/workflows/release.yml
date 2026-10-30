@@ -1,0 +1,72 @@
+name: Release
+
+# Builds the front end (web/dist) and the trainhubX.Y.Z.zip archive, which installs without Node.
+# - tag vX.Y.Z pushed: GitHub release with the zip and web-dist.zip attached
+# - manual run (Actions tab): the same files as workflow artifacts, no release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build web/dist and the zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject.toml version $version"
+            exit 1
+          fi
+
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+      - name: Archives
+        run: |
+          mkdir -p out
+          uv run --no-dev python scripts/make_zip.py --out "out/trainhub${{ steps.version.outputs.version }}.zip"
+          (cd web/dist && zip -qr "$GITHUB_WORKSPACE/out/web-dist.zip" .)
+
+      - name: Check the zip installs and serves the interface
+        run: |
+          cd "$RUNNER_TEMP"
+          unzip -q "$GITHUB_WORKSPACE/out/trainhub${{ steps.version.outputs.version }}.zip"
+          cd trainhub
+          python3 -m venv .venv && .venv/bin/pip install -q .
+          TRAINHUB_EXECUTOR=fake TRAINHUB_INVENTORY=dev/inventory.dev.yaml TRAINHUB_DATA_DIR="$RUNNER_TEMP/data" \
+            .venv/bin/trainhub serve &
+          for i in $(seq 1 30); do curl -fsS localhost:8420/ | grep -q '<div' && exit 0; sleep 1; done
+          echo "interface not served"; exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trainhub${{ steps.version.outputs.version }}
+          path: out/
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "TrainHub ${{ steps.version.outputs.version }}" --generate-notes
