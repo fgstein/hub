@@ -29,6 +29,21 @@ export function hostPath(root: string, rel: string): string {
   return `${root.replace(/\/+$/, "")}/${rel}`
 }
 
+/** A checkpoint of a run with its group: ``""`` without ``{group}``, ``null`` outside the layout. */
+export interface LabeledFile {
+  file: CheckpointFile
+  group: string | null
+}
+
+/** Every checkpoint of a run in a single list, sorted by name, each with its group. */
+export function flatFiles(run: Pick<RunRowView, "groups" | "others">): LabeledFile[] {
+  const out: LabeledFile[] = [
+    ...run.groups.flatMap((g) => g.files.map((file) => ({ file, group: g.name }))),
+    ...run.others.map((file) => ({ file, group: null })),
+  ]
+  return out.sort((a, b) => a.file.name.localeCompare(b.file.name) || a.file.path.localeCompare(b.file.path))
+}
+
 /** Every checkpoint file of a run (groups, then “others”). */
 export function runFiles(run: Pick<CheckpointRun, "groups" | "others">): CheckpointFile[] {
   return [...run.groups.flatMap((g) => g.files), ...(run.others ?? [])]

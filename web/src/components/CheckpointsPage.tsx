@@ -4,6 +4,7 @@ import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, o
 import {
   type CheckState,
   checkState,
+  flatFiles,
   hostPath,
   type InferenceState,
   inferenceCheckpoint,
@@ -20,7 +21,6 @@ import {
 import { formatAgo, formatBytes, formatDateTime } from "~/lib/format"
 import type {
   CheckpointFile,
-  CheckpointGroup,
   CheckpointInference,
   CheckpointListing,
   CheckpointSourceView,
@@ -131,6 +131,10 @@ function Cols(props: { count?: JSX.Element; size: number; date?: string | null; 
     </>
   )
 }
+
+/** Thin line at the top of a row inside a run, starting at its indent (``before:left-*``). */
+const INSET_LINE =
+  "relative before:pointer-events-none before:absolute before:top-0 before:right-0 before:h-px before:bg-line-weaker before:content-['']"
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
@@ -339,7 +343,6 @@ export function CheckpointsPage(props: { source?: string }) {
   const [sort, setSort] = createSignal<SortKey>("date")
   const [hideEmpty, setHideEmpty] = createSignal(false)
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set())
-  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set())
   const [deleteMode, setDeleteMode] = createSignal(false)
   const [toDelete, setToDelete] = createSignal<Set<string>>(new Set())
   const [toSend, setToSend] = createSignal<Set<string>>(new Set())
@@ -373,7 +376,6 @@ export function CheckpointsPage(props: { source?: string }) {
       if (!id) return
       remember(id)
       setExpanded(new Set<string>())
-      setCollapsedGroups(new Set<string>())
       setOpenInf(new Set<string>())
       setToDelete(new Set<string>())
       setToSend(new Set<string>())
@@ -396,6 +398,9 @@ export function CheckpointsPage(props: { source?: string }) {
     for (const r of listing()?.runs ?? []) for (const [k, v] of inferencesByFile(r)) out.set(k, v)
     return out
   })
+  /** Label column (group / other) when some checkpoint of the listing has one. */
+  const hasLabels = () =>
+    (listing()?.runs ?? []).some((r) => r.groups.some((g) => g.name) || r.others?.length)
   const showInferences = () =>
     !!listing()?.mlflow_inference || (listing()?.runs ?? []).some((r) => r.inferences?.length)
   const targets = createMemo(checkpointProjects)
@@ -413,15 +418,6 @@ export function CheckpointsPage(props: { source?: string }) {
       const n = new Set(s)
       if (n.has(name)) n.delete(name)
       else n.add(name)
-      return n
-    })
-  const groupKey = (run: string, g: string) => `${run}\u0000${g}`
-  const toggleGroup = (run: string, g: string) =>
-    setCollapsedGroups((s) => {
-      const n = new Set(s)
-      const k = groupKey(run, g)
-      if (n.has(k)) n.delete(k)
-      else n.add(k)
       return n
     })
   const allOpen = () => rows().length > 0 && rows().every(isOpen)
@@ -532,7 +528,14 @@ export function CheckpointsPage(props: { source?: string }) {
 
   // -- rows --------------------------------------------------------------------------------
 
-  const FileRow = (fp: { file: CheckpointFile; indent: string; deletable: boolean }) => {
+  /** A checkpoint line; ``group``: label before its name (``null``: outside the layout). */
+  const FileRow = (fp: {
+    file: CheckpointFile
+    indent: string
+    deletable: boolean
+    group?: string | null
+    labels?: boolean
+  }) => {
     const path = () => (source() ? hostPath(source()!.root, fp.file.path) : fp.file.path)
     const runs = (): RunView[] => byCheckpoint()[path()] ?? []
     const selected = () => (deleteMode() ? toDelete() : toSend()).has(fp.file.path)
@@ -547,7 +550,7 @@ export function CheckpointsPage(props: { source?: string }) {
     return (
       <>
         <div
-          class={`flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 hover:bg-surface-hover ${fp.indent}`}
+          class={`${INSET_LINE} before:left-10 flex h-8 cursor-pointer items-center gap-2 pr-4 hover:bg-surface-hover ${fp.indent}`}
           classList={{
             "bg-surface-active": selected() && !deleteMode(),
             "bg-critical-bg": selected() && deleteMode(),
@@ -573,6 +576,20 @@ export function CheckpointsPage(props: { source?: string }) {
               danger={deleteMode()}
               testid="ckpt-file-check"
             />
+          </Show>
+          <Show when={fp.labels}>
+            <span class="w-12 shrink-0">
+              <Show when={fp.group !== ""}>
+                <span
+                  class="inline-block max-w-full truncate rounded bg-surface px-1.5 align-middle font-mono text-[10px] leading-4"
+                  classList={{ "text-fg-weak": fp.group != null, "text-fg-weaker italic": fp.group == null }}
+                  title={fp.group == null ? "Outside the layout" : `Group ${fp.group}`}
+                  data-testid="ckpt-file-group"
+                >
+                  {fp.group ?? "other"}
+                </span>
+              </Show>
+            </span>
           </Show>
           <span class="min-w-0 flex-1 truncate font-mono text-sm text-fg-strong" title={path()}>
             {fp.file.name}
@@ -634,47 +651,11 @@ export function CheckpointsPage(props: { source?: string }) {
         <Show when={openInf().has(fp.file.path) && infs()}>
           {(list) => (
             <For each={list()}>
-              {(inf) => <InferenceRow run="" inf={inf} indent="pl-24" showCheckpoint={false} />}
+              {(inf) => <InferenceRow run="" inf={inf} indent="pl-20" showCheckpoint={false} />}
             </For>
           )}
         </Show>
       </>
-    )
-  }
-
-  const GroupBlock = (gp: { run: string; group: CheckpointGroup; label: string; deletable: boolean }) => {
-    const open = () => !collapsedGroups().has(groupKey(gp.run, gp.group.name))
-    const sel = () => checkState(gp.group.files, toDelete())
-    return (
-      <div data-testid="ckpt-group" data-group={gp.group.name}>
-        <div
-          class="flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 pl-10 hover:bg-surface-hover"
-          onClick={() => toggleGroup(gp.run, gp.group.name)}
-        >
-          <IconChevronRight
-            size={10}
-            class={`shrink-0 text-icon transition-transform duration-150 ${open() ? "rotate-90" : ""}`}
-          />
-          <Show when={deleteMode() && gp.deletable && gp.group.files.length}>
-            <Check
-              state={sel()}
-              onToggle={() => setToDelete((s) => toggleFiles(gp.group.files, s))}
-              label={`Select the group ${gp.label}`}
-              danger
-              testid="ckpt-group-check"
-            />
-          </Show>
-          <span class="min-w-0 flex-1 truncate font-mono text-sm text-fg" title={gp.group.path ?? undefined}>
-            {gp.label}
-          </span>
-          <Cols count={plural(gp.group.count, "ckpt")} size={gp.group.size} />
-        </div>
-        <Show when={open()}>
-          <For each={gp.group.files}>
-            {(f) => <FileRow file={f} indent="pl-16" deletable={gp.deletable} />}
-          </For>
-        </Show>
-      </div>
     )
   }
 
@@ -684,7 +665,7 @@ export function CheckpointsPage(props: { source?: string }) {
     return (
       <div data-testid="ckpt-inferences">
         <div
-          class="flex h-8 cursor-pointer items-center gap-2 border-t border-line-weaker pr-4 pl-10 hover:bg-surface-hover"
+          class={`${INSET_LINE} before:left-10 flex h-8 cursor-pointer items-center gap-2 pr-4 pl-10 hover:bg-surface-hover`}
           role="button"
           tabIndex={0}
           aria-expanded={open()}
@@ -727,7 +708,7 @@ export function CheckpointsPage(props: { source?: string }) {
     const state = () => inferenceState(inf())
     return (
       <div
-        class={`flex h-8 items-center gap-2 border-t border-line-weaker bg-surface pr-4 hover:bg-surface-hover ${rp.indent}`}
+        class={`${INSET_LINE} before:left-16 flex h-8 items-center gap-2 bg-surface pr-4 hover:bg-surface-hover ${rp.indent}`}
         data-testid="ckpt-inference"
       >
         <span
@@ -818,7 +799,7 @@ export function CheckpointsPage(props: { source?: string }) {
       return runFiles(rp.row).filter((f) => sel.has(f.path)).length
     }
     return (
-      <div class="border-b border-line-weaker" data-testid="ckpt-run" data-run={run().name}>
+      <div class="border-b border-line-weak" data-testid="ckpt-run" data-run={run().name}>
         <div
           class="flex h-10 cursor-pointer items-center gap-2 px-4 outline-none hover:bg-surface-hover focus-visible:bg-surface-hover"
           role="button"
@@ -836,6 +817,15 @@ export function CheckpointsPage(props: { source?: string }) {
             size={11}
             class={`shrink-0 text-icon transition-transform duration-150 ${open() ? "rotate-90" : ""}`}
           />
+          <Show when={deleteMode() && runFiles(rp.row).length}>
+            <Check
+              state={checkState(runFiles(rp.row), toDelete())}
+              onToggle={() => setToDelete((s) => toggleFiles(runFiles(rp.row), s))}
+              label={`Select every checkpoint of ${run().name}`}
+              danger
+              testid="ckpt-run-check"
+            />
+          </Show>
           <span
             class="min-w-0 flex-1 truncate font-mono text-sm font-medium text-fg-strong"
             title={run().name}
@@ -883,30 +873,11 @@ export function CheckpointsPage(props: { source?: string }) {
         </div>
         <Show when={open()}>
           <div class="pb-1">
-            <For each={rp.row.groups}>
-              {(g) => (
-                <GroupBlock
-                  run={run().name}
-                  group={g}
-                  label={g.name ? `${g.name}/` : "checkpoints"}
-                  deletable={true}
-                />
+            <For each={flatFiles(rp.row)}>
+              {(x) => (
+                <FileRow file={x.file} group={x.group} labels={hasLabels()} indent="pl-10" deletable={true} />
               )}
             </For>
-            <Show when={rp.row.others.length}>
-              <GroupBlock
-                run={run().name}
-                group={{
-                  name: "\u0000others",
-                  path: null,
-                  size: rp.row.others.reduce((a, f) => a + f.size, 0),
-                  count: rp.row.others.length,
-                  files: rp.row.others,
-                }}
-                label="other files (outside the layout)"
-                deletable={true}
-              />
-            </Show>
             <Show when={(run().inferences ?? []).some((i) => !i.exists)}>
               <InferenceList
                 run={run().name}
@@ -1138,7 +1109,7 @@ export function CheckpointsPage(props: { source?: string }) {
             >
               <Show when={deleteMode()}>
                 <div class="border-b border-line-weaker px-4 py-1.5 text-xs text-fg-critical">
-                  Delete mode: tick checkpoints or whole groups, then slide to confirm at the bottom.
+                  Delete mode: tick checkpoints or whole runs, then slide to confirm at the bottom.
                 </div>
               </Show>
               <For

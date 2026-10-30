@@ -37,7 +37,7 @@ are a common case, see the [examples](#examples).
   parameters (e.g. `{seed}`) drawn at random for each repetition. See [Series](#series).
 - **Checkpoints tab**: the runs already executed on disk (by TrainHub or not), their checkpoints
   with sizes and the total per source, their MLflow run and the inferences made with them; send checkpoints to an inference project (`{checkpoint}`,
-  `extends`), delete checkpoints or groups. See [Checkpoints](#checkpoints).
+  `extends`), delete checkpoints or whole runs. See [Checkpoints](#checkpoints).
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete,
   and **mark as finished** for a run stuck active whose machine or container is dead (nothing is
   run on the machine; the run becomes `failed` with an explicit error, and shows as running again
@@ -449,13 +449,15 @@ In the tab:
 - one button per source with its **total size** and number of checkpoints (the tab shows the sum
   of all sources); runs collapsed, sorted by date, name or size, searchable (a search on a file
   name opens the runs on the matching checkpoints), “hide empty” for runs without checkpoint;
+- the checkpoints of a run form a single list sorted by name, each with a small label giving its
+  `{group}` (`topk`, `last`…; `other`: outside the layout);
 - each checkpoint shows its size, its date (“writing?” if modified less than a minute ago) and
   `⟲ N`, the TrainHub runs launched with it (hover for the list, click to open the project);
 - **sending**: tick checkpoints (click on the line), choose a project taking a `{checkpoint}`,
   “Create N drafts”: one draft per checkpoint in that project, on the source's machine; the
   draft's `{checkpoint}` field can also be filled by hand;
 - **deleting**: “Delete…” switches to delete mode (a separate selection); tick checkpoints or
-  whole groups, the bar sums up what goes (groups, checkpoints, runs, size), then **drag the
+  whole runs (box on the run line), the bar sums up what goes (groups, checkpoints, runs, size), then **drag the
   slider to the end** (released before, it goes back; keyboard: arrows). Escape leaves the mode.
 
 ### Kept container and logs

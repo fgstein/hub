@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   checkState,
+  flatFiles,
   hostPath,
   inferenceCheckpoint,
   inferenceState,
@@ -188,5 +189,27 @@ describe("inferences", () => {
     expect(by.get("a/c/y.ckpt")).toHaveLength(1)
     expect(inferenceCheckpoint("a", inf("a/c/x.ckpt"))).toBe("c/x.ckpt")
     expect(inferenceCheckpoint("b", inf("a/c/x.ckpt"))).toBe("a/c/x.ckpt")
+  })
+})
+
+describe("flatFiles", () => {
+  it("lists every checkpoint of a run by name, with its group", () => {
+    const groups = [
+      {
+        name: "topk",
+        path: "r/checkpoints/topk",
+        size: 0,
+        count: 2,
+        files: [f("r/c/topk/e3.ckpt"), f("r/c/topk/e1.ckpt")],
+      },
+      { name: "last", path: "r/checkpoints/last", size: 0, count: 1, files: [f("r/c/last/e3.ckpt")] },
+    ]
+    const flat = flatFiles({ groups, others: [f("r/a_final.ckpt")] })
+    expect(flat.map((x) => [x.file.path, x.group])).toEqual([
+      ["r/a_final.ckpt", null],
+      ["r/c/topk/e1.ckpt", "topk"],
+      ["r/c/last/e3.ckpt", "last"],
+      ["r/c/topk/e3.ckpt", "topk"],
+    ])
   })
 })
