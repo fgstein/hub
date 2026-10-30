@@ -13,6 +13,13 @@ venvs:
   - id: main
     path: /opt/venvs/main
 projects:
+  # first: the seg → det tab order of the tab tests stays as is
+  - id: infer
+    label: Inference
+    extends: seg
+    command: python infer.py --config-name {config} --ckpt {checkpoint}
+    docker:
+      volumes: [/out:/workspace/out]
   - id: seg
     label: Segmentation
     command: python train.py --config-name {config}
@@ -26,6 +33,11 @@ projects:
     machines: [gpu-01]
     configs:
       discover: {path: /det/configs}
+checkpoints:
+  - id: out
+    label: Outputs
+    machine: gpu-01
+    root: /out
 simulation:
   duration_s: [600, 600]
   time_scale: 1
@@ -37,3 +49,5 @@ simulation:
   configs:
     seg: [baseline, unet_large, exp/sweep/lr_small, exp/sweep/lr_big, hydra/launcher/local]
     det: [yolo_s, yolo_m]
+  checkpoints:
+    out: [run_a, run_b, run_c]

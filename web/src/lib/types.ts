@@ -17,8 +17,14 @@ export type ConfigList = S["ConfigList"]
 export type Health = S["Health"]
 export type MachineGpus = S["MachineGpus"]
 export type GpuView = S["GpuView"]
+export type CheckpointSourceView = S["CheckpointSourceView"]
+export type CheckpointListing = S["CheckpointListing"]
+export type CheckpointRun = S["CheckpointRun"]
+export type CheckpointGroup = S["CheckpointGroup"]
+export type CheckpointFile = S["CheckpointFile"]
+export type CheckpointDeleteResult = S["CheckpointDeleteResult"]
 
-export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close"
+export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close" | "force_finish"
 export type MenuAction = RunAction | "delete"
 
 export interface Snapshot {
@@ -38,6 +44,7 @@ export type ServerEvent =
   | { type: "inventory.updated"; seq: number; inventory: InventoryView }
   | { type: "machine.status"; seq: number; machine: MachineStatus }
   | { type: "ui_state.updated"; seq: number; ui_state: UiState }
+  | { type: "checkpoints.updated"; seq: number; source: CheckpointSourceView }
   | { type: "logs.reset" | "logs.end"; run_id: string }
   | { type: "pong"; t?: number }
   | { type: "error"; message: string; run_id?: string }
@@ -62,6 +69,7 @@ export const ALLOWED_FROM: Record<MenuAction, readonly RunStatus[]> = {
   restart: FINISHED_STATUSES,
   relaunch: FINISHED_STATUSES,
   close: FINISHED_STATUSES,
+  force_finish: ACTIVE_STATUSES,
   delete: FINISHED_STATUSES,
 }
 

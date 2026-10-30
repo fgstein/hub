@@ -27,7 +27,10 @@ are a common case, see the [examples](#examples).
   restart.
 - **Kept container**: when the command finishes, the container stays started (status succeeded
   or failed from the exit code) so that you can open a shell in it, then close it yourself.
-- **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete.
+- **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete,
+  and **mark as finished** for a run stuck active whose machine or container is dead (nothing is
+  run on the machine; the run becomes `failed` with an explicit error, and shows as running again
+  if its container turns out to be alive when the machine answers).
 - **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
   + script).
 - **Agents**: the same actions over MCP (Streamable HTTP on `/mcp`, or stdio with `trainhub mcp`).
@@ -191,6 +194,7 @@ placeholders, each value escaped with `shlex.quote`:
 | `{run_id}`      | Short run identifier generated at launch, e.g. `rn3ceg`               |
 | `{machine}`     | Machine id                                                            |
 | `{project}`     | Project id                                                            |
+| `{checkpoint}`  | Chosen checkpoint, as seen in the container (see [Checkpoints](#checkpoints)) |
 
 For `configs.root: /home/alice/seg/configs` and the file
 `/home/alice/seg/configs/experiments/unet_large.yaml`:
@@ -235,6 +239,22 @@ dot if some are running. Hidden files and directories (`.git`, `.hydra`…) are 
 Pick `root` so that `{config}` is exactly what your command expects: the identifier is always
 relative to `root` and has no extension. Add the extension back in the command if needed
 (`--config configs/{config}.yaml`).
+
+#### Inheriting a project (`extends`)
+
+A project can start from another one and only change what differs, typically an inference
+command next to the training one:
+
+```yaml
+  - id: seg-infer
+    label: Segmentation — inference
+    extends: segmentation
+    command: python infer.py --config-name {config} --ckpt {checkpoint}
+```
+
+Every field of the parent is inherited except `id` and `label`; a field given by the child
+replaces the parent's, except `docker`, merged key by key (`docker: {shm_size: 4g}` keeps the
+parent's volumes). Chains are allowed (`c` extends `b` extends `a`).
 
 ### Examples
 
@@ -304,6 +324,57 @@ Hydra rejects.
 
 `workdir` only matters for launching `run.py` (and for where Hydra writes `outputs/`): Hydra
 resolves `config_path` from the location of `run.py`, not from the current directory.
+
+### Checkpoints
+
+The **Checkpoints** tab (pinned at the left of the tab bar; also `/api/checkpoints` and the MCP
+tools `list_checkpoint_sources` / `list_checkpoints`) manages the outputs of runs already
+executed, launched by TrainHub or not: it lists the run directories found on disk,
+their checkpoints with size and date, deletes them, and sends a checkpoint to a project whose
+command contains `{checkpoint}` (inference).
+Sources are declared at the top of the inventory, independently of the projects:
+
+```yaml
+checkpoints:
+  - id: seg-outputs
+    label: Segmentation outputs                 # optional
+    machine: gpu-01                             # where the files are listed and deleted
+    root: /home/alice/seg/outputs               # absolute, on the machine
+    layout: "{name}/checkpoints/{group}/*.ckpt" # default
+```
+
+`layout` describes the tree under `root`: `{name}` (first level) is a run, `{group}` an optional
+grouping level (`topk`, `last`…), other directories are literal names (globs allowed), and the
+last component is the checkpoint file pattern. `output/run_a/checkpoints/topk/epoch0000012.ckpt`
+gives run `run_a`, group `topk`. A checkpoint under a run that does not follow the layout is
+still listed, as an “other” file of the run. Hidden directories are ignored.
+
+- **Listing**: a single `find` per source on its machine (GNU `find`, for `-printf`), cached
+  5 minutes, ↻ to rescan. Each source, run and group shows its total size.
+- **Deletion**: only files matching the pattern, under a run directory. The machine resolves
+  each path (`realpath`) and refuses one that leaves the root (symbolic link); then `rm` with
+  the SSH user (a permission error is reported per file). Group directories left empty are
+  removed (`rmdir`), nothing else.
+- **Sending to a project**: `{checkpoint}` receives the path **in the container**, translated
+  from the machine path through the project's `docker.volumes` (the most specific mount wins).
+  A checkpoint that no volume covers is refused. The run keeps the machine path: each
+  checkpoint shows how many runs were launched with it.
+
+Several sources may point to the same shared disk (NFS) from different machines.
+
+In the tab:
+
+- one button per source with its **total size** and number of checkpoints (the tab shows the sum
+  of all sources); runs collapsed, sorted by date, name or size, searchable (a search on a file
+  name opens the runs on the matching checkpoints), “hide empty” for runs without checkpoint;
+- each checkpoint shows its size, its date (“writing?” if modified less than a minute ago) and
+  `⟲ N`, the TrainHub runs launched with it (hover for the list, click to open the project);
+- **sending**: tick checkpoints (click on the line), choose a project taking a `{checkpoint}`,
+  “Create N drafts”: one draft per checkpoint in that project, on the source's machine; the
+  draft's `{checkpoint}` field can also be filled by hand;
+- **deleting**: “Delete…” switches to delete mode (a separate selection); tick checkpoints or
+  whole groups, the bar sums up what goes (groups, checkpoints, runs, size), then **drag the
+  slider to the end** (released before, it goes back; keyboard: arrows). Escape leaves the mode.
 
 ### Kept container and logs
 
@@ -416,8 +487,9 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 ## MCP server
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
-`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `pause_run`, `resume_run`,
-`stop_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
+`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `list_checkpoint_sources`,
+`list_checkpoints`, `pause_run`, `resume_run`,
+`stop_run`, `force_finish_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
 `set_project_command`) call the same service layer as the interface: a run launched by an agent
 shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text
 (no ANSI, progress bars reduced to their last state, truncated with a note) and a cursor: passed

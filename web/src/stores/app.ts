@@ -22,6 +22,7 @@ import type {
 } from "~/lib/types"
 import { isActive, isFinished } from "~/lib/types"
 import { Socket } from "~/lib/ws"
+import { onSourceUpdated } from "./checkpoints"
 import { setServerTime } from "./clock"
 import { bindLogSocket, dispatchEnd, dispatchLogs, dispatchReset, resubscribeAll } from "./logs"
 import { toast, toastError } from "./toasts"
@@ -37,6 +38,8 @@ export interface Draft {
   overrides: string
   /** Values of the free command parameters (``{name}``), by name. */
   params: Record<string, string>
+  /** ``{checkpoint}``: path on the machine (sent from the Checkpoints tab, or typed). */
+  checkpoint: string
   launching: boolean
   /** Draft created by “Relaunch”: highlighted and scrolled into view. */
   focus?: boolean
@@ -112,6 +115,12 @@ function applyEvent(ev: ServerEvent): void {
     case "machine.status":
       updateMachine(ev.machine)
       return
+    case "checkpoints.updated": {
+      const i = state.inventory?.checkpoint_sources?.findIndex((x) => x.id === ev.source.id) ?? -1
+      if (i >= 0) setState("inventory", "checkpoint_sources", i, reconcile(ev.source))
+      onSourceUpdated(ev.source)
+      return
+    }
     case "ui_state.updated":
       // Last selections are shared; the active tab stays this client's own.
       setState("ui", "last_selection", reconcile(ev.ui_state.last_selection))
@@ -258,6 +267,7 @@ export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
     cuda: last.cuda_visible_devices ?? "",
     overrides: "",
     params: { ...(last.params ?? {}) },
+    checkpoint: "",
     launching: false,
     ...init,
   }
@@ -285,6 +295,7 @@ export function draftFromRun(runId: string): void {
     cuda: r.cuda_visible_devices ?? "",
     overrides: shellJoin(r.overrides ?? []),
     params: { ...(state.ui.last_selection?.[r.project_id]?.params ?? {}), ...(r.params ?? {}) },
+    checkpoint: p.accepts_checkpoint ? (r.checkpoint ?? "") : "",
     focus: true,
   })
   if (state.ui.active_tab !== r.project_id) setActiveTab(r.project_id)
@@ -294,6 +305,47 @@ export function draftFromRun(runId: string): void {
     !venv && `venv ${r.venv_id}`,
   ].filter(Boolean)
   if (missing.length) toast(`no longer available for this project: ${missing.join(", ")}`, "error")
+}
+
+/**
+ * Checkpoints tab → project: one draft per checkpoint (paths on the machine), on the source's
+ * machine when the project allows it. Returns the number of drafts created.
+ */
+export function draftsFromCheckpoints(projectId: string, machine: string, paths: string[]): number {
+  const p = project(projectId)
+  if (!p) return 0
+  const init: Partial<Draft> = p.machines.includes(machine) ? { machine } : {}
+  batch(() => {
+    paths.forEach((checkpoint, i) => {
+      addDraft(projectId, { ...init, checkpoint, focus: i === paths.length - 1 })
+    })
+  })
+  if (!p.machines.includes(machine)) {
+    toast(`machine ${machine} not allowed for ${p.label}: pick one in the drafts`, "error")
+  }
+  setActiveTab(projectId)
+  return paths.length
+}
+
+/** TrainHub runs launched with each checkpoint (path on the machine), live. */
+export function runsByCheckpoint(): Record<string, RunView[]> {
+  const out: Record<string, RunView[]> = {}
+  for (const r of Object.values(state.runs)) {
+    if (!r.checkpoint) continue
+    let list = out[r.checkpoint]
+    if (!list) {
+      list = []
+      out[r.checkpoint] = list
+    }
+    list.push(r)
+  }
+  for (const list of Object.values(out)) list.sort((a, b) => b.created_at.localeCompare(a.created_at))
+  return out
+}
+
+/** Projects whose command takes a ``{checkpoint}`` (targets of the Checkpoints tab). */
+export function checkpointProjects(): ProjectView[] {
+  return (state.inventory?.projects ?? []).filter((p) => p.accepts_checkpoint)
 }
 
 export function compatibleVenvs(p: ProjectView, image: string | null): string[] {
@@ -334,6 +386,8 @@ export function draftParamErrors(projectId: string, d: Draft): Record<string, st
 
 export function draftSelection(projectId: string, d: Draft): Selection | null {
   if (!d.machine || !d.image || !d.venv || !d.config) return null
+  const takesCheckpoint = !!project(projectId)?.accepts_checkpoint
+  if (takesCheckpoint && !d.checkpoint.trim()) return null
   const { args, error } = splitArgs(d.overrides)
   if (error || Object.keys(draftParamErrors(projectId, d)).length) return null
   const names = project(projectId)?.params ?? []
@@ -346,6 +400,7 @@ export function draftSelection(projectId: string, d: Draft): Selection | null {
     overrides: args,
     cuda_visible_devices: d.cuda.trim() || null,
     params: Object.fromEntries(names.map((k) => [k, d.params[k] ?? ""])),
+    checkpoint: takesCheckpoint ? d.checkpoint.trim() : null,
   }
 }
 
@@ -361,7 +416,9 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
         ? `invalid overrides: ${err}`
         : paramErr
           ? `invalid parameter {${paramErr[0]}}: ${paramErr[1]}`
-          : "incomplete selection: machine, image, venv and config are required",
+          : project(projectId)?.accepts_checkpoint && !d.checkpoint.trim()
+            ? "choose a checkpoint (Checkpoints tab)"
+            : "incomplete selection: machine, image, venv and config are required",
       "error",
     )
     return
@@ -401,6 +458,7 @@ const OPTIMISTIC: Record<RunAction, RunStatus> = {
   restart: "launching",
   relaunch: "launching",
   close: "succeeded",
+  force_finish: "failed",
 }
 
 /** Optimistic action: the status dot changes right away, then is confirmed or reverted. */

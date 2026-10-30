@@ -104,6 +104,67 @@ export interface paths {
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
+    "/api/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Checkpoint Sources
+         * @description Checkpoint sources, with the total size and count of their last scan.
+         */
+        get: operations["checkpoint_sources_api_checkpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/checkpoints/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Checkpoint Listing
+         * @description Runs and checkpoints of a source (``find`` on its machine, 5 min cache).
+         */
+        get: operations["checkpoint_listing_api_checkpoints__source_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/checkpoints/{source_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Checkpoints
+         * @description Delete checkpoint files (paths relative to the root); empty group directories are
+         *     removed. Partial failures are listed in ``failed``.
+         */
+        post: operations["delete_checkpoints_api_checkpoints__source_id__delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui-state": {
         parameters: {
             query?: never;
@@ -234,6 +295,173 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CheckpointDeleteRequest */
+        CheckpointDeleteRequest: {
+            /**
+             * Paths
+             * @description Checkpoint files to delete, relative to the source root
+             */
+            paths: string[];
+        };
+        /** CheckpointDeleteResult */
+        CheckpointDeleteResult: {
+            /** Source */
+            source: string;
+            /**
+             * Deleted
+             * @description Deleted (or already missing) files
+             */
+            deleted: string[];
+            /**
+             * Failed
+             * @description File → error
+             */
+            failed?: {
+                [key: string]: string;
+            };
+            /**
+             * Removed Dirs
+             * @description Group directories removed because empty
+             */
+            removed_dirs?: string[];
+            /**
+             * Freed
+             * @description Bytes freed (sizes of the last scan)
+             */
+            freed: number;
+            /**
+             * Size
+             * @description New total size of the source
+             */
+            size: number;
+            /** Count */
+            count: number;
+        };
+        /** CheckpointFile */
+        CheckpointFile: {
+            /**
+             * Path
+             * @description Path relative to the source root
+             */
+            path: string;
+            /** Name */
+            name: string;
+            /**
+             * Size
+             * @description Bytes
+             */
+            size: number;
+            /**
+             * Mtime
+             * Format: date-time
+             */
+            mtime: string;
+            /** @description TrainHub runs launched with this checkpoint (missing: none) */
+            runs?: components["schemas"]["RunCount"] | null;
+        };
+        /** CheckpointGroup */
+        CheckpointGroup: {
+            /**
+             * Name
+             * @description Value of {group} (empty if the layout has no {group})
+             */
+            name: string;
+            /**
+             * Path
+             * @description Directory relative to the root (None: not unique)
+             */
+            path: string | null;
+            /** Size */
+            size: number;
+            /** Count */
+            count: number;
+            /** Files */
+            files: components["schemas"]["CheckpointFile"][];
+        };
+        /** CheckpointListing */
+        CheckpointListing: {
+            /** Source */
+            source: string;
+            /** Machine */
+            machine: string;
+            /** Root */
+            root: string;
+            /** Layout */
+            layout: string;
+            /**
+             * Size
+             * @description Total size of the checkpoints of the source, in bytes
+             */
+            size: number;
+            /** Count */
+            count: number;
+            /**
+             * Runs
+             * @description Most recent first
+             */
+            runs: components["schemas"]["CheckpointRun"][];
+            /**
+             * Others
+             * @description Checkpoint files directly under the root
+             */
+            others?: components["schemas"]["CheckpointFile"][];
+            /** Error */
+            error?: string | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+        };
+        /**
+         * CheckpointRun
+         * @description A run directory ({name}) of a source, launched by TrainHub or not.
+         */
+        CheckpointRun: {
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Count */
+            count: number;
+            /**
+             * Mtime
+             * @description Most recent checkpoint, else the directory
+             */
+            mtime: string | null;
+            /** Groups */
+            groups: components["schemas"]["CheckpointGroup"][];
+            /**
+             * Others
+             * @description Checkpoint files of the run outside the layout
+             */
+            others?: components["schemas"]["CheckpointFile"][];
+        };
+        /**
+         * CheckpointSourceView
+         * @description A checkpoint source of the inventory (directory of runs on a machine).
+         */
+        CheckpointSourceView: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Machine */
+            machine: string;
+            /** Root */
+            root: string;
+            /** Layout */
+            layout: string;
+            /**
+             * Size
+             * @description Total size of the checkpoints, in bytes (None: not scanned)
+             */
+            size?: number | null;
+            /**
+             * Count
+             * @description Number of checkpoints (last scan)
+             */
+            count?: number | null;
+            /** Scanned At */
+            scanned_at?: string | null;
+        };
         /** ConfigList */
         ConfigList: {
             /** Project */
@@ -390,6 +618,8 @@ export interface components {
             venvs: components["schemas"]["VenvView"][];
             /** Projects */
             projects: components["schemas"]["ProjectView"][];
+            /** Checkpoint Sources */
+            checkpoint_sources?: components["schemas"]["CheckpointSourceView"][];
             /**
              * Error
              * @description Error of the last reload
@@ -444,6 +674,11 @@ export interface components {
             params?: {
                 [key: string]: string;
             };
+            /**
+             * Checkpoint
+             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
+             */
+            checkpoint?: string | null;
             /** @default ui */
             source: components["schemas"]["RunSource"];
         };
@@ -577,12 +812,23 @@ export interface components {
             /** Discover */
             discover: boolean;
             docker: components["schemas"]["DockerOptions"];
+            /**
+             * Extends
+             * @description Parent project (inventory)
+             */
+            extends?: string | null;
+            /**
+             * Accepts Checkpoint
+             * @description The effective command contains {checkpoint}
+             * @default false
+             */
+            accepts_checkpoint: boolean;
         };
         /**
          * RunAction
          * @enum {string}
          */
-        RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch" | "close";
+        RunAction: "pause" | "resume" | "stop" | "restart" | "relaunch" | "close" | "force_finish";
         /**
          * RunCount
          * @description Number of runs launched on a config (all statuses) and, among them, active ones.
@@ -668,6 +914,11 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Checkpoint
+             * @description {checkpoint}: path of the checkpoint on the machine
+             */
+            checkpoint?: string | null;
+            /**
              * Stop Requested
              * @default false
              */
@@ -717,6 +968,11 @@ export interface components {
             params?: {
                 [key: string]: string;
             };
+            /**
+             * Checkpoint
+             * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
+             */
+            checkpoint?: string | null;
         };
         /**
          * UiState
@@ -892,6 +1148,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    checkpoint_sources_api_checkpoints_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointSourceView"][];
+                };
+            };
+        };
+    };
+    checkpoint_listing_api_checkpoints__source_id__get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointListing"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_checkpoints_api_checkpoints__source_id__delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckpointDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointDeleteResult"];
                 };
             };
             /** @description Validation Error */

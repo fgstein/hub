@@ -169,6 +169,16 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
   // parameters fill that role.
   const showOverrides = d().overrides.trim() !== ""
   const params = () => p().params ?? []
+  const takesCheckpoint = () => !!p().accepts_checkpoint
+  /** Source and run of the checkpoint, when it comes from a checkpoint source. */
+  const checkpointOrigin = () => {
+    const path = d().checkpoint.trim()
+    for (const src of state.inventory?.checkpoint_sources ?? []) {
+      const root = `${src.root.replace(/\/+$/, "")}/`
+      if (path.startsWith(root)) return `${src.label} · ${path.slice(root.length).split("/")[0]}`
+    }
+    return null
+  }
   const paramErrors = () => draftParamErrors(p().id, d())
   const sel = () => draftSelection(p().id, d())
   const blocked = () => commandErrors[p().id] === true
@@ -271,13 +281,15 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
             title={
               blocked()
                 ? "Invalid command: {config} missing"
-                : overridesError()
-                  ? `Invalid overrides: ${overridesError()}`
-                  : Object.keys(paramErrors()).length
-                    ? `Invalid parameter: {${Object.keys(paramErrors())[0]}}`
-                    : !sel()
-                      ? "Incomplete selection"
-                      : "Launch (Enter)"
+                : takesCheckpoint() && !d().checkpoint.trim()
+                  ? "Choose a checkpoint (Checkpoints tab, or paste its path)"
+                  : overridesError()
+                    ? `Invalid overrides: ${overridesError()}`
+                    : Object.keys(paramErrors()).length
+                      ? `Invalid parameter: {${Object.keys(paramErrors())[0]}}`
+                      : !sel()
+                        ? "Incomplete selection"
+                        : "Launch (Enter)"
             }
             onClick={() => void launchDraft(p().id, d().key)}
             data-testid="draft-launch"
@@ -296,11 +308,38 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
           </button>
         </div>
       </div>
-      <Show when={params().length || showOverrides}>
+      <Show when={params().length || showOverrides || takesCheckpoint()}>
         <div
           class="-mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 pb-2.5 pl-[92px]"
           data-testid="draft-params"
         >
+          <Show when={takesCheckpoint()}>
+            <label class="flex min-w-0 items-center gap-1.5">
+              <span class="shrink-0 font-mono text-xs text-fg-warning">{"{checkpoint}"}</span>
+              <input
+                value={d().checkpoint}
+                onInput={(e) => set({ checkpoint: e.currentTarget.value })}
+                placeholder="path on the machine (Checkpoints tab)"
+                title={
+                  d().checkpoint ||
+                  "Absolute path of the checkpoint on the machine; sent from the Checkpoints tab, or pasted"
+                }
+                aria-label="Checkpoint"
+                spellcheck={false}
+                data-testid="field-checkpoint"
+                class="h-7 w-[28rem] min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
+                classList={{
+                  "border-line-weak": !!d().checkpoint.trim(),
+                  "border-line-critical": !d().checkpoint.trim(),
+                }}
+              />
+              <Show when={checkpointOrigin()}>
+                <span class="shrink-0 truncate text-xs text-fg-weak" data-testid="checkpoint-origin">
+                  {checkpointOrigin()}
+                </span>
+              </Show>
+            </label>
+          </Show>
           <For each={params()}>
             {(name) => (
               <label class="flex min-w-0 items-center gap-1.5">

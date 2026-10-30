@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Mapping, Sequence
 
+from .checkpoints import container_path
 from .commands import RunSpec
 from .models import Inventory, command_params
 
@@ -25,6 +27,7 @@ def make_spec(
     overrides: Sequence[str] = (),
     cuda_visible_devices: str | None = None,
     params: Mapping[str, str] | None = None,
+    checkpoint: str | None = None,
 ) -> RunSpec:
     """Build a :class:`RunSpec`, checking the resources allowed for the project.
 
@@ -60,6 +63,11 @@ def make_spec(
             f"available: {', '.join(venvs) or 'none'}"
         )
     cvd = cuda_visible_devices.strip() if cuda_visible_devices else None
+    ckpt = checkpoint.strip() if checkpoint else None
+    if ckpt is not None:
+        if not ckpt.startswith("/") or any(ord(c) < 32 for c in ckpt):
+            raise SelectionError(f"checkpoint: absolute path on the machine expected: {ckpt!r}")
+        ckpt = posixpath.normpath(ckpt)
     return RunSpec(
         run_id=run_id,
         project=proj,
@@ -71,4 +79,6 @@ def make_spec(
         overrides=tuple(o for o in overrides if o.strip()),
         cuda_visible_devices=cvd or None,
         params={k: (params or {}).get(k, "") for k in wanted},
+        checkpoint=ckpt,
+        checkpoint_in_container=container_path(ckpt, proj.docker.volumes) if ckpt else None,
     )

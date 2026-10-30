@@ -23,7 +23,7 @@ from .config import Settings, find_inventory, require_inventory
 from .core.models import Run, RunSource, RunStatus
 from .executors import Executor, create_executor
 from .service import InventoryManager, RunService, Selection, Store
-from .service.schemas import ConfigList, PreviewResult
+from .service.schemas import CheckpointListing, ConfigList, PreviewResult
 
 
 class TrainHub:
@@ -103,6 +103,7 @@ class TrainHub:
         overrides: Sequence[str] = (),
         cuda_visible_devices: str | None = None,
         params: Mapping[str, str] | None = None,
+        checkpoint: str | None = None,
     ) -> PreviewResult:
         await self.start()
         return await self.service.preview(
@@ -115,6 +116,7 @@ class TrainHub:
                 overrides=list(overrides),
                 cuda_visible_devices=cuda_visible_devices,
                 params=dict(params or {}),
+                checkpoint=checkpoint,
             )
         )
 
@@ -129,6 +131,7 @@ class TrainHub:
         overrides: Sequence[str] = (),
         cuda_visible_devices: str | None = None,
         params: Mapping[str, str] | None = None,
+        checkpoint: str | None = None,
         wait: bool | float = True,
     ) -> Run:
         """Launch a run; by default waits for ``docker run -d`` to finish."""
@@ -142,6 +145,7 @@ class TrainHub:
             overrides=list(overrides),
             cuda_visible_devices=cuda_visible_devices,
             params=dict(params or {}),
+            checkpoint=checkpoint,
         )
         return await self.service.launch(sel, source=self._source, wait=wait)
 
@@ -159,6 +163,11 @@ class TrainHub:
         await self.start()
         return await self.service.get_configs(project, machine)
 
+    async def checkpoints(self, source: str, *, refresh: bool = False) -> CheckpointListing:
+        """Runs and checkpoints of a checkpoint source."""
+        await self.start()
+        return await self.service.checkpoints.listing(source, refresh=refresh)
+
     async def pause(self, run_id: str) -> Run:
         await self.start()
         return await self.service.pause(run_id)
@@ -170,6 +179,11 @@ class TrainHub:
     async def stop(self, run_id: str, *, wait: bool | float = True) -> Run:
         await self.start()
         return await self.service.stop(run_id, wait=wait)
+
+    async def force_finish(self, run_id: str) -> Run:
+        """Mark an active run as finished without touching the machine (dead machine…)."""
+        await self.start()
+        return await self.service.force_finish(run_id)
 
     async def restart(self, run_id: str) -> Run:
         await self.start()

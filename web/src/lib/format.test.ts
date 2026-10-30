@@ -56,11 +56,12 @@ describe("generic command", () => {
 
 describe("allowed actions", () => {
   it("follows the spec table", () => {
-    expect(allowedActions("running")).toEqual(["pause", "stop"])
-    expect(allowedActions("paused")).toEqual(["resume", "stop"])
+    expect(allowedActions("running")).toEqual(["pause", "stop", "force_finish"])
+    expect(allowedActions("paused")).toEqual(["resume", "stop", "force_finish"])
     expect(allowedActions("failed")).toEqual(["restart", "relaunch", "delete"])
-    expect(allowedActions("launching")).toEqual([])
-    expect(allowedActions("unreachable")).toEqual([])
+    expect(allowedActions("launching")).toEqual(["force_finish"])
+    expect(allowedActions("unreachable")).toEqual(["force_finish"])
+    expect(allowedActions("stopping")).toEqual(["force_finish"])
   })
 })
 

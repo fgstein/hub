@@ -51,6 +51,7 @@ LABEL_MACHINE = "trainhub.machine"
 LABEL_IMAGE = "trainhub.image"
 LABEL_VENV = "trainhub.venv"
 LABEL_CONFIG = "trainhub.config"
+LABEL_CHECKPOINT = "trainhub.checkpoint"
 
 PS_FORMAT = "{{json .}}"
 
@@ -80,6 +81,10 @@ class RunSpec:
     cuda_visible_devices: str | None = None
     params: Mapping[str, str] = field(default_factory=dict)
     """Values of the free parameters (non-reserved ``{name}``) of the command."""
+    checkpoint: str | None = None
+    """``{checkpoint}``: path of the checkpoint on the machine."""
+    checkpoint_in_container: str | None = None
+    """Same file seen from the container (through the volumes): the value inserted."""
 
     @property
     def template(self) -> str:
@@ -134,11 +139,13 @@ def resolve_command(
     machine: str,
     project: str,
     params: Mapping[str, str] | None = None,
+    checkpoint: str | None = None,
 ) -> str:
     """Replace placeholders with their shell-escaped values.
 
     ``{config}``: relative path without extension (e.g. ``exp/unet``); ``{config_name}``:
     basename (``unet``). ``${VAR}`` and Hydra interpolations ``${…}`` are left untouched.
+    ``{checkpoint}``: a single word (path in the container).
     Any other ``{name}`` is a free parameter: its value (``params``) is split as a shell
     would and each word is escaped; if missing or empty, nothing is inserted.
     """
@@ -149,6 +156,7 @@ def resolve_command(
         "run_id": run_id,
         "machine": machine,
         "project": project,
+        "checkpoint": checkpoint or "",
     }
 
     def repl(m: re.Match[str]) -> str:
@@ -169,6 +177,7 @@ def resolved_command(spec: RunSpec) -> str:
         machine=spec.machine.id,
         project=spec.project.id,
         params=spec.params,
+        checkpoint=spec.checkpoint_in_container,
     )
     if spec.overrides:
         cmd += " " + " ".join(shlex.quote(o) for o in spec.overrides)
@@ -290,6 +299,8 @@ def _docker_run_groups(spec: RunSpec) -> _Groups:
         "--label",
         f"{LABEL_CONFIG}={spec.config}",
     )
+    if spec.checkpoint:
+        g.add("--label", f"{LABEL_CHECKPOINT}={spec.checkpoint}")
     opts: list[str] = []
     if d.gpus:
         opts += ["--gpus", d.gpus]
@@ -343,6 +354,16 @@ def validate_spec(spec: RunSpec) -> None:
         )
     for name, value in spec.params.items():
         param_words(name, value)
+    wants = "checkpoint" in PLACEHOLDER_RE.findall(spec.template)
+    if wants and not spec.checkpoint:
+        raise ValueError("this command takes a {checkpoint}: choose a checkpoint")
+    if spec.checkpoint and not wants:
+        raise ValueError("checkpoint given but the command has no {checkpoint} placeholder")
+    if spec.checkpoint and not spec.checkpoint_in_container:
+        raise ValueError(
+            f"checkpoint {spec.checkpoint!r} is not mounted in the container: "
+            "add a docker volume covering it to the project"
+        )
 
 
 def docker_run(spec: RunSpec) -> list[str]:

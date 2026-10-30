@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS runs (
     cuda_visible_devices TEXT,
     stop_requested INTEGER NOT NULL DEFAULT 0,
     container_alive INTEGER NOT NULL DEFAULT 0,
-    params TEXT NOT NULL DEFAULT '{}'
+    params TEXT NOT NULL DEFAULT '{}',
+    checkpoint TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_project ON runs(project_id);
 CREATE INDEX IF NOT EXISTS runs_machine ON runs(machine_id);
@@ -74,11 +75,13 @@ _COLUMNS = [
     "stop_requested",
     "container_alive",
     "params",
+    "checkpoint",
 ]
 #: Columns added after the first version (migrated on open).
 _ADDED_COLUMNS = {
     "container_alive": "INTEGER NOT NULL DEFAULT 0",
     "params": "TEXT NOT NULL DEFAULT '{}'",
+    "checkpoint": "TEXT",
 }
 _BOOL_COLS = {"stop_requested", "container_alive"}
 _JSON_COLS = {"full_command", "overrides", "params"}
@@ -202,6 +205,18 @@ class Store:
         async with self.db.execute(sql, [*active, project]) as cur:
             rows = await cur.fetchall()
         return {r["config"]: {"total": r["total"], "active": r["active"] or 0} for r in rows}
+
+    async def count_runs_by_checkpoint(self) -> dict[str, Any]:
+        """Number of runs per checkpoint (path on the machine): ``{path: {"total", "active"}}``."""
+        active = [str(s) for s in RunStatus if s.is_active]
+        sql = (
+            "SELECT checkpoint, COUNT(*) AS total, "
+            f"SUM(CASE WHEN status IN ({','.join('?' for _ in active)}) THEN 1 ELSE 0 END) "
+            "AS active FROM runs WHERE checkpoint IS NOT NULL GROUP BY checkpoint"
+        )
+        async with self.db.execute(sql, active) as cur:
+            rows = await cur.fetchall()
+        return {r["checkpoint"]: {"total": r["total"], "active": r["active"] or 0} for r in rows}
 
     async def delete_run(self, run_id: str) -> None:
         await self.db.execute("DELETE FROM runs WHERE id = ?", (run_id,))

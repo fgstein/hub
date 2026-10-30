@@ -245,3 +245,83 @@ stored in an existing SQLite database (e.g. `error` of old runs) are not rewritt
   prefixed with `./` (otherwise `source` would search the PATH); `~/` is expanded. A missing
   mandatory file: `trainhub: file to source not found: …` and exit code 1, before the command
   starts. They are part of the setup steps, so they work with and without `keep_alive`.
+
+## Addition — checkpoints and inference, server side (October 29)
+
+Request: infer on checkpoints without specializing TrainHub; a dedicated tab manages the runs
+already executed (TrainHub or not, complex trees) and sends a checkpoint to an inference tab.
+
+- **Sources independent of the projects** (`checkpoints:` at the top of the inventory): the tab
+  starts from the disk, not from TrainHub runs. No association with TrainHub runs for now
+  (a folder name does not necessarily contain a run id); possible later through a declared
+  naming template.
+- **`layout`**: `{name}` must be the first component (one level per source); `{group}` at most
+  once, a single component; no `**`. A file under a run outside the layout stays visible
+  (“others”) rather than disappearing silently. The checkpoint name is not parsed.
+- **Scan**: one `find -L … -printf` per source (directories and files, type/date/size/path),
+  depth limited by the layout, hidden directories pruned. Requires GNU `find`. 5 min cache
+  (bigger than configs: a shared disk can be slow), refresh on demand; on error the last good
+  listing is kept with the error. Totals (size, count) per source, run and group;
+  `checkpoints.updated` event after each scan or deletion.
+- **Deletion**: the client sends the exact list of files (deleting a group = its files), so
+  only what was seen is deleted. Validated on the server (relative, no `..`/hidden component,
+  under a run, file pattern), then on the machine by a `sh` script: `realpath` of the parent
+  directory must stay under the resolved root, no directory deleted with `rm`, then `rmdir` of
+  the group directories left empty. Direct `rm` with the SSH user (per-file errors). Not exposed
+  over MCP (destructive, confirmed by a gesture in the interface). **[to confirm]**
+- **`{checkpoint}`**: reserved placeholder, a single escaped word (not split like a free
+  parameter, a path may contain spaces). `Selection.checkpoint` = machine path; translated to the
+  container path through the project volumes, refused if none covers it. Stored on the run
+  (`checkpoint` column, `trainhub.checkpoint` label for import), kept on relaunch if the command
+  still takes it. Counts of runs per checkpoint shown in the listing.
+- **`extends`**: resolved on the raw YAML before validation; `id`/`label` not inherited,
+  `docker` merged key by key, any other field replaced. Unknown parent or cycle: error.
+- **Fake mode**: simulated trees per source (`simulation.checkpoints`), deletions applied.
+
+## Addition — Checkpoints tab, front end (October 29)
+
+- **Pinned tab**, outside the project tabs (`/checkpoints/<source>`), shown only if the inventory
+  declares sources; not part of the persisted UI state (open tabs remain projects). The last
+  chosen source is remembered in the browser. `N` (new draft) is disabled there.
+- Every source is loaded when the tab opens (server cache: no rescan within 5 min), so that the
+  header shows each total size; the tab shows the sum. `checkpoints.updated` updates the totals
+  and reloads a listing changed elsewhere.
+- **Two distinct selections**: sending (default mode, click on a line) and deletion (“Delete…”
+  mode, red); entering the deletion mode clears the sending selection, so that the two are never
+  confused. Checkboxes on groups (tri-state) and checkpoints, not on runs (as requested). Files
+  directly under the root can be sent but not deleted (refused by the server).
+- **Slider confirmation**: the handle must reach the end of the track (pointer capture); released
+  before, it springs back. Keyboard: arrows by 10 %, reaching the end confirms (still a
+  deliberate gesture, accessible). After a partial failure, the failed files stay selected and
+  the first error is shown.
+- **Sending**: one draft per checkpoint in the chosen project, machine = the source's if the
+  project allows it (otherwise a message), config = last selection of the project (no
+  association with the training run). The draft shows a `{checkpoint}` field (editable, red if
+  empty) and the origin “source · run”. `⟲ N` counts the runs live from the store.
+- Sizes in decimal units (kB, MB, GB), like file managers.
+- E2E: `infer` (extends `seg`) is first in the test inventory so the tab order of the existing
+  tests stays `seg → det`. Fake mode: when several projects share a configs root, the simulated
+  tree is the one declared for any of them. The “GPU picker” e2e test already failed before this
+  change (last selection `gpu-down` left by an earlier test).
+
+## Addition — mark a run as finished by hand (October 30)
+
+Request: a run stays active (often `unreachable`) when its machine died or its container was
+killed outside TrainHub, and could no longer be removed.
+
+- New action `force_finish` (“Mark as finished”, with confirmation), allowed from every active
+  status (including `launching`, `stopping`, `unreachable`), even while another action is in
+  progress on the run. **Nothing is run on the machine** (it may be down): the run becomes
+  `failed`, error “marked as finished by hand (was …): actual outcome unknown”, `finished_at`
+  now, no exit code, `container_alive` false. Available in the API
+  (`POST /api/runs/<id>/force_finish`), MCP (`force_finish_run`), Python and CLI
+  (`trainhub force-finish`).
+- Not `stopped`: TrainHub did not stop anything, and the real outcome is unknown.
+- **Truth wins**: if the machine answers again with the container really running or paused,
+  monitoring shows the run as running again (same rule as a restart outside TrainHub), rather
+  than hiding a process that still holds GPUs. A container exited or gone leaves the run finished.
+- A stop stuck on the dead machine can no longer bring the run back to an active status when it
+  fails: run updates now go through an atomic read-modify-write (`_update` under a lock, event
+  published in the same order), with `only_if_active` for the stop failure and for the switch to
+  `unreachable`.
+- Deleting a finished run still needs the machine (`docker rm`); unchanged.

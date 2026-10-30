@@ -1,5 +1,6 @@
-import { Navigate, Route, Router, useNavigate, useParams } from "@solidjs/router"
+import { Navigate, Route, Router, useLocation, useNavigate, useParams } from "@solidjs/router"
 import { createEffect, on, onCleanup, onMount, Show } from "solid-js"
+import { CheckpointsPage } from "./components/CheckpointsPage"
 import { ProjectPage } from "./components/ProjectPage"
 import { StatusBar } from "./components/StatusBar"
 import { TabBar } from "./components/TabBar"
@@ -23,6 +24,7 @@ function isTyping(e: KeyboardEvent): boolean {
 
 function Shell(props: { children?: unknown }) {
   const navigate = useNavigate()
+  const location = useLocation()
 
   const onKey = (e: KeyboardEvent) => {
     // Escape belongs to the interactive shell (vim…) when it has focus.
@@ -41,7 +43,14 @@ function Shell(props: { children?: unknown }) {
       if (next) navigate(`/p/${encodeURIComponent(next)}`)
       return
     }
-    if ((e.key === "n" || e.key === "N") && !e.ctrlKey && !e.metaKey && !e.altKey && !isTyping(e)) {
+    if (
+      (e.key === "n" || e.key === "N") &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !isTyping(e) &&
+      !location.pathname.startsWith("/checkpoints")
+    ) {
       const id = state.ui.active_tab
       if (id && project(id)) {
         e.preventDefault()
@@ -92,6 +101,11 @@ function ProjectRoute() {
   )
 }
 
+function CheckpointsRoute() {
+  const params = useParams<{ source?: string }>()
+  return <CheckpointsPage source={params.source} />
+}
+
 function Home() {
   return (
     <Show
@@ -117,6 +131,7 @@ export function App() {
   return (
     <Router root={Shell}>
       <Route path="/p/:id" component={ProjectRoute} />
+      <Route path="/checkpoints/:source?" component={CheckpointsRoute} />
       <Route path="*" component={Home} />
     </Router>
   )

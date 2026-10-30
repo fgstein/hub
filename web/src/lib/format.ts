@@ -44,3 +44,28 @@ export function formatDateTime(iso: string | null | undefined): string {
     second: "2-digit",
   })
 }
+
+/** Size in bytes, decimal units like a file manager: 412 MB, 3.7 GB. */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "—"
+  const units = ["B", "kB", "MB", "GB", "TB", "PB"]
+  let v = Math.max(0, bytes)
+  let i = 0
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000
+    i++
+  }
+  const digits = i === 0 || v >= 100 ? 0 : v >= 10 ? 1 : 2
+  return `${v.toFixed(digits)} ${units[i]}`
+}
+
+/** Age of a date: just now, 5 min ago, 3 h ago, 4 d ago, then the date. */
+export function formatAgo(iso: string | null | undefined, nowMs: number): string {
+  if (!iso) return "—"
+  const s = Math.max(0, (nowMs - Date.parse(iso)) / 1000)
+  if (s < 60) return "just now"
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`
+  if (s < 30 * 86400) return `${Math.floor(s / 86400)} d ago`
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+}

@@ -157,3 +157,14 @@ export const IconSpinner = (p: P) => (
     <path d="M8 2a6 6 0 1 0 6 6" />
   </Svg>
 )
+export const IconDatabase = (p: P) => (
+  <Svg {...p}>
+    <ellipse cx="8" cy="4" rx="5" ry="1.8" />
+    <path d="M3 4v8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V4M3 8c0 1 2.2 1.8 5 1.8S13 9 13 8" />
+  </Svg>
+)
+export const IconFlag = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 14V2.5M4 3h7.5l-1.8 2.75L11.5 8.5H4" />
+  </Svg>
+)

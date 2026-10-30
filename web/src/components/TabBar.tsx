@@ -1,12 +1,15 @@
 import { Popover } from "@kobalte/core/popover"
-import { useNavigate } from "@solidjs/router"
+import { useLocation, useNavigate } from "@solidjs/router"
 import { createMemo, createSignal, For, Show } from "solid-js"
+import { formatBytes } from "~/lib/format"
 import { activeCount, closeTab, moveTab, project, setActiveTab, state } from "~/stores/app"
 import { cycleTheme, themePref } from "~/stores/theme"
-import { IconClose, IconMonitor, IconMoon, IconPlus, IconSun } from "./Icons"
+import { IconClose, IconDatabase, IconMonitor, IconMoon, IconPlus, IconSun } from "./Icons"
 
 export function TabBar() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const onCheckpoints = () => location.pathname.startsWith("/checkpoints")
   const [dragging, setDragging] = createSignal<string | null>(null)
   const [dropIndex, setDropIndex] = createSignal<number | null>(null)
 
@@ -26,10 +29,13 @@ export function TabBar() {
       data-testid="tabbar"
     >
       <div class="flex min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]" role="tablist">
+        <Show when={state.inventory?.checkpoint_sources?.length}>
+          <CheckpointsTab active={onCheckpoints()} onClick={() => navigate("/checkpoints")} />
+        </Show>
         <For each={state.ui.open_tabs}>
           {(id, index) => {
             const p = () => project(id)
-            const active = () => state.ui.active_tab === id
+            const active = () => !onCheckpoints() && state.ui.active_tab === id
             const count = () => activeCount(id)
             return (
               <div
@@ -108,6 +114,41 @@ export function TabBar() {
       <div class="flex-1" />
       <ThemeButton />
     </nav>
+  )
+}
+
+/** Pinned tab (not a project): runs already executed and their checkpoints. */
+function CheckpointsTab(props: { active: boolean; onClick: () => void }) {
+  const total = () => {
+    const srcs = state.inventory?.checkpoint_sources ?? []
+    if (!srcs.some((s) => s.size != null)) return null
+    return srcs.reduce((a, s) => a + (s.size ?? 0), 0)
+  }
+  return (
+    <div
+      role="tab"
+      tabIndex={props.active ? 0 : -1}
+      aria-selected={props.active}
+      data-testid="tab-checkpoints"
+      onClick={() => props.onClick()}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && props.onClick()}
+      class="relative flex shrink-0 cursor-default select-none items-center gap-2 border-r border-line-weak px-3 text-sm transition-colors"
+      classList={{
+        "bg-bg text-fg-strong": props.active,
+        "text-fg hover:text-fg-strong": !props.active,
+      }}
+      title="Runs already executed and their checkpoints"
+    >
+      <Show when={props.active}>
+        <span class="absolute inset-x-0 bottom-[-1px] h-px bg-bg" />
+        <span class="absolute inset-x-0 top-0 h-px bg-fg-strong opacity-60" />
+      </Show>
+      <IconDatabase size={13} class="shrink-0 text-icon" />
+      <span class="font-medium">Checkpoints</span>
+      <Show when={total() != null}>
+        <span class="tabular font-mono text-xs text-fg-weak">· {formatBytes(total())}</span>
+      </Show>
+    </div>
   )
 }
 

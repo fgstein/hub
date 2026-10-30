@@ -12,6 +12,10 @@ from ..core.models import RunSource, RunStatus
 from ..service import RunAction, RunService
 from ..service.runs import InvalidRequestError
 from ..service.schemas import (
+    CheckpointDeleteRequest,
+    CheckpointDeleteResult,
+    CheckpointListing,
+    CheckpointSourceView,
     ConfigList,
     Health,
     InventoryView,
@@ -82,6 +86,31 @@ async def patch_project(project_id: str, patch: ProjectPatch, svc: Svc) -> Proje
     if patch.command is None:
         raise InvalidRequestError("provide 'command' or 'reset: true'")
     return await svc.set_project_command(project_id, patch.command)
+
+
+@router.get("/checkpoints", response_model=list[CheckpointSourceView], tags=["checkpoints"])
+async def checkpoint_sources(svc: Svc) -> list[CheckpointSourceView]:
+    """Checkpoint sources, with the total size and count of their last scan."""
+    return svc.checkpoints.sources()
+
+
+@router.get("/checkpoints/{source_id}", response_model=CheckpointListing, tags=["checkpoints"])
+async def checkpoint_listing(source_id: str, svc: Svc, refresh: bool = False) -> CheckpointListing:
+    """Runs and checkpoints of a source (``find`` on its machine, 5 min cache)."""
+    return await svc.checkpoints.listing(source_id, refresh=refresh)
+
+
+@router.post(
+    "/checkpoints/{source_id}/delete",
+    response_model=CheckpointDeleteResult,
+    tags=["checkpoints"],
+)
+async def delete_checkpoints(
+    source_id: str, req: CheckpointDeleteRequest, svc: Svc
+) -> CheckpointDeleteResult:
+    """Delete checkpoint files (paths relative to the root); empty group directories are
+    removed. Partial failures are listed in ``failed``."""
+    return await svc.checkpoints.delete(source_id, req.paths)
 
 
 @router.get("/ui-state", response_model=UiState, tags=["ui"])

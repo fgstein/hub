@@ -189,3 +189,56 @@ test("configs: recursive tree, run counter, keyboard search", async ({ page }) =
   await expect(node("exp/sweep/lr_small").getByTestId("config-count")).toContainText(String(before + 1))
   await expect(node("exp").getByTestId("config-count")).toContainText(String(before + 1))
 })
+
+test("checkpoints: totals, send to an inference draft, launch, delete with the slider", async ({ page }) => {
+  await page.goto("/checkpoints")
+  const source = page.getByTestId("ckpt-source-out")
+  await expect(source.getByTestId("ckpt-source-total")).toContainText("9 checkpoints")
+  await expect(page.getByTestId("tab-checkpoints")).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByTestId("ckpt-run")).toHaveCount(3)
+
+  // search on a file name: the run opens on the matches only
+  await page.getByTestId("ckpt-search").fill("model_final")
+  await expect(page.getByTestId("ckpt-file")).toHaveCount(1)
+  await page.getByTestId("ckpt-search").fill("")
+
+  const runA = page.locator("[data-testid=ckpt-run][data-run=run_a]")
+  await runA.getByRole("button").first().click()
+  const topk = runA.locator("[data-testid=ckpt-group][data-group=topk]")
+  const file = topk.getByTestId("ckpt-file").first()
+  const path = await file.getAttribute("data-path")
+  await file.click()
+  await expect(page.getByTestId("ckpt-send-bar")).toContainText("1 checkpoint selected")
+  await page.getByTestId("ckpt-send").click()
+
+  await expect(page).toHaveURL(/\/p\/infer$/)
+  const draft = page.getByTestId("draft-row").last()
+  await expect(draft.getByTestId("field-checkpoint")).toHaveValue(`/out/${path}`)
+  await expect(draft.getByTestId("checkpoint-origin")).toHaveText("Outputs · run_a")
+  await pickConfig(page, "baseline")
+  await draft.getByTestId("draft-launch").click()
+  await expect(page.getByTestId("run-checkpoint")).toContainText("topk/")
+
+  // the checkpoint now shows the run launched with it
+  await page.getByTestId("tab-checkpoints").click()
+  await runA.getByRole("button").first().click()
+  await expect(topk.locator(`[data-path="${path}"]`).getByTestId("ckpt-file-runs")).toHaveText("⟲ 1")
+
+  // delete mode: a whole group, a partial slide does nothing, the full slide deletes
+  await page.getByTestId("ckpt-delete-mode").click()
+  await topk.getByTestId("ckpt-group-check").check()
+  await expect(page.getByTestId("ckpt-delete-summary")).toContainText("1 group, 3 checkpoints in 1 run")
+  const handle = page.getByTestId("ckpt-slide-handle")
+  const box = (await handle.boundingBox())!
+  await page.mouse.move(box.x + 10, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 120, box.y + 10, { steps: 5 })
+  await page.mouse.up()
+  await expect(topk.getByTestId("ckpt-file")).toHaveCount(3)
+  await handle.focus()
+  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight")
+  await expect(page.getByText("3 checkpoints deleted")).toBeVisible()
+  await expect(topk).toHaveCount(0)
+  await expect(page.getByTestId("ckpt-delete-bar")).toHaveCount(0)
+  await expect(source.getByTestId("ckpt-source-total")).toContainText("6 checkpoints")
+})

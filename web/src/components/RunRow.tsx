@@ -100,6 +100,14 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
         <Tip class="min-w-0 truncate text-fg-strong" content={run().command}>
           {run().config}
         </Tip>
+        <Show when={run().checkpoint}>
+          <Tip
+            class="min-w-0 shrink truncate rounded bg-surface px-1 text-xs text-fg-weak"
+            content={<span class="font-mono">{run().checkpoint}</span>}
+          >
+            <span data-testid="run-checkpoint">ckpt {run().checkpoint?.split("/").slice(-2).join("/")}</span>
+          </Tip>
+        </Show>
         <Show when={run().cuda_visible_devices}>
           <Tip class="shrink-0 rounded bg-surface px-1 text-xs text-fg-weak" content="CUDA_VISIBLE_DEVICES">
             gpu {run().cuda_visible_devices}

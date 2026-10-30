@@ -19,11 +19,15 @@ from pydantic import (
     model_validator,
 )
 
+from .checkpoints import parse_layout
+
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 
 #: Placeholders filled in by TrainHub. Any other ``{name}`` is a free run parameter,
 #: entered before launch (text field of the draft).
-ALLOWED_PLACEHOLDERS = frozenset({"config", "config_name", "run_id", "machine", "project"})
+ALLOWED_PLACEHOLDERS = frozenset(
+    {"config", "config_name", "run_id", "machine", "project", "checkpoint"}
+)
 #: Identifier of the always-available venv: no activation (the image's Python).
 SYSTEM_VENV_ID = "system"
 #: A placeholder is ``{name}`` not preceded by ``$`` (to let ``${VAR}`` and Hydra/OmegaConf
@@ -254,6 +258,11 @@ class Project(_Strict):
 
     id: str = Field(pattern=ID_PATTERN)
     label: str | None = None
+    extends: str | None = Field(
+        default=None,
+        description="Project whose fields are inherited (resolved when the inventory is "
+        "loaded); the fields given here replace them, docker options key by key",
+    )
     command: str
     workdir: str | None = None
     machines: list[str] | None = None
@@ -280,6 +289,96 @@ class Project(_Strict):
     def display(self) -> str:
         return self.label or self.id
 
+    @property
+    def accepts_checkpoint(self) -> bool:
+        return "checkpoint" in PLACEHOLDER_RE.findall(self.command)
+
+
+#: Fields of a parent project that a project with ``extends`` does not inherit.
+_NOT_INHERITED = frozenset({"id", "label", "extends"})
+
+
+def resolve_extends(projects: list[object]) -> list[object]:
+    """Raw projects (YAML) with ``extends`` resolved: the parent's fields, then the child's.
+
+    ``docker`` is merged key by key; every other field given by the child replaces the
+    parent's. Chains are allowed; an unknown parent or a cycle raises ``ValueError``.
+    """
+    by_id = {p["id"]: p for p in projects if isinstance(p, dict) and isinstance(p.get("id"), str)}
+    resolved: dict[str, dict[str, object]] = {}
+
+    def resolve(pid: str, chain: tuple[str, ...]) -> dict[str, object]:
+        if pid in resolved:
+            return resolved[pid]
+        raw = by_id[pid]
+        parent_id = raw.get("extends")
+        if parent_id is None:
+            resolved[pid] = raw
+            return raw
+        if not isinstance(parent_id, str) or parent_id not in by_id:
+            known = ", ".join(sorted(by_id)) or "none"
+            raise ValueError(
+                f"project '{pid}': extends unknown project '{parent_id}'; projects: {known}"
+            )
+        if parent_id in chain:
+            raise ValueError(f"projects: extends cycle ({' → '.join([*chain, pid, parent_id])})")
+        parent = resolve(parent_id, (*chain, pid))
+        merged = {k: v for k, v in parent.items() if k not in _NOT_INHERITED}
+        for k, v in raw.items():
+            pv = merged.get(k)
+            if k == "docker" and isinstance(pv, dict) and isinstance(v, dict):
+                merged[k] = {**pv, **v}
+            else:
+                merged[k] = v
+        resolved[pid] = merged
+        return merged
+
+    return [
+        resolve(p["id"], ())
+        if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"] in by_id
+        else p
+        for p in projects
+    ]
+
+
+class CheckpointSource(_Strict):
+    """Directory of runs on a machine, whose checkpoints are listed in the Checkpoints tab.
+
+    Independent of the projects: the runs may have been launched by TrainHub or not.
+    ``layout`` describes the tree under ``root``: ``{name}`` (first level) is a run,
+    ``{group}`` an optional grouping level, other directories are literal (globs allowed),
+    the last component is the checkpoint file pattern.
+    """
+
+    id: str = Field(pattern=ID_PATTERN)
+    label: str | None = None
+    machine: str = Field(description="Machine where the files are listed and deleted")
+    root: str = Field(min_length=1, description="Absolute directory of the runs, on the machine")
+    layout: str = Field(
+        default="{name}/checkpoints/{group}/*.ckpt",
+        description="Tree under the root, e.g. {name}/checkpoints/{group}/*.ckpt",
+    )
+
+    @field_validator("root")
+    @classmethod
+    def _check_root(cls, v: str) -> str:
+        if not v.startswith("/") or any(c in v for c in "\n\r\x00"):
+            raise ValueError("root must be an absolute path")
+        v = v.rstrip("/")
+        if not v:
+            raise ValueError("root: / is not allowed")
+        return v
+
+    @field_validator("layout")
+    @classmethod
+    def _check_layout(cls, v: str) -> str:
+        parse_layout(v)
+        return v
+
+    @property
+    def display(self) -> str:
+        return self.label or self.id
+
 
 MachineState = Literal["ok", "flaky", "down"]
 
@@ -296,6 +395,10 @@ class SimulationSettings(_Strict):
     configs: dict[str, list[str]] = Field(
         default_factory=dict, description="Simulated “discovered” configs, per project"
     )
+    checkpoints: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Simulated run directories, per checkpoint source (default: a few)",
+    )
     flaky_period_s: float = Field(default=40.0, gt=0)
     gpus: int = Field(default=4, ge=0, description="Simulated GPUs per machine (nvidia-smi)")
     seed: int | None = None
@@ -308,12 +411,22 @@ class Inventory(_Strict):
     images: list[Image] = Field(default_factory=list)
     venvs: list[Venv] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
+    checkpoints: list[CheckpointSource] = Field(
+        default_factory=list, description="Checkpoint sources (Checkpoints tab)"
+    )
     docker_command: list[str] = Field(
         default_factory=lambda: ["docker"],
         description="Default Docker command on the machines: binary, path or wrapper "
         "(e.g. 'sudo -n docker', '/opt/bin/mydocker'). Can be overridden per machine.",
     )
     simulation: SimulationSettings | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _extends(cls, data: object) -> object:
+        if isinstance(data, dict) and isinstance(data.get("projects"), list):
+            data = {**data, "projects": resolve_extends(data["projects"])}
+        return data
 
     @field_validator("docker_command", mode="before")
     @classmethod
@@ -332,7 +445,7 @@ class Inventory(_Strict):
 
     @model_validator(mode="after")
     def _check_refs(self) -> Inventory:
-        for kind in ("machines", "images", "venvs", "projects"):
+        for kind in ("machines", "images", "venvs", "projects", "checkpoints"):
             seen: set[str] = set()
             for item in getattr(self, kind):
                 if item.id in seen:
@@ -350,6 +463,9 @@ class Inventory(_Strict):
                 for ref in getattr(p, field) or []:
                     if ref not in known:
                         raise ValueError(f"project '{p.id}': unknown {field[:-1]} '{ref}'")
+        for c in self.checkpoints:
+            if c.machine not in machines:
+                raise ValueError(f"checkpoints '{c.id}': unknown machine '{c.machine}'")
         return self
 
     # -- access --------------------------------------------------------------
@@ -367,6 +483,9 @@ class Inventory(_Strict):
 
     def project(self, pid: str) -> Project:
         return _find(self.projects, pid, "project")
+
+    def checkpoint_source(self, sid: str) -> CheckpointSource:
+        return _find(self.checkpoints, sid, "checkpoint source")
 
     def allowed_machines(self, project: Project) -> list[Machine]:
         if project.machines is None:
@@ -400,7 +519,7 @@ class UnknownResourceError(KeyError):
         return f"unknown {self.kind} '{self.rid}'; available: {avail}"
 
 
-_T = TypeVar("_T", Machine, Image, Venv, Project)
+_T = TypeVar("_T", Machine, Image, Venv, Project, CheckpointSource)
 
 
 def _find(items: list[_T], rid: str, kind: str) -> _T:
@@ -480,6 +599,9 @@ class Run(BaseModel):
     cuda_visible_devices: str | None = None
     params: dict[str, str] = Field(
         default_factory=dict, description="Values of the free command parameters"
+    )
+    checkpoint: str | None = Field(
+        default=None, description="{checkpoint}: path of the checkpoint on the machine"
     )
     stop_requested: bool = False
     container_alive: bool = Field(

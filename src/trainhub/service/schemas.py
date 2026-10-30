@@ -32,6 +32,11 @@ class Selection(BaseModel):
         description="Values of the free command parameters (non-reserved {name}); "
         "each value is split as a shell would, empty = nothing inserted",
     )
+    checkpoint: str | None = Field(
+        default=None,
+        description="{checkpoint}: absolute path of the checkpoint on the machine (as listed "
+        "by a checkpoint source); translated to the container path through the volumes",
+    )
 
 
 class LastSelection(BaseModel):
@@ -133,6 +138,91 @@ class ProjectView(BaseModel):
     static_configs: list[str] | None
     discover: bool
     docker: DockerOptions
+    extends: str | None = Field(default=None, description="Parent project (inventory)")
+    accepts_checkpoint: bool = Field(
+        default=False, description="The effective command contains {checkpoint}"
+    )
+
+
+class CheckpointSourceView(BaseModel):
+    """A checkpoint source of the inventory (directory of runs on a machine)."""
+
+    id: str
+    label: str
+    machine: str
+    root: str
+    layout: str
+    size: int | None = Field(
+        default=None, description="Total size of the checkpoints, in bytes (None: not scanned)"
+    )
+    count: int | None = Field(default=None, description="Number of checkpoints (last scan)")
+    scanned_at: datetime | None = None
+
+
+class CheckpointFile(BaseModel):
+    path: str = Field(description="Path relative to the source root")
+    name: str
+    size: int = Field(description="Bytes")
+    mtime: datetime
+    runs: RunCount | None = Field(
+        default=None, description="TrainHub runs launched with this checkpoint (missing: none)"
+    )
+
+
+class CheckpointGroup(BaseModel):
+    name: str = Field(description="Value of {group} (empty if the layout has no {group})")
+    path: str | None = Field(description="Directory relative to the root (None: not unique)")
+    size: int
+    count: int
+    files: list[CheckpointFile]
+
+
+class CheckpointRun(BaseModel):
+    """A run directory ({name}) of a source, launched by TrainHub or not."""
+
+    name: str
+    size: int
+    count: int
+    mtime: datetime | None = Field(description="Most recent checkpoint, else the directory")
+    groups: list[CheckpointGroup]
+    others: list[CheckpointFile] = Field(
+        default_factory=list, description="Checkpoint files of the run outside the layout"
+    )
+
+
+class CheckpointListing(BaseModel):
+    source: str
+    machine: str
+    root: str
+    layout: str
+    size: int = Field(description="Total size of the checkpoints of the source, in bytes")
+    count: int
+    runs: list[CheckpointRun] = Field(description="Most recent first")
+    others: list[CheckpointFile] = Field(
+        default_factory=list, description="Checkpoint files directly under the root"
+    )
+    error: str | None = None
+    scanned_at: datetime | None = None
+
+
+class CheckpointDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paths: list[str] = Field(
+        min_length=1, description="Checkpoint files to delete, relative to the source root"
+    )
+
+
+class CheckpointDeleteResult(BaseModel):
+    source: str
+    deleted: list[str] = Field(description="Deleted (or already missing) files")
+    failed: dict[str, str] = Field(default_factory=dict, description="File → error")
+    removed_dirs: list[str] = Field(
+        default_factory=list, description="Group directories removed because empty"
+    )
+    freed: int = Field(description="Bytes freed (sizes of the last scan)")
+    size: int = Field(description="New total size of the source")
+    count: int
 
 
 class InventoryView(BaseModel):
@@ -140,6 +230,7 @@ class InventoryView(BaseModel):
     images: list[ImageView]
     venvs: list[VenvView]
     projects: list[ProjectView]
+    checkpoint_sources: list[CheckpointSourceView] = Field(default_factory=list)
     error: str | None = Field(default=None, description="Error of the last reload")
     executor: str
 

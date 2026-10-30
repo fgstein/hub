@@ -593,3 +593,62 @@ async def test_machine_gpus(svc: RunService) -> None:
         await svc.machine_gpus("gpu-02")
     svc.executor.settings = svc.executor.settings.model_copy(update={"gpus": 0})
     assert "nvidia-smi failed" in ((await svc.machine_gpus("gpu-01")).error or "")
+
+
+async def test_force_finish_on_dead_machine(svc: RunService) -> None:
+    await svc.monitor.stop()
+    run = await svc.launch(SEL, wait=True)
+    fake = svc.executor
+    assert isinstance(fake, FakeExecutor)
+    fake.forced_state["gpu-01"] = "down"
+    await svc.monitor.poll("gpu-01")
+    assert (await svc.get_run(run.id)).status is RunStatus.UNREACHABLE
+    done = await svc.action(run.id, "force_finish")
+    assert done.status is RunStatus.FAILED and done.finished_at is not None
+    assert done.error and "marked as finished by hand" in done.error
+    assert "machine unreachable" in done.error and not done.container_alive
+    # monitoring no longer touches it while the machine is down
+    await svc.monitor.poll("gpu-01")
+    assert (await svc.get_run(run.id)).status is RunStatus.FAILED
+    with pytest.raises(ActionNotAllowedError, match="mark as finished"):
+        await svc.force_finish(run.id)
+    # the container was in fact still running: the run shows as running again
+    fake.forced_state["gpu-01"] = "ok"
+    await svc.monitor.poll("gpu-01")
+    back = await svc.get_run(run.id)
+    assert back.status is RunStatus.RUNNING and back.finished_at is None
+
+
+async def test_force_finish_container_gone_stays_finished(svc: RunService) -> None:
+    await svc.monitor.stop()
+    run = await svc.launch(SEL, wait=True)
+    fake = svc.executor
+    assert isinstance(fake, FakeExecutor)
+    fake.forced_state["gpu-01"] = "down"
+    await svc.monitor.poll("gpu-01")
+    await svc.force_finish(run.id)
+    # the machine rebooted: the container is gone
+    fake.machines["gpu-01"].containers.clear()
+    fake.forced_state["gpu-01"] = "ok"
+    await svc.monitor.poll("gpu-01")
+    r = await svc.get_run(run.id)
+    assert r.status is RunStatus.FAILED and r.error and "by hand" in r.error
+
+
+async def test_force_finish_while_stop_is_stuck(svc: RunService) -> None:
+    await svc.monitor.stop()
+    run = await svc.launch(SEL, wait=True)
+    fake = svc.executor
+    assert isinstance(fake, FakeExecutor)
+    fake.forced_state["gpu-01"] = "down"
+    stopping = await svc.stop(run.id)  # does not wait: the stop is in progress
+    assert stopping.status is RunStatus.STOPPING and svc.is_busy(run.id)
+    done = await svc.force_finish(run.id)
+    assert done.status is RunStatus.FAILED
+    # the failed stop must not bring the run back to an active status
+    await wait_for(lambda: _not_busy(svc, run.id))
+    assert (await svc.get_run(run.id)).status is RunStatus.FAILED
+
+
+async def _not_busy(svc: RunService, run_id: str) -> bool:
+    return not svc.is_busy(run_id)

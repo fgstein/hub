@@ -52,6 +52,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
         overrides=args.overrides,
         cuda_visible_devices=args.gpus,
         params=_params(args),
+        checkpoint=args.checkpoint,
     )
     print(preview_exact(spec) if args.exact else preview(spec))
     return 0
@@ -95,6 +96,7 @@ async def _launch(args: argparse.Namespace) -> int:
             overrides=args.overrides,
             cuda_visible_devices=args.gpus,
             params=_params(args),
+            checkpoint=args.checkpoint,
         )
         print(f"{run.id}  {run.status}  {run.container_name}", file=sys.stderr)
         if run.error:
@@ -149,7 +151,12 @@ async def _action(args: argparse.Namespace) -> int:
             await hub.delete(args.run_id)
             print(f"{args.run_id} deleted")
             return 0
-        fn = {"stop": hub.stop, "pause": hub.pause, "resume": hub.resume}[args.cmd]
+        fn = {
+            "stop": hub.stop,
+            "pause": hub.pause,
+            "resume": hub.resume,
+            "force-finish": hub.force_finish,
+        }[args.cmd]
         run = await fn(args.run_id)
         print(f"{run.id}  {run.status}")
     return 0
@@ -192,6 +199,7 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
     p.add_argument("-e", "--venv", required=True)
     p.add_argument("-c", "--config", required=True)
     p.add_argument("--gpus", help="CUDA_VISIBLE_DEVICES (e.g. 0,1)")
+    p.add_argument("--checkpoint", help="{checkpoint}: absolute path on the machine")
     p.add_argument(
         "-P",
         "--param",
@@ -251,6 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
         ("pause", "Pause a run"),
         ("resume", "Resume a paused run"),
         ("rm", "Delete a finished run and its container"),
+        (
+            "force-finish",
+            "Mark an active run as finished without touching the machine (dead machine…)",
+        ),
     ):
         p = sub.add_parser(name, help=help_)
         p.add_argument("run_id")

@@ -234,3 +234,13 @@ def test_version_matches_pyproject() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
     with pyproject.open("rb") as f:
         assert tomllib.load(f)["project"]["version"] == __version__
+
+
+def test_force_finish(client: TestClient) -> None:
+    run = client.post("/api/runs", json=SEL.model_dump()).json()
+    wait_status(client, run["id"], "running")
+    r = client.post(f"/api/runs/{run['id']}/force_finish")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "failed" and "by hand" in r.json()["error"]
+    again = client.post(f"/api/runs/{run['id']}/force_finish")
+    assert again.status_code == 409 and "mark as finished" in again.json()["detail"]

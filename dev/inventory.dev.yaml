@@ -6,6 +6,8 @@
 #     command (simulated shell, “Close container”)
 #   - detection   : free parameters {seed} and {tags}, “system” venv (always offered)
 #   - llm-finetune: parameter {nproc}, container removed at the end (keep_alive: false)
+#   - seg-infer   : inference project (extends segmentation), command with {checkpoint}
+#   - checkpoints : simulated run directories (Checkpoints tab), one source per disk
 #   - gpu-03 flaky, gpu-old offline, “broken” image (launch failure)
 
 machines:
@@ -90,6 +92,25 @@ projects:
     configs:
       static: [llama_8b_lora]
 
+  - id: seg-infer
+    label: Segmentation — inference
+    extends: segmentation      # machines, docker options, workdir, configs… inherited
+    # {checkpoint}: path chosen in the Checkpoints tab, translated to the container path
+    # through the volumes (/home/alice/seg → /workspace/seg)
+    command: python infer.py --config-name {config} --ckpt {checkpoint}
+
+checkpoints:
+  - id: seg-outputs
+    label: Segmentation outputs
+    machine: gpu-01
+    root: /home/alice/seg/outputs
+    layout: "{name}/checkpoints/{group}/*.ckpt"
+  - id: scratch
+    label: Scratch (shared disk)
+    machine: gpu-02
+    root: /scratch/alice/runs
+    layout: "{name}/*.pt"
+
 simulation:
   duration_s: [60, 300]       # duration of a simulated training
   log_rate: 6                 # progress bar updates per second
@@ -112,3 +133,12 @@ simulation:
       - experiments/2026-09/segformer_b2
       - hydra/launcher/slurm
     detection: [yolo_s, yolo_m, detr/r50, detr/r101, rtdetr/rtdetr_l]
+  checkpoints:                # simulated run directories, per checkpoint source
+    seg-outputs:
+      - unet_large_lr1e-3
+      - unet_large_lr3e-4
+      - unet_deep_2026-10-12
+      - segformer_b2_bs16
+      - baseline_2026-10-02
+      - ablation_no_augment
+      - debug_crashed

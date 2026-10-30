@@ -10,6 +10,7 @@ import {
   IconChevronDown,
   IconCopy,
   IconDownload,
+  IconFlag,
   IconPause,
   IconPlay,
   IconPower,
@@ -48,6 +49,16 @@ export const ACTIONS: Record<MenuAction, ActionDef> = {
     label: "Close container",
     icon: IconPower,
     hint: "docker stop of the container kept after the command (the shell is no longer available)",
+  },
+  force_finish: {
+    label: "Mark as finished",
+    icon: IconFlag,
+    confirm: "Confirm: mark as finished",
+    danger: true,
+    hint:
+      "For a run stuck active whose machine or container is dead: moves it to the finished runs " +
+      "(failed) without running anything on the machine. If the container turns out to be " +
+      "running when the machine answers again, the run shows as running again.",
   },
   delete: {
     label: "Delete",

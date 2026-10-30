@@ -1,7 +1,8 @@
 """``fake`` executor: machines and containers simulated in memory.
 
 It interprets the docker argv actually built by :mod:`trainhub.core.commands`
-(``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm`` and ``find``), which also
+(``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm``, ``find`` and the
+checkpoint deletion script), which also
 tests command building. Each container produces realistic logs: Hydra banner, resolved
 config, colored ANSI lines, tqdm bars rewritten with ``\\r``, per-epoch metrics, warnings,
 and possibly a traceback with exit code 1.
@@ -26,9 +27,10 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from ..core import checkpoints as ck
 from ..core.commands import discover_root, transport
 from ..core.gpus import visible_indices
-from ..core.models import Inventory, Machine, SimulationSettings
+from ..core.models import CheckpointSource, Inventory, Machine, SimulationSettings
 from .base import (
     ExecResult,
     Executor,
@@ -80,6 +82,15 @@ _RUN_VALUE_OPTS = frozenset(
 )
 
 _LOG_LIMIT = 8 * 1024 * 1024  # bytes kept per simulated container
+
+_DEFAULT_CKPT_RUNS = [
+    "unet_large_lr1e-3",
+    "unet_large_lr3e-4",
+    "segformer_b2_bs16",
+    "baseline_2026-10-02",
+    "ablation_no_augment",
+    "debug_tiny",
+]
 
 
 def _now() -> datetime:
@@ -237,6 +248,8 @@ class FakeExecutor(Executor):
         self._t0 = time.monotonic()
         #: states forced by tests: machine -> "ok" | "down"
         self.forced_state: dict[str, str] = {}
+        #: simulated checkpoint trees: root -> {relative path: (kind "d"/"f", mtime, size)}
+        self.checkpoint_trees: dict[str, dict[str, tuple[str, float, int]]] = {}
         if inventory is not None:
             self.update_inventory(inventory)
 
@@ -292,8 +305,12 @@ class FakeExecutor(Executor):
     def _dispatch(self, machine: Machine, m: FakeMachine, argv: list[str]) -> tuple[int, str, str]:
         if not argv:
             return 127, "", "empty command"
+        if argv[0] == "find" and "-printf" in argv:
+            return self._find_checkpoints(argv)
         if argv[0] == "find":
             return self._find(argv)
+        if argv[0] == "sh" and len(argv) > 4 and argv[3] == ck.RM_SCRIPT_NAME:
+            return self._rm_checkpoints(argv[4], argv[5:])
         if argv[0] == "nvidia-smi":
             return self._nvidia_smi(machine, m, argv)
         if argv[0] != "docker" or len(argv) < 2:
@@ -321,10 +338,17 @@ class FakeExecutor(Executor):
         pattern = argv[argv.index("-name") + 1] if "-name" in argv else "*"
         inv = self.inventory
         if inv is not None:
-            for p in inv.projects:
+            matching = [
+                p
+                for p in inv.projects
+                if p.configs.discover is not None and discover_root(p.configs.discover) == root
+            ]
+            # Several projects may share a root (``extends``): the simulated tree is the one
+            # declared for any of them.
+            matching.sort(key=lambda p: p.id not in self.settings.configs)
+            for p in matching[:1]:
                 d = p.configs.discover
-                if d is None or discover_root(d) != root:
-                    continue
+                assert d is not None
                 names = self.settings.configs.get(p.id)
                 if names is None:
                     names = list(p.configs.static or ["default"])
@@ -337,6 +361,90 @@ class FakeExecutor(Executor):
                 ]
                 return 0, "\n".join(out) + "\n", ""
         return 1, "", f"find: '{root}': No such file or directory"
+
+    # -- checkpoints -----------------------------------------------------------------
+
+    def _checkpoint_tree(self, root: str) -> dict[str, tuple[str, float, int]] | None:
+        tree = self.checkpoint_trees.get(root)
+        if tree is not None:
+            return tree
+        src = next(
+            (c for c in (self.inventory.checkpoints if self.inventory else []) if c.root == root),
+            None,
+        )
+        if src is None:
+            return None
+        tree = self.checkpoint_trees[root] = self._generate_checkpoints(src)
+        return tree
+
+    def _generate_checkpoints(self, src: CheckpointSource) -> dict[str, tuple[str, float, int]]:
+        """Realistic tree following the layout: groups topk/last, epochNNNNNNN files, one run
+        without checkpoints, one file outside the layout."""
+        layout = ck.parse_layout(src.layout)
+        rng = random.Random(src.id)
+        names = self.settings.checkpoints.get(src.id) or _DEFAULT_CKPT_RUNS
+        now = time.time()
+        tree: dict[str, tuple[str, float, int]] = {}
+
+        def fname(stem: str) -> str:
+            return layout.file.replace("*", stem, 1).replace("*", "").replace("?", "0")
+
+        for i, name in enumerate(names):
+            start = now - (i * 2.5 + rng.uniform(0.1, 1.0)) * 86400
+            tree[name] = ("d", start, 0)
+            if i == len(names) - 1 and len(names) > 2:
+                continue  # a run that crashed before its first checkpoint
+            size = rng.randrange(80, 1500) * 1024 * 1024
+            epochs = sorted(rng.sample(range(1, 60), 4))
+            groups = (
+                {"topk": epochs[:3], "last": epochs[-1:]} if layout.group_index else {"": epochs}
+            )
+            for g, eps in groups.items():
+                dirs = [
+                    g if d == ck.GROUP else ("x" if any(c in d for c in "*?[") else d)
+                    for d in layout.dirs
+                ]
+                for k in range(1, len(dirs) + 1):
+                    tree["/".join([name, *dirs[:k]])] = ("d", start, 0)
+                for ep in eps:
+                    path = "/".join([name, *dirs, fname(f"epoch{ep:07d}")])
+                    mtime = min(start + ep * 1800, now - 900 - ep)
+                    tree[path] = ("f", mtime, size + rng.randrange(0, 4096))
+            if i == 1:
+                tree[f"{name}/{fname('model_final')}"] = ("f", min(start + 120000, now - 600), size)
+        return tree
+
+    def _find_checkpoints(self, argv: list[str]) -> tuple[int, str, str]:
+        """Simulate the checkpoint ``find … -printf`` (see :func:`ck.list_checkpoints`)."""
+        root = argv[2]
+        tree = self._checkpoint_tree(root)
+        if tree is None:
+            return 1, "", f"find: '{root}': No such file or directory"
+        lines = [
+            f"{kind}\t{mtime:.10f}\t{size}\t{path}" for path, (kind, mtime, size) in tree.items()
+        ]
+        return 0, "\n".join(lines) + "\n", ""
+
+    def _rm_checkpoints(self, root: str, args: list[str]) -> tuple[int, str, str]:
+        tree = self._checkpoint_tree(root)
+        if tree is None:
+            return 2, f"root\t{root}\n", ""
+        sep = args.index("") if "" in args else len(args)
+        out: list[str] = []
+        for rel in args[:sep]:
+            entry = tree.get(rel)
+            if entry is None:
+                out.append(f"gone\t{rel}")
+            elif entry[0] == "d":
+                out.append(f"err\t{rel}\tis a directory")
+            else:
+                del tree[rel]
+                out.append(f"ok\t{rel}")
+        for rel in args[sep + 1 :]:
+            if tree.get(rel, ("",))[0] == "d" and not any(p.startswith(rel + "/") for p in tree):
+                del tree[rel]
+                out.append(f"rmdir\t{rel}")
+        return 0, "".join(line + "\n" for line in out), ""
 
     def _nvidia_smi(
         self, machine: Machine, m: FakeMachine, argv: list[str]

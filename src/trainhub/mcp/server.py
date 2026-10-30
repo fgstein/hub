@@ -27,7 +27,9 @@ TrainHub launches and monitors training commands on remote GPU machines
 image, Python venv and config file. Recommended flow: list_projects, then
 list_resources and list_configs for a project, preview_command to check, launch_run,
 then wait_run / get_logs to monitor (get_gpus helps choosing a machine and
-cuda_visible_devices). Statuses: launching, running, paused, stopping,
+cuda_visible_devices). Projects whose command contains {checkpoint} (accepts_checkpoint,
+e.g. inference) take a checkpoint path: find one with list_checkpoint_sources and
+list_checkpoints. Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
 """
 
@@ -65,6 +67,13 @@ ParamsArg = Annotated[
         "split as a shell would; missing or empty: nothing is inserted."
     ),
 ]
+CheckpointArg = Annotated[
+    str | None,
+    Field(
+        description="Absolute path of a checkpoint on the machine (root of its source + path "
+        "from list_checkpoints), for a project whose command contains {checkpoint}"
+    ),
+]
 
 
 def run_summary(run: Run) -> dict[str, Any]:
@@ -98,6 +107,7 @@ def run_detail(run: Run) -> dict[str, Any]:
         container_name=run.container_name,
         overrides=run.overrides,
         cuda_visible_devices=run.cuda_visible_devices,
+        checkpoint=run.checkpoint,
         elapsed_s=round(elapsed_seconds(run), 1),
         paused_total_s=round(paused_seconds(run), 1),
     )
@@ -141,6 +151,7 @@ def build_mcp(
                     "command": v.command,
                     "command_overridden": v.command_overridden,
                     "params": v.params,
+                    "accepts_checkpoint": v.accepts_checkpoint,
                     "machines": v.machines,
                     "images": v.images,
                     "venvs": v.venvs,
@@ -214,12 +225,74 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        checkpoint: CheckpointArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
-            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+            project,
+            machine,
+            image,
+            venv,
+            config,
+            overrides,
+            cuda_visible_devices,
+            params,
+            checkpoint,
         )
         p = await call(svc.preview(sel))
         return {"command": p.command, "full_command": p.text, "exact": p.exact}
+
+    @mcp.tool(
+        annotations=READ,
+        description="Checkpoint sources: directories of runs on a machine (launched by "
+        "TrainHub or not), with the total size and count of checkpoints of the last scan "
+        "(null: not scanned yet).",
+    )
+    async def list_checkpoint_sources() -> list[dict[str, Any]]:
+        return [v.model_dump(mode="json") for v in svc.checkpoints.sources()]
+
+    @mcp.tool(
+        annotations=READ,
+        description="Runs and checkpoints of a source, most recent run first: for each run "
+        "its groups (e.g. topk, last) and checkpoint files (path relative to the root, "
+        "size in bytes, date, inference runs already launched with it). The absolute path "
+        "to pass as checkpoint is root + '/' + path. Scan cached 5 min (refresh to force).",
+    )
+    async def list_checkpoints(
+        source: Annotated[str, Field(description="Source id (see list_checkpoint_sources)")],
+        name: Annotated[
+            str | None, Field(description="Only runs whose name contains this text")
+        ] = None,
+        limit: Annotated[int, Field(description="Maximum number of runs", ge=1, le=500)] = 30,
+        refresh: Annotated[bool, Field(description="Rescan the disk")] = False,
+    ) -> dict[str, Any]:
+        lst = await call(svc.checkpoints.listing(source, refresh=refresh))
+        runs = [r for r in lst.runs if not name or name.lower() in r.name.lower()]
+
+        def file(f: Any) -> dict[str, Any]:
+            d = {"path": f.path, "size": f.size, "mtime": f.mtime.isoformat()}
+            if f.runs:
+                d["runs"] = f.runs.model_dump()
+            return d
+
+        return {
+            "source": lst.source,
+            "machine": lst.machine,
+            "root": lst.root,
+            "size": lst.size,
+            "count": lst.count,
+            "error": lst.error,
+            "runs_total": len(runs),
+            "runs": [
+                {
+                    "name": r.name,
+                    "size": r.size,
+                    "mtime": r.mtime.isoformat() if r.mtime else None,
+                    "groups": {g.name: [file(f) for f in g.files] for g in r.groups},
+                    **({"others": [file(f) for f in r.others]} if r.others else {}),
+                }
+                for r in runs[:limit]
+            ],
+        }
 
     @mcp.tool(
         annotations=READ,
@@ -385,9 +458,18 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        checkpoint: CheckpointArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
-            project, machine, image, venv, config, overrides, cuda_visible_devices, params
+            project,
+            machine,
+            image,
+            venv,
+            config,
+            overrides,
+            cuda_visible_devices,
+            params,
+            checkpoint,
         )
         run = await call(svc.launch(sel, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
         return run_summary(run)
@@ -415,6 +497,17 @@ def build_mcp(
     )
     async def stop_run(run_id: RunIdArg) -> dict[str, Any]:
         return run_summary(await call(svc.stop(run_id, wait=STOP_WAIT_S)))
+
+    @mcp.tool(
+        annotations=WRITE,
+        description="Mark an active run as finished (status failed, explicit error) without "
+        "running anything on the machine: for a run stuck active while its machine is down "
+        "or its container is dead. If the container turns out to be running when the "
+        "machine answers again, the run shows as running again. Use stop_run for a run "
+        "that is really running.",
+    )
+    async def force_finish_run(run_id: RunIdArg) -> dict[str, Any]:
+        return run_summary(await call(svc.force_finish(run_id)))
 
     @mcp.tool(
         annotations=WRITE,
@@ -482,6 +575,7 @@ def _selection(
     overrides: list[str] | None,
     cuda: str | None,
     params: dict[str, str] | None = None,
+    checkpoint: str | None = None,
 ) -> Selection:
     return Selection(
         project=project,
@@ -492,6 +586,7 @@ def _selection(
         overrides=overrides or [],
         cuda_visible_devices=cuda,
         params=params or {},
+        checkpoint=checkpoint,
     )
 
 
@@ -506,5 +601,7 @@ READ_TOOLS = frozenset(
         "get_logs",
         "wait_run",
         "get_gpus",
+        "list_checkpoint_sources",
+        "list_checkpoints",
     }
 )

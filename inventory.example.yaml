@@ -64,3 +64,22 @@ projects:
       pattern: "*.yaml"          # optional
       exclude: ["hydra/*"]       # optional: relative paths to ignore (glob)
       # static: [baseline]       # optional: configs added to the list
+
+  # Inference: inherits everything from segmentation (machines, docker options, configs…)
+  # except id and label; docker options are merged key by key.
+  # {checkpoint}: chosen in the Checkpoints tab, translated to the container path through
+  # the volumes (/home/alice/seg → /workspace/seg).
+  # - id: seg-infer
+  #   label: Segmentation — inference
+  #   extends: segmentation
+  #   command: python infer.py --config-name {config} --ckpt {checkpoint}
+
+# Checkpoint sources (Checkpoints tab): run directories on disk, launched by TrainHub or not.
+# checkpoints:
+#   - id: seg-outputs
+#     label: Segmentation outputs
+#     machine: gpu-01                   # where find and rm run
+#     root: /home/alice/seg/outputs     # absolute, on the machine
+#     # {name}: one directory per run; {group}: optional level (topk, last…);
+#     # last component: file pattern
+#     layout: "{name}/checkpoints/{group}/*.ckpt"

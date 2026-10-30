@@ -26,7 +26,9 @@ from ..core.commands import RunSpec
 from ..core.ids import new_run_id
 from ..core.logs_clean import clean_logs
 from ..core.models import (
+    ACTIVE_STATUSES,
     FINISHED_STATUSES,
+    PLACEHOLDER_RE,
     ConfigDiscover,
     Inventory,
     Machine,
@@ -147,6 +149,7 @@ class RunAction(StrEnum):
     RESTART = "restart"
     RELAUNCH = "relaunch"
     CLOSE = "close"
+    FORCE_FINISH = "force_finish"
 
 
 #: Allowed starting statuses for each action (section 4.2).
@@ -157,6 +160,7 @@ ALLOWED_FROM: dict[str, frozenset[RunStatus]] = {
     RunAction.RESTART: FINISHED_STATUSES,
     RunAction.RELAUNCH: FINISHED_STATUSES,
     RunAction.CLOSE: FINISHED_STATUSES,
+    RunAction.FORCE_FINISH: ACTIVE_STATUSES,
     "delete": FINISHED_STATUSES,
 }
 
@@ -167,6 +171,7 @@ _ACTION_LABELS = {
     RunAction.RESTART: "restart",
     RunAction.RELAUNCH: "relaunch",
     RunAction.CLOSE: "close the container of",
+    RunAction.FORCE_FINISH: "mark as finished",
     "delete": "delete",
 }
 
@@ -213,15 +218,19 @@ class RunService:
         )
         self.machine_status: dict[str, MachineStatus] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        #: Read-modify-write of a run in the database, atomic between coroutines.
+        self._write_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._config_cache: dict[
             tuple[str, str], tuple[float, datetime, list[str] | None, str | None]
         ] = {}
         self._project_commands: dict[str, str] = {}
         self._started = False
+        from .checkpoints import CheckpointService
         from .monitor import Monitor
 
         self.monitor = Monitor(self, poll_interval)
+        self.checkpoints = CheckpointService(self)
         self.executor.update_inventory(self.inventory)
         self.inv_mgr.on_change(self._on_inventory_change)
 
@@ -266,6 +275,7 @@ class RunService:
     def _on_inventory_change(self, inv: Inventory) -> None:
         self.executor.update_inventory(inv)
         self._config_cache.clear()
+        self.checkpoints.clear()
         self.monitor.sync_machines()
         self.bus.publish(
             "inventory.updated", {"inventory": self.inventory_view().model_dump(mode="json")}
@@ -293,13 +303,14 @@ class RunService:
         inv = self.inventory
         venvs = inv.allowed_venvs(p)
         override = self._project_commands.get(p.id)
+        command = override or p.command
         return ProjectView(
             id=p.id,
             label=p.display,
-            command=override or p.command,
+            command=command,
             yaml_command=p.command,
             command_overridden=override is not None and override != p.command,
-            params=command_params(override or p.command),
+            params=command_params(command),
             workdir=p.workdir,
             machines=[m.id for m in inv.allowed_machines(p)],
             images=[i.id for i in inv.allowed_images(p)],
@@ -308,6 +319,8 @@ class RunService:
             static_configs=p.configs.static,
             discover=p.configs.discover is not None,
             docker=p.docker,
+            extends=p.extends,
+            accepts_checkpoint="checkpoint" in PLACEHOLDER_RE.findall(command),
         )
 
     def machine_state(self, machine_id: str) -> MachineStatus:
@@ -335,6 +348,7 @@ class RunService:
                 VenvView(id=v.id, path=v.path, label=v.label, images=v.images) for v in inv.venvs
             ],
             projects=[self.project_view(p) for p in inv.projects],
+            checkpoint_sources=self.checkpoints.sources(),
             error=self.inv_mgr.error,
             executor=self.executor.kind,
         )
@@ -461,6 +475,7 @@ class RunService:
                 overrides=sel.overrides,
                 cuda_visible_devices=sel.cuda_visible_devices,
                 params=sel.params,
+                checkpoint=sel.checkpoint,
             )
             cmd.validate_spec(spec)
         except UnknownResourceError as exc:
@@ -529,6 +544,7 @@ class RunService:
             overrides=list(spec.overrides),
             cuda_visible_devices=spec.cuda_visible_devices,
             params=dict(spec.params),
+            checkpoint=spec.checkpoint,
         )
         lock = self._lock(run_id)
         await lock.acquire()
@@ -685,6 +701,8 @@ class RunService:
             return await self.restart(run_id)
         if act is RunAction.CLOSE:
             return await self.close_container(run_id)
+        if act is RunAction.FORCE_FINISH:
+            return await self.force_finish(run_id)
         return await self.relaunch(run_id, source=source, wait=wait)
 
     async def pause(self, run_id: str) -> Run:
@@ -730,6 +748,33 @@ class RunService:
         await self._wait(task, wait)
         return await self.get_run(run_id)
 
+    async def force_finish(self, run_id: str) -> Run:
+        """Move an active run to the finished runs without touching the machine.
+
+        For a run whose container or machine is dead while TrainHub cannot see it (machine
+        down, container killed in a state TrainHub does not recognize): nothing is run on the
+        machine, the run becomes ``failed`` with an explicit error, even if an action is
+        stuck on it. If the machine answers later with the container really running or
+        paused, monitoring shows it as such again (as for a restart outside TrainHub).
+        """
+        run = await self.get_run(run_id)
+        self._check_allowed(run, RunAction.FORCE_FINISH)
+        reachable = self.machine_state(run.machine_id).reachable
+        why = "machine unreachable" if reachable is False else "container state unknown"
+        run = await self._update(
+            run,
+            status=RunStatus.FAILED,
+            error=f"marked as finished by hand (was {run.status}, {why}): actual outcome unknown",
+            finished_at=utcnow(),
+            exit_code=None,
+            stop_requested=False,
+            container_alive=False,
+            **_close_pause(run),
+        )
+        self.logs.finish(run.id)
+        log.info("run marked as finished by hand", extra={"run_id": run.id})
+        return run
+
     async def _do_stop(self, run: Run, previous: RunStatus, lock: asyncio.Lock) -> None:
         try:
             timeout = self._stop_timeout(run)
@@ -747,6 +792,7 @@ class RunService:
                 # in “stopping” when the machine comes back; the user can try again.
                 await self._update(
                     run,
+                    only_if_active=True,
                     status=RunStatus.UNREACHABLE if isinstance(exc, UnreachableError) else previous,
                     error=f"stop failed: {exc.message}",
                     stop_requested=False,
@@ -754,7 +800,8 @@ class RunService:
                 return
             if not res.ok:
                 await self._update(
-                    run, status=previous, error=f"stop failed: {res.error_message()}",
+                    run, only_if_active=True, status=previous,
+                    error=f"stop failed: {res.error_message()}",
                     stop_requested=False,
                 )  # fmt: skip
                 return
@@ -878,6 +925,10 @@ class RunService:
                 for k, v in run.params.items()
                 if k in command_params(self.project_command(run.project_id))
             },
+            # dropped if the current command no longer takes a {checkpoint}
+            checkpoint=run.checkpoint
+            if "checkpoint" in PLACEHOLDER_RE.findall(self.project_command(run.project_id))
+            else None,
         )
         return await self.launch(sel, source=source, wait=wait)
 
@@ -1125,23 +1176,31 @@ class RunService:
     def _publish_run(self, type_: str, run: Run) -> None:
         self.bus.publish(type_, {"run": RunView.of(run).model_dump(mode="json")})
 
-    async def _update(self, run: Run, **changes: Any) -> Run:
-        """Apply changes, persist and publish ``run.updated`` if needed."""
-        fresh = await self.store.get_run(run.id)
-        if fresh is None:
-            return run
-        updated = fresh.model_copy(update=changes)
-        if updated != fresh:
+    async def _update(self, run: Run, *, only_if_active: bool = False, **changes: Any) -> Run:
+        """Apply changes, persist and publish ``run.updated`` if needed.
+
+        ``only_if_active``: nothing is changed if the run has finished meanwhile (marked as
+        finished by hand while an action was in progress).
+        """
+        async with self._write_lock:
+            fresh = await self.store.get_run(run.id)
+            if fresh is None:
+                return run
+            if only_if_active and not fresh.status.is_active:
+                return fresh
+            updated = fresh.model_copy(update=changes)
+            if updated == fresh:
+                return updated
             await self.store.save_run(updated)
             self._publish_run("run.updated", updated)
-            if updated.status != fresh.status:
-                log.info(
-                    "run %s: %s → %s",
-                    run.id,
-                    fresh.status,
-                    updated.status,
-                    extra={"run_id": run.id, "from": str(fresh.status), "to": str(updated.status)},
-                )
+        if updated.status != fresh.status:
+            log.info(
+                "run %s: %s → %s",
+                run.id,
+                fresh.status,
+                updated.status,
+                extra={"run_id": run.id, "from": str(fresh.status), "to": str(updated.status)},
+            )
         return updated
 
     def set_machine_status(
@@ -1176,7 +1235,10 @@ class RunService:
             if self.is_busy(run.id):
                 continue
             await self._update(
-                run, status=RunStatus.UNREACHABLE, error=f"machine unreachable: {reason}"
+                run,
+                only_if_active=True,
+                status=RunStatus.UNREACHABLE,
+                error=f"machine unreachable: {reason}",
             )
 
     async def apply_container_states(
@@ -1301,6 +1363,7 @@ class RunService:
             paused_at=utcnow() if status is RunStatus.PAUSED else None,
             source=RunSource.IMPORT,
             container_alive=(st or c).alive,
+            checkpoint=labels.get(cmd.LABEL_CHECKPOINT) or None,
         )
         await self.store.save_run(run)
         self._publish_run("run.created", run)
