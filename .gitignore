@@ -4,11 +4,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
-dist/
+/dist/
 build/
 *.egg-info/
 node_modules/
-web/dist/
 .trainhub/
 data/
 dev/ssh/

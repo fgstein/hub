@@ -55,12 +55,11 @@ The original specification is issue #1 of the repository; choices and deviations
 
 ## Install and run
 
-From the `trainhubX.Y.Z.zip` archive (built with `make zip`). It already contains the built web
-interface: installing only needs Python 3.11+ and access to the Python packages (PyPI or a
-mirror); no Node, no Docker on the TrainHub side.
+The built web interface is committed in `web/dist`: installing only needs Python 3.11+ and
+access to the Python packages (PyPI or a mirror); no Node, no Docker on the TrainHub side.
 
 ```bash
-unzip trainhub0.1.0.zip && cd trainhub
+git clone https://github.com/fgstein/hub.git trainhub && cd trainhub
 python3 -m venv .venv && .venv/bin/pip install .   # or: uv sync --no-dev
 .venv/bin/trainhub serve                            # or: uv run --no-dev trainhub serve
 ```
@@ -525,8 +524,11 @@ make test      # pytest + vitest
 make e2e       # Playwright (fake mode)
 make build     # front end + Python package
 make image     # trainhub:latest Docker image
-make zip       # ../trainhubX.Y.Z.zip: repo without git-ignored files + built front end
+make zip       # ../trainhubX.Y.Z.zip: repo without git-ignored files (same content as a clone)
 ```
+
+`web/dist` (the built front end) is committed so that a clone works without Node: after any
+change under `web/`, run `make build-web` and commit `web/dist` with it. CI fails otherwise.
 
 The Docker (`tests/test_local_docker.py`) and SSH (`tests/test_sim_ssh.py`) integration tests
 are skipped automatically if Docker, the test image or the simulated machines are missing.

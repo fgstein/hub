@@ -4,9 +4,9 @@ The file list comes from git (tracked files plus untracked ones that are not ign
 .gitignore decides what stays out: .venv, caches, node_modules, .trainhub (database, logs),
 dev/ssh (keys)… .claude/ is skipped as well. Uncommitted changes are included.
 
-The built front end (web/dist, git-ignored) is added as src/trainhub/static, inside the
-package: `pip install .` or `uv sync` from the archive then serves the interface without Node.
-Build it first (`make zip` runs `make build-web`).
+The built front end (web/dist) is committed and packaged as trainhub/static (pyproject.toml):
+`pip install .` or `uv sync` from the archive then serves the interface without Node.
+`make zip` rebuilds it first (`make build-web`).
 
 The archive is named trainhubX.Y.Z.zip, X.Y.Z being the version in pyproject.toml, and its
 entries live under a top-level `trainhub/` folder, so unzipping it gives one directory.
@@ -28,9 +28,8 @@ NAME = "trainhub"
 
 # Paths relative to the repository root; a directory excludes everything in it.
 EXCLUDED_PATHS = [Path(".claude")]
-# Built front end, and where it goes in the archive (found there by api.app.find_static_dir).
+# Built front end, committed (packaged as trainhub/static by pyproject.toml).
 WEB_DIST = ROOT / "web" / "dist"
-STATIC_IN_PACKAGE = Path("src/trainhub/static")
 
 
 def read_version() -> str:
@@ -74,10 +73,6 @@ def main() -> None:
                 continue
             zf.write(ROOT / rel, Path(NAME) / rel)
             count += 1
-        for path in sorted(WEB_DIST.rglob("*")):
-            if path.is_file():
-                zf.write(path, Path(NAME) / STATIC_IN_PACKAGE / path.relative_to(WEB_DIST))
-                count += 1
 
     print(f"Wrote {count} files to {out}")
 

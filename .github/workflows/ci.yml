@@ -42,6 +42,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Committed web/dist matches the sources (see CLAUDE.md)
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            git status --short -- dist
+            echo "::error::web/dist is out of date: run 'make build-web' and commit web/dist"
+            exit 1
+          fi
       - name: Bundle size (< 300 kB gzip excluding xterm)
         run: |
           size=$(for f in dist/assets/index-*.js; do gzip -c "$f" | wc -c; done | awk '{s+=$1} END {print s}')
