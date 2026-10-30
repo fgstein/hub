@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 from .client import TrainHub
 from .core.models import Run, RunSource, RunStatus
