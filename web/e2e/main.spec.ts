@@ -305,8 +305,12 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
 
   const runA = page.locator("[data-testid=ckpt-run][data-run=run_a]")
   await runA.getByRole("button").first().click()
-  const topk = runA.locator("[data-testid=ckpt-group][data-group=topk]")
-  const file = topk.getByTestId("ckpt-file").first()
+  // checkpoints in a single list, each labelled with its group
+  const topk = runA
+    .getByTestId("ckpt-file")
+    .filter({ has: page.getByTestId("ckpt-file-group").getByText("topk", { exact: true }) })
+  await expect(topk).toHaveCount(3)
+  const file = topk.first()
   const path = await file.getAttribute("data-path")
   await file.click()
   await expect(page.getByTestId("ckpt-send-bar")).toContainText("1 checkpoint selected")
@@ -323,11 +327,11 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   // the checkpoint now shows the run launched with it
   await page.getByTestId("tab-checkpoints").click()
   await runA.getByRole("button").first().click()
-  await expect(topk.locator(`[data-path="${path}"]`).getByTestId("ckpt-file-runs")).toHaveText("⟲ 1")
+  await expect(runA.locator(`[data-path="${path}"]`).getByTestId("ckpt-file-runs")).toHaveText("⟲ 1")
 
-  // delete mode: a whole group, a partial slide does nothing, the full slide deletes
+  // delete mode: the checkpoints of a group, a partial slide does nothing, the full slide deletes
   await page.getByTestId("ckpt-delete-mode").click()
-  await topk.getByTestId("ckpt-group-check").check()
+  for (const check of await topk.getByTestId("ckpt-file-check").all()) await check.check()
   await expect(page.getByTestId("ckpt-delete-summary")).toContainText("1 group, 3 checkpoints in 1 run")
   const handle = page.getByTestId("ckpt-slide-handle")
   const box = (await handle.boundingBox())!
@@ -335,7 +339,7 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   await page.mouse.down()
   await page.mouse.move(box.x + 120, box.y + 10, { steps: 5 })
   await page.mouse.up()
-  await expect(topk.getByTestId("ckpt-file")).toHaveCount(3)
+  await expect(topk).toHaveCount(3)
   await handle.focus()
   for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight")
   await expect(page.getByText("3 checkpoints deleted")).toBeVisible()
