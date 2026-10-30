@@ -88,7 +88,7 @@ projects:
 # checkpoints:
 #   - id: seg-outputs
 #     label: Segmentation outputs
-#     machine: gpu-01                   # where find and rm run
+#     machine: gpu-01                   # where find and rm run (null: the TrainHub server)
 #     root: /home/alice/seg/outputs     # absolute, on the machine
 #     # {name}: one directory per run; {group}: optional level (topk, last…);
 #     # last component: file pattern

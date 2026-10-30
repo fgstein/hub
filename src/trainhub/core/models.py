@@ -420,7 +420,11 @@ class CheckpointSource(_Strict):
 
     id: str = Field(pattern=ID_PATTERN)
     label: str | None = None
-    machine: str = Field(description="Machine where the files are listed and deleted")
+    machine: str | None = Field(
+        default=None,
+        description="Machine where the files are listed and deleted; null (or omitted): the "
+        "host running the TrainHub server, without SSH",
+    )
     root: str = Field(min_length=1, description="Absolute directory of the runs, on the machine")
     layout: str = Field(
         default="{name}/checkpoints/{group}/*.ckpt",
@@ -555,7 +559,7 @@ class Inventory(_Strict):
                     if ref not in known:
                         raise ValueError(f"project '{p.id}': unknown {field[:-1]} '{ref}'")
         for c in self.checkpoints:
-            if c.machine not in machines:
+            if c.machine is not None and c.machine not in machines:
                 raise ValueError(f"checkpoints '{c.id}': unknown machine '{c.machine}'")
         return self
 

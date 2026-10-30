@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ..core import checkpoints as ck
-from ..core.models import CheckpointSource, UnknownResourceError
+from ..core.models import CheckpointSource, Machine, UnknownResourceError
 from ..core.status import utcnow
 from ..executors.base import ExecutorError, MachineUnreachableError
 from .schemas import (
@@ -32,6 +32,8 @@ log = logging.getLogger("trainhub.checkpoints")
 CHECKPOINT_CACHE_TTL_S = 300.0
 SCAN_TIMEOUT_S = 60.0
 DELETE_TIMEOUT_S = 120.0
+#: Machine of a source without ``machine``: the TrainHub host, commands run without SSH.
+SERVER_MACHINE = Machine(id="trainhub-server", label="TrainHub server", host="localhost")
 
 
 @dataclass
@@ -59,6 +61,9 @@ class CheckpointService:
             return self.svc.inventory.checkpoint_source(source_id)
         except UnknownResourceError as exc:
             raise NotFoundError(str(exc)) from exc
+
+    def _machine(self, src: CheckpointSource) -> Machine:
+        return SERVER_MACHINE if src.machine is None else self.svc._machine(src.machine)
 
     # -- views ---------------------------------------------------------------------------
 
@@ -95,7 +100,7 @@ class CheckpointService:
         ):
             return hit
         layout = ck.parse_layout(src.layout)
-        machine = self.svc._machine(src.machine)
+        machine = self._machine(src)
         error: str | None = None
         entries: list[ck.Entry] = []
         try:
@@ -141,7 +146,7 @@ class CheckpointService:
             {d for p in files if ck.is_group_dir(d := posixpath.dirname(p), layout)},
             key=lambda d: (-d.count("/"), d),
         )
-        machine = self.svc._machine(src.machine)
+        machine = self._machine(src)
         try:
             res = await self.svc.executor.exec(
                 machine, ck.delete_checkpoints(src.root, files, dirs), timeout=DELETE_TIMEOUT_S

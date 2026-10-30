@@ -348,7 +348,8 @@ Sources are declared at the top of the inventory, independently of the projects:
 checkpoints:
   - id: seg-outputs
     label: Segmentation outputs                 # optional
-    machine: gpu-01                             # where the files are listed and deleted
+    machine: gpu-01                             # where the files are listed and deleted;
+                                                # null or omitted: the TrainHub server itself
     root: /home/alice/seg/outputs               # absolute, on the machine
     layout: "{name}/checkpoints/{group}/*.ckpt" # default
 ```
@@ -371,6 +372,10 @@ still listed, as an “other” file of the run. Hidden directories are ignored.
   checkpoint shows how many runs were launched with it.
 
 Several sources may point to the same shared disk (NFS) from different machines.
+
+With `machine: null` (or no `machine`), `find` and `rm` run directly on the host of the TrainHub
+server, without SSH, with its user (in the Docker image, mount the directory into the container
+at the same path). Sending such a checkpoint to a project leaves the machine to pick in the draft.
 
 In the tab:
 

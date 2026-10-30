@@ -336,18 +336,19 @@ export function draftFromRun(runId: string): void {
 
 /**
  * Checkpoints tab → project: one draft per checkpoint (paths on the machine), on the source's
- * machine when the project allows it. Returns the number of drafts created.
+ * machine when the project allows it (``null``: source on the TrainHub server, the machine is
+ * left to the draft). Returns the number of drafts created.
  */
-export function draftsFromCheckpoints(projectId: string, machine: string, paths: string[]): number {
+export function draftsFromCheckpoints(projectId: string, machine: string | null, paths: string[]): number {
   const p = project(projectId)
   if (!p) return 0
-  const init: Partial<Draft> = p.machines.includes(machine) ? { machine } : {}
+  const init: Partial<Draft> = machine && p.machines.includes(machine) ? { machine } : {}
   batch(() => {
     paths.forEach((checkpoint, i) => {
       addDraft(projectId, { ...init, checkpoint, focus: i === paths.length - 1 })
     })
   })
-  if (!p.machines.includes(machine)) {
+  if (machine && !p.machines.includes(machine)) {
     toast(`machine ${machine} not allowed for ${p.label}: pick one in the drafts`, "error")
   }
   setActiveTab(projectId)

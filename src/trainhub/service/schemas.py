@@ -213,7 +213,7 @@ class CheckpointSourceView(BaseModel):
 
     id: str
     label: str
-    machine: str
+    machine: str | None = Field(description="null: the host running the TrainHub server")
     root: str
     layout: str
     size: int | None = Field(
@@ -256,7 +256,7 @@ class CheckpointRun(BaseModel):
 
 class CheckpointListing(BaseModel):
     source: str
-    machine: str
+    machine: str | None = Field(description="null: the host running the TrainHub server")
     root: str
     layout: str
     size: int = Field(description="Total size of the checkpoints of the source, in bytes")

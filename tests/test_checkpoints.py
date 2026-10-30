@@ -481,3 +481,52 @@ async def test_mcp(svc: RunService) -> None:
         assert run["status"] in ("running", "launching")
         detail = await call("get_run", run_id=run["id"])
         assert detail["checkpoint"] == f"{ROOT}/{path}"
+
+
+# -- source on the TrainHub server (machine: null) ---------------------------------------
+
+
+def test_inventory_source_without_machine() -> None:
+    inv = parse_inventory(
+        BASIC_INVENTORY + "checkpoints:\n  - {id: here, machine: null, root: /x}\n"
+        "  - {id: here2, root: /y}\n",
+        "t.yaml",
+    )
+    assert inv.checkpoint_source("here").machine is None
+    assert inv.checkpoint_source("here2").machine is None
+
+
+@pytest.mark.skipif(find_missing, reason="find/realpath missing")
+async def test_server_source_runs_locally_with_ssh_executor(tmp_path: Path) -> None:
+    from trainhub.executors.ssh import SshExecutor
+    from trainhub.service.checkpoints import SERVER_MACHINE
+
+    root = tmp_path / "out"
+    _tree(root)
+    ex = SshExecutor()
+    lay = ck.parse_layout("{name}/checkpoints/{group}/*.ckpt")
+    argv = ck.list_checkpoints(str(root), lay)
+    assert ex.full_argv(SERVER_MACHINE, argv) == argv  # no ssh
+    res = await ex.exec(SERVER_MACHINE, argv, timeout=10)
+    assert res.ok, res.err
+    assert len([e for e in ck.parse_listing(res.out) if e.kind == "f"]) == 5
+
+
+async def test_service_server_source(tmp_path: Path) -> None:
+    s = make_service(
+        tmp_path,
+        text=CKPT_INVENTORY.replace(
+            "\ncheckpoints:\n", f"\ncheckpoints:\n  - {{id: here, root: {ROOT}}}\n", 1
+        ),
+    )
+    await s.start()
+    try:
+        view = {v.id: v for v in s.checkpoints.sources()}["here"]
+        assert view.machine is None
+        lst = await s.checkpoints.listing("here")
+        assert lst.error is None and lst.machine is None and lst.count > 0
+        path = next(f.path for r in lst.runs for g in r.groups for f in g.files)
+        res = await s.checkpoints.delete("here", [path])
+        assert res.deleted == [path]
+    finally:
+        await s.close()

@@ -528,7 +528,7 @@ export function CheckpointsPage(props: { source?: string }) {
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-line-weaker px-4 py-2">
           <span class="min-w-0 truncate font-mono text-xs text-fg-weak" title={source()?.layout}>
-            {source()?.machine}:{source()?.root}
+            {source()?.machine ?? "TrainHub server"}:{source()?.root}
           </span>
           <Tip
             class="shrink-0 text-xs text-fg-weaker"

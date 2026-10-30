@@ -403,8 +403,11 @@ export interface components {
         CheckpointListing: {
             /** Source */
             source: string;
-            /** Machine */
-            machine: string;
+            /**
+             * Machine
+             * @description null: the host running the TrainHub server
+             */
+            machine: string | null;
             /** Root */
             root: string;
             /** Layout */
@@ -464,8 +467,11 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-            /** Machine */
-            machine: string;
+            /**
+             * Machine
+             * @description null: the host running the TrainHub server
+             */
+            machine: string | null;
             /** Root */
             root: string;
             /** Layout */
