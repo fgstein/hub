@@ -6,11 +6,13 @@ import { batch, createRoot, createSignal } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { ApiError, api } from "~/lib/api"
 import { shellJoin, splitArgs } from "~/lib/command"
+import { draftSeries, type RangeDraft, seriesRequest } from "~/lib/series"
 import type {
   ConfigList,
   InventoryView,
   LastSelection,
   MachineGpus,
+  MachineLoad,
   MachineStatus,
   ProjectView,
   RunAction,
@@ -40,9 +42,17 @@ export interface Draft {
   params: Record<string, string>
   /** ``{checkpoint}``: path on the machine (sent from the Checkpoints tab, or typed). */
   checkpoint: string
+  /** Number of runs in a row, in the same container (empty: 1). */
+  count: string
+  /** Parameters drawn at random for each run of the series, with their range. */
+  random: Record<string, RangeDraft | undefined>
+  /** Series: go on with the next runs after a failure (default: stop). */
+  continueOnFailure: boolean
   launching: boolean
   /** Draft created by “Relaunch”: highlighted and scrolled into view. */
   focus?: boolean
+  /** Machine already chosen (Machines tab): do not open the machine list. */
+  noAutofocus?: boolean
 }
 
 interface AppState {
@@ -268,10 +278,26 @@ export function addDraft(projectId: string, init: Partial<Draft> = {}): void {
     overrides: "",
     params: { ...(last.params ?? {}) },
     checkpoint: "",
+    count: "",
+    random: {},
+    continueOnFailure: false,
     launching: false,
     ...init,
   }
   setState("drafts", projectId, (d) => [...(d ?? []), draft])
+}
+
+/** New draft on a machine and one of its GPUs (Machines tab), in an open, active tab. */
+export function draftOnGpu(projectId: string, machine: string, gpu: number): void {
+  const p = project(projectId)
+  if (!p) return
+  setActiveTab(projectId)
+  addDraft(projectId, {
+    machine: p.machines.includes(machine) ? machine : null,
+    cuda: String(gpu),
+    focus: true,
+    noAutofocus: true,
+  })
 }
 
 /** “Relaunch”: new draft with the same choices as the run (nothing is launched). */
@@ -296,6 +322,7 @@ export function draftFromRun(runId: string): void {
     overrides: shellJoin(r.overrides ?? []),
     params: { ...(state.ui.last_selection?.[r.project_id]?.params ?? {}), ...(r.params ?? {}) },
     checkpoint: p.accepts_checkpoint ? (r.checkpoint ?? "") : "",
+    ...draftSeries(r.series),
     focus: true,
   })
   if (state.ui.active_tab !== r.project_id) setActiveTab(r.project_id)
@@ -378,10 +405,16 @@ export function removeDraft(projectId: string, key: number): void {
 export function draftParamErrors(projectId: string, d: Draft): Record<string, string> {
   const out: Record<string, string> = {}
   for (const k of project(projectId)?.params ?? []) {
+    if (d.random[k]) continue // drawn at random: the range is checked by draftSeries
     const err = splitArgs(d.params[k] ?? "").error
     if (err) out[k] = err
   }
   return out
+}
+
+/** Series of a draft (null: a single run) and its errors (``count`` or a parameter name). */
+export function draftSeriesRequest(projectId: string, d: Draft) {
+  return seriesRequest(d.count, d.random, d.continueOnFailure, project(projectId)?.params ?? [])
 }
 
 export function draftSelection(projectId: string, d: Draft): Selection | null {
@@ -390,6 +423,8 @@ export function draftSelection(projectId: string, d: Draft): Selection | null {
   if (takesCheckpoint && !d.checkpoint.trim()) return null
   const { args, error } = splitArgs(d.overrides)
   if (error || Object.keys(draftParamErrors(projectId, d)).length) return null
+  const series = draftSeriesRequest(projectId, d)
+  if (Object.keys(series.errors).length) return null
   const names = project(projectId)?.params ?? []
   return {
     project: projectId,
@@ -401,6 +436,7 @@ export function draftSelection(projectId: string, d: Draft): Selection | null {
     cuda_visible_devices: d.cuda.trim() || null,
     params: Object.fromEntries(names.map((k) => [k, d.params[k] ?? ""])),
     checkpoint: takesCheckpoint ? d.checkpoint.trim() : null,
+    series: series.request,
   }
 }
 
@@ -411,6 +447,7 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
   if (!sel) {
     const err = splitArgs(d.overrides).error
     const paramErr = Object.entries(draftParamErrors(projectId, d))[0]
+    const seriesErr = Object.entries(draftSeriesRequest(projectId, d).errors)[0]
     toast(
       err
         ? `invalid overrides: ${err}`
@@ -418,7 +455,11 @@ export async function launchDraft(projectId: string, key: number): Promise<void>
           ? `invalid parameter {${paramErr[0]}}: ${paramErr[1]}`
           : project(projectId)?.accepts_checkpoint && !d.checkpoint.trim()
             ? "choose a checkpoint (Checkpoints tab)"
-            : "incomplete selection: machine, image, venv and config are required",
+            : seriesErr
+              ? seriesErr[0] === "count"
+                ? `invalid ${seriesErr[1]}`
+                : `invalid range of {${seriesErr[0]}}: ${seriesErr[1]}`
+              : "incomplete selection: machine, image, venv and config are required",
       "error",
     )
     return
@@ -564,6 +605,32 @@ export async function loadGpus(machine: string, maxAgeMs = 5000) {
     setGpusCache(machine, {
       loading: false,
       data: undefined,
+      error: e instanceof Error ? e.message : String(e),
+      at: Date.now(),
+    })
+  }
+}
+
+// --------------------------------------------------------------------------- machine load
+
+/** CPU/GPU load per machine (``/proc`` + ``nvidia-smi``), refreshed by the Machines tab. */
+const [loadCache, setLoadCache] = createStore<
+  Record<string, { loading: boolean; data?: MachineLoad; error?: string; at?: number }>
+>({})
+
+export { loadCache }
+
+/** Reload the load of a machine unless it is being loaded (one request at a time). */
+export async function loadMachine(machine: string) {
+  const cur = loadCache[machine]
+  if (cur?.loading) return
+  setLoadCache(machine, { ...cur, loading: true })
+  try {
+    const data = await api.load(machine)
+    setLoadCache(machine, { loading: false, data, error: undefined, at: Date.now() })
+  } catch (e) {
+    setLoadCache(machine, {
+      loading: false,
       error: e instanceof Error ? e.message : String(e),
       at: Date.now(),
     })

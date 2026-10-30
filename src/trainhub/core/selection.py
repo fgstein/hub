@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import posixpath
 from collections.abc import Mapping, Sequence
 
 from .checkpoints import container_path
 from .commands import RunSpec
-from .models import Inventory, command_params
+from .models import Inventory, Series, command_params
 
 
 class SelectionError(ValueError):
@@ -28,6 +29,7 @@ def make_spec(
     cuda_visible_devices: str | None = None,
     params: Mapping[str, str] | None = None,
     checkpoint: str | None = None,
+    series: Series | None = None,
 ) -> RunSpec:
     """Build a :class:`RunSpec`, checking the resources allowed for the project.
 
@@ -46,6 +48,13 @@ def make_spec(
             f"parameter(s) not in the command: {', '.join(unknown)}; "
             f"command parameters: {', '.join(wanted) or 'none'}"
         )
+    if series is not None:
+        varying = sorted({k for values in series.values for k in values} - set(wanted))
+        if varying:
+            raise SelectionError(
+                f"series: parameter(s) not in the command: {', '.join(varying)}; "
+                f"command parameters: {', '.join(wanted) or 'none'}"
+            )
     machines = [x.id for x in inv.allowed_machines(proj)]
     if m.id not in machines:
         raise SelectionError(
@@ -68,6 +77,13 @@ def make_spec(
         if not ckpt.startswith("/") or any(ord(c) < 32 for c in ckpt):
             raise SelectionError(f"checkpoint: absolute path on the machine expected: {ckpt!r}")
         ckpt = posixpath.normpath(ckpt)
+    extra_env: dict[str, str] = {}
+    ml = inv.mlflow_config(proj)
+    if ml is not None and ml.inject_env:
+        # MLflow adds the tags of MLFLOW_RUN_CONTEXT to every run it creates
+        # (fluent API and Lightning's MLFlowLogger): no change needed in the training code.
+        extra_env["TRAINHUB_RUN_ID"] = run_id
+        extra_env["MLFLOW_RUN_CONTEXT"] = json.dumps({ml.run_tag: run_id})
     return RunSpec(
         run_id=run_id,
         project=proj,
@@ -81,4 +97,6 @@ def make_spec(
         params={k: (params or {}).get(k, "") for k in wanted},
         checkpoint=ckpt,
         checkpoint_in_container=container_path(ckpt, proj.docker.volumes) if ckpt else None,
+        extra_env=extra_env,
+        series=series,
     )

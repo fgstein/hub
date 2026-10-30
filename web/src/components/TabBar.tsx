@@ -4,12 +4,13 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { formatBytes } from "~/lib/format"
 import { activeCount, closeTab, moveTab, project, setActiveTab, state } from "~/stores/app"
 import { cycleTheme, themePref } from "~/stores/theme"
-import { IconClose, IconDatabase, IconMonitor, IconMoon, IconPlus, IconSun } from "./Icons"
+import { IconClose, IconDatabase, IconMonitor, IconMoon, IconPlus, IconServer, IconSun } from "./Icons"
 
 export function TabBar() {
   const navigate = useNavigate()
   const location = useLocation()
   const onCheckpoints = () => location.pathname.startsWith("/checkpoints")
+  const onMachines = () => location.pathname === "/machines"
   const [dragging, setDragging] = createSignal<string | null>(null)
   const [dropIndex, setDropIndex] = createSignal<number | null>(null)
 
@@ -28,6 +29,22 @@ export function TabBar() {
       aria-label="Projects"
       data-testid="tabbar"
     >
+      <button
+        type="button"
+        class="relative flex shrink-0 items-center gap-1.5 border-r border-line-weak px-3 text-sm"
+        classList={{ "bg-bg text-fg-strong": onMachines(), "text-fg hover:text-fg-strong": !onMachines() }}
+        onClick={() => navigate("/machines")}
+        aria-current={onMachines() ? "page" : undefined}
+        title="CPU and GPU load of the machines"
+        data-testid="tab-machines"
+      >
+        <Show when={onMachines()}>
+          <span class="absolute inset-x-0 bottom-[-1px] h-px bg-bg" />
+          <span class="absolute inset-x-0 top-0 h-px bg-fg-strong opacity-60" />
+        </Show>
+        <IconServer size={13} />
+        <span class="font-medium">Machines</span>
+      </button>
       <div class="flex min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]" role="tablist">
         <Show when={state.inventory?.checkpoint_sources?.length}>
           <CheckpointsTab active={onCheckpoints()} onClick={() => navigate("/checkpoints")} />
@@ -35,7 +52,7 @@ export function TabBar() {
         <For each={state.ui.open_tabs}>
           {(id, index) => {
             const p = () => project(id)
-            const active = () => !onCheckpoints() && state.ui.active_tab === id
+            const active = () => !onCheckpoints() && !onMachines() && state.ui.active_tab === id
             const count = () => activeCount(id)
             return (
               <div

@@ -19,7 +19,7 @@ from ..core.logs_clean import readable_logs
 from ..core.models import Run, RunSource, RunStatus
 from ..core.status import elapsed_seconds, format_duration, paused_seconds
 from ..service import RunService, ServiceError, allowed_actions
-from ..service.schemas import Selection
+from ..service.schemas import Selection, SeriesRequest
 
 INSTRUCTIONS = """\
 TrainHub launches and monitors training commands on remote GPU machines
@@ -31,6 +31,8 @@ cuda_visible_devices). Projects whose command contains {checkpoint} (accepts_che
 e.g. inference) take a checkpoint path: find one with list_checkpoint_sources and
 list_checkpoints. Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
+To run the same command several times in a row (e.g. with different seeds), pass series
+to launch_run: one run, one container, the repetitions one after the other.
 """
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -74,6 +76,28 @@ CheckpointArg = Annotated[
         "from list_checkpoints), for a project whose command contains {checkpoint}"
     ),
 ]
+SeriesArg = Annotated[
+    SeriesRequest | None,
+    Field(
+        description="Optional: repeat the run count times in a row, in the same container "
+        "(a single run). random: free parameters drawn at random for each repetition, e.g. "
+        '{"seed": {"min": 0, "max": 99999}}; the series stops at the first failure unless '
+        "continue_on_failure. Each repetition gets TRAINHUB_SERIES_INDEX (1, 2…)."
+    ),
+]
+
+
+def series_summary(run: Run) -> dict[str, Any] | None:
+    s = run.series
+    if s is None:
+        return None
+    return {
+        "count": s.count,
+        "current": s.current,
+        "exit_codes": s.exit_codes,
+        "values": s.values,
+        "continue_on_failure": s.continue_on_failure,
+    }
 
 
 def run_summary(run: Run) -> dict[str, Any]:
@@ -96,6 +120,7 @@ def run_summary(run: Run) -> dict[str, Any]:
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "container_alive": run.container_alive,
         "allowed_actions": allowed_actions(run.status, container_alive=run.container_alive),
+        "series": series_summary(run),
     }
 
 
@@ -225,6 +250,7 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        series: SeriesArg = None,
         checkpoint: CheckpointArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
@@ -236,6 +262,7 @@ def build_mcp(
             overrides,
             cuda_visible_devices,
             params,
+            series,
             checkpoint,
         )
         p = await call(svc.preview(sel))
@@ -437,6 +464,19 @@ def build_mcp(
 
         return list(await asyncio.gather(*(one(m) for m in ids)))
 
+    @mcp.tool(
+        annotations=READ,
+        description="Load of the inventory machines: CPU (usage of every core over 0.5 s, "
+        "load average, memory, from /proc) and GPUs (as get_gpus). An unreachable machine "
+        "has reachable false. Without machine: every machine, queried in parallel.",
+    )
+    async def get_machine_load(
+        machine: Annotated[str | None, Field(description="Machine id")] = None,
+    ) -> list[dict[str, Any]]:
+        ids = [machine] if machine is not None else [m.id for m in svc.inventory.machines]
+        loads = await asyncio.gather(*(call(svc.machine_load(m)) for m in ids))
+        return [x.model_dump(mode="json") for x in loads]
+
     if readonly:
         return mcp
 
@@ -458,6 +498,7 @@ def build_mcp(
         overrides: OverridesArg = None,
         cuda_visible_devices: CudaArg = None,
         params: ParamsArg = None,
+        series: SeriesArg = None,
         checkpoint: CheckpointArg = None,
     ) -> dict[str, Any]:
         sel = _selection(
@@ -469,6 +510,7 @@ def build_mcp(
             overrides,
             cuda_visible_devices,
             params,
+            series,
             checkpoint,
         )
         run = await call(svc.launch(sel, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
@@ -521,7 +563,8 @@ def build_mcp(
     @mcp.tool(
         annotations=WRITE,
         description="Create a new run with the same parameters (project, machine, image, "
-        "venv, config, overrides) and the current project command. Finished status required.",
+        "venv, config, overrides, series with the same values) and the current project "
+        "command. Finished status required.",
     )
     async def relaunch_run(run_id: RunIdArg) -> dict[str, Any]:
         run = await call(svc.relaunch(run_id, source=RunSource.MCP, wait=LAUNCH_WAIT_S))
@@ -575,6 +618,7 @@ def _selection(
     overrides: list[str] | None,
     cuda: str | None,
     params: dict[str, str] | None = None,
+    series: SeriesRequest | None = None,
     checkpoint: str | None = None,
 ) -> Selection:
     return Selection(
@@ -586,6 +630,7 @@ def _selection(
         overrides=overrides or [],
         cuda_visible_devices=cuda,
         params=params or {},
+        series=series,
         checkpoint=checkpoint,
     )
 
@@ -603,5 +648,6 @@ READ_TOOLS = frozenset(
         "get_gpus",
         "list_checkpoint_sources",
         "list_checkpoints",
+        "get_machine_load",
     }
 )

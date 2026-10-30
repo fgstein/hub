@@ -168,3 +168,28 @@ export const IconFlag = (p: P) => (
     <path d="M4 14V2.5M4 3h7.5l-1.8 2.75L11.5 8.5H4" />
   </Svg>
 )
+export const IconExternal = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 3h4v4M13 3 7.5 8.5M11.5 9.5v3a.5.5 0 0 1-.5.5H3.5a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h3" />
+  </Svg>
+)
+export const IconServer = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.5" y="2.5" width="11" height="4.5" rx="1" />
+    <rect x="2.5" y="9" width="11" height="4.5" rx="1" />
+    <path d="M5 4.75h.01M5 11.25h.01" />
+  </Svg>
+)
+export const IconDice = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+    <circle cx="5.75" cy="5.75" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="10.25" cy="10.25" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
+  </Svg>
+)
+export const IconRepeat = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 7.5V6a2 2 0 0 1 2-2h7.5M10.5 2l2 2-2 2M13 8.5V10a2 2 0 0 1-2 2H3.5M5.5 14l-2-2 2-2" />
+  </Svg>
+)

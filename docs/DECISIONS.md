@@ -246,6 +246,80 @@ stored in an existing SQLite database (e.g. `error` of old runs) are not rewritt
   mandatory file: `trainhub: file to source not found: …` and exit code 1, before the command
   starts. They are part of the setup steps, so they work with and without `keep_alive`.
 
+## Change — MLflow progress and status, Machines tab (October 16)
+
+Requests: read from MLflow a configurable parameter (maximum epoch) and metric (current epoch)
+to show a progress bar; color the status dot from MLflow (green: going well, red: failed,
+blue: finished); a tab showing the CPU and GPU load of every machine of the inventory.
+
+- **Link TrainHub run ↔ MLflow run: a tag** (`trainhub.run_id` by default, `run_tag`). To avoid
+  any change in the training code, TrainHub passes `MLFLOW_RUN_CONTEXT={"<run_tag>": "<id>"}`
+  to the container: MLflow's `SystemEnvironmentContext` adds these tags to every run created
+  (checked with MLflow 3.17; also used by Lightning's `MLFlowLogger`). `TRAINHUB_RUN_ID` is
+  passed too. A variable of the same name in `docker.env` wins. `inject_env: false` disables
+  it. **[to confirm]**
+- **REST API called directly** (`httpx`, already a dependency) rather than the `mlflow`
+  package (heavy). Search: `runs/search` with `tags.\`<run_tag>\` = '<id>' AND
+  attributes.start_time >= <run start − 5 min>` (after a restart, the previous MLflow run is
+  ignored), most recent first; once found, `runs/get` by id. Experiments: the listed names
+  (`get-by-name`), else all (`experiments/search`, cached 60 s). Checked against a real MLflow
+  3.17 server.
+- **Settings**: global `mlflow` section, overridable per project (`mlflow: {enabled: false}` to
+  disable one project). Defaults: parameter `max_epochs`, metric `epoch` (latest value),
+  `epoch_offset: 0`, polling every 10 s. Credentials: `MLFLOW_TRACKING_TOKEN` or
+  `MLFLOW_TRACKING_USERNAME`/`PASSWORD` in TrainHub's environment, never in the YAML.
+- **Persisted state**: `Run.mlflow` (run id, status, epoch, max epochs, UI link, last error),
+  `mlflow` column of the database, published with `run.updated`. Polled while the run is active,
+  then up to 10 min after the end until MLflow gives a final status. On an MLflow error the last
+  values are kept, with the error (tooltip, “mlflow ⚠”).
+- **Dot color** (front end, `lib/mlflow.ts`): running + RUNNING/SCHEDULED → green; FINISHED →
+  blue (also succeeded + RUNNING: MLflow lags behind); FAILED/KILLED → red; failed → red.
+  Launching, paused, stopping, stopped (grey, deliberate stop although MLflow says KILLED) and
+  unreachable keep their colors. Without MLflow information, the colors are unchanged. New
+  `--status-blue` token. **[to confirm]**
+- **Machines tab** (`/machines`, fixed tab left of the projects): `GET
+  /api/machines/{id}/load` runs one `sh -c` on the host (`/proc/loadavg`, two readings of
+  `/proc/stat` 0.5 s apart for the usage of each core, `/proc/meminfo`) and the two
+  `nvidia-smi` queries, in parallel. An unreachable machine is a `reachable: false` answer, not
+  an error. The front end queries each machine separately (a slow machine does not hold the
+  others) every 5 s while the tab is open and visible. Load is drawn with a single sequential
+  hue (`--load-full`), distinct from the status colors, always with the value written next to
+  it. MCP tool `get_machine_load`.
+- `fake` mode: simulated MLflow (state of the simulated training: epochs, FINISHED/FAILED/KILLED)
+  and simulated `/proc` (64 cores, ~8 busy cores per running command); enabled in
+  `dev/inventory.dev.yaml` (except `llm-finetune`).
+
+## Change — series: the same run several times in a row (October 22)
+
+Request: launch several identical runs in a row, with one field drawn at random (e.g. the
+seed); sequential; by default the series stops at the first failure, with an option to go on;
+all the runs in the same container; integer range; only command parameters can be drawn.
+
+- **One run, one container**: a series is a single TrainHub run whose script runs the command
+  `count` times. TrainHub's model is one run = one container (logs, pause, stop, monitoring,
+  import), so the repetitions are not separate runs; their state lives in `Run.series`
+  (`series` column, JSON): count, `continue_on_failure`, ranges, values of each repetition,
+  repetition in progress, exit codes.
+- **Script** (`commands._series_body`): the repetitions are unrolled (each one is the resolved
+  command with its values, run in the background like a single command, `SIGTERM` forwarded),
+  between a start and an end marker. A stop ends the series (also between two repetitions);
+  after a failure the next ones are skipped unless `continue_on_failure`. The final code (kept
+  container or not) is 0, or the code of the last failure. `TRAINHUB_SERIES_INDEX` is exported
+  for each repetition, and `MLFLOW_RUN_CONTEXT` gets `trainhub.series_index`.
+- **Progress** read from the markers in the logs (`SeriesTracker`, observer of the log hub): no
+  extra command on the machine. Logs read again from the start (new `docker logs` session) only
+  move the progress forward; restart resets it.
+- **Values drawn at launch** (server side, `SystemRandom`, distinct when the range allows it),
+  stored: a relaunch (API/MCP) reproduces them, the interface's “Relaunch…” draft keeps the
+  count and ranges and draws again. Default range `0`–`2³¹−1`. At most 100 repetitions.
+- **Interface**: `×` field (number of runs) next to “Launch”, die next to each parameter (the
+  value field becomes min – max), “continue after a failure” when there are several runs. Run
+  row: `2/5` and one cell per repetition (green running, blue succeeded, red failed), tooltip
+  with values and codes. The series settings are not remembered in the last selection.
+- MLflow: during an active series, the MLflow run is searched again at each poll (the latest
+  one carrying the TrainHub run id is the repetition in progress).
+- `fake` mode: labels `trainhub.series` / `trainhub.series_continue` on the container; the
+  simulation plays each repetition (its own MLflow run) with the markers of the real script.
 ## Addition — checkpoints and inference, server side (October 29)
 
 Request: infer on checkpoints without specializing TrainHub; a dedicated tab manages the runs

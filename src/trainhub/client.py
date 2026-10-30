@@ -23,7 +23,7 @@ from .config import Settings, find_inventory, require_inventory
 from .core.models import Run, RunSource, RunStatus
 from .executors import Executor, create_executor
 from .service import InventoryManager, RunService, Selection, Store
-from .service.schemas import CheckpointListing, ConfigList, PreviewResult
+from .service.schemas import CheckpointListing, ConfigList, PreviewResult, SeriesRequest
 
 
 class TrainHub:
@@ -132,9 +132,14 @@ class TrainHub:
         cuda_visible_devices: str | None = None,
         params: Mapping[str, str] | None = None,
         checkpoint: str | None = None,
+        series: SeriesRequest | None = None,
         wait: bool | float = True,
     ) -> Run:
-        """Launch a run; by default waits for ``docker run -d`` to finish."""
+        """Launch a run; by default waits for ``docker run -d`` to finish.
+
+        ``series``: repeat the command several times in a row in the container, e.g.
+        ``SeriesRequest(count=5, random={"seed": RandomRange()})``.
+        """
         await self.start()
         sel = Selection(
             project=project,
@@ -146,6 +151,7 @@ class TrainHub:
             cuda_visible_devices=cuda_visible_devices,
             params=dict(params or {}),
             checkpoint=checkpoint,
+            series=series,
         )
         return await self.service.launch(sel, source=self._source, wait=wait)
 

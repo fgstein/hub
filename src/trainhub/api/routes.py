@@ -20,6 +20,7 @@ from ..service.schemas import (
     Health,
     InventoryView,
     MachineGpus,
+    MachineLoad,
     PreviewResult,
     ProjectView,
     RunView,
@@ -65,6 +66,13 @@ async def inventory(svc: Svc) -> InventoryView:
 async def machine_gpus(machine_id: str, svc: Svc) -> MachineGpus:
     """GPUs of a machine (``nvidia-smi`` on the host) and the active runs placed on it."""
     return await svc.machine_gpus(machine_id)
+
+
+@router.get("/machines/{machine_id}/load", response_model=MachineLoad, tags=["inventory"])
+async def machine_load(machine_id: str, svc: Svc) -> MachineLoad:
+    """CPU (``/proc``) and GPU (``nvidia-smi``) load of a machine; an unreachable machine
+    is reported (``reachable: false``), not an error."""
+    return await svc.machine_load(machine_id)
 
 
 @router.get("/projects/{project_id}/configs", response_model=ConfigList, tags=["inventory"])

@@ -21,6 +21,7 @@ from .core.logs_clean import readable_logs
 from .core.models import Run, RunStatus, UnknownResourceError
 from .core.selection import make_spec
 from .core.status import elapsed_seconds, format_duration
+from .service.schemas import RandomRange, SeriesRequest
 
 
 def _inventory_path(args: argparse.Namespace) -> str:
@@ -53,6 +54,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
         cuda_visible_devices=args.gpus,
         params=_params(args),
         checkpoint=args.checkpoint,
+        series=series.plan() if (series := _series(args)) else None,
     )
     print(preview_exact(spec) if args.exact else preview(spec))
     return 0
@@ -97,6 +99,7 @@ async def _launch(args: argparse.Namespace) -> int:
             cuda_visible_devices=args.gpus,
             params=_params(args),
             checkpoint=args.checkpoint,
+            series=_series(args),
         )
         print(f"{run.id}  {run.status}  {run.container_name}", file=sys.stderr)
         if run.error:
@@ -192,6 +195,30 @@ def _params(args: argparse.Namespace) -> dict[str, str]:
     return out
 
 
+def _series(args: argparse.Namespace) -> SeriesRequest | None:
+    """``--repeat N --random seed[=MIN:MAX]`` → series request (``None``: run once)."""
+    if args.repeat is None and not args.random:
+        return None
+    ranges: dict[str, RandomRange] = {}
+    for item in args.random:
+        name, sep, bounds = item.partition("=")
+        lo, colon, hi = bounds.partition(":")
+        if not name or (sep and not colon):
+            raise SystemExit(f"--random expects NAME or NAME=MIN:MAX: {item!r}")
+        try:
+            ranges[name] = RandomRange(min=int(lo), max=int(hi)) if sep else RandomRange()
+        except ValueError as exc:
+            raise SystemExit(f"--random {item!r}: {exc}") from exc
+    try:
+        return SeriesRequest(
+            count=args.repeat or 1,
+            random=ranges,
+            continue_on_failure=args.continue_on_failure,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"invalid series: {exc}") from exc
+
+
 def _add_selection(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--project", required=True)
     p.add_argument("-m", "--machine", required=True)
@@ -207,6 +234,27 @@ def _add_selection(p: argparse.ArgumentParser) -> None:
         default=[],
         metavar="NAME=VALUE",
         help="Free command parameter ({name}), repeatable",
+    )
+    p.add_argument(
+        "-n",
+        "--repeat",
+        type=int,
+        metavar="N",
+        help="Run the command N times in a row, in the same container (a series)",
+    )
+    p.add_argument(
+        "-R",
+        "--random",
+        action="append",
+        default=[],
+        metavar="NAME[=MIN:MAX]",
+        help="Parameter drawn at random for each repetition (default range 0:2147483647), "
+        "repeatable",
+    )
+    p.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Series: go on with the next repetitions after a failure",
     )
     p.add_argument(
         "overrides",

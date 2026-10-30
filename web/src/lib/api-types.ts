@@ -64,6 +64,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/machines/{machine_id}/load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machine Load
+         * @description CPU (``/proc``) and GPU (``nvidia-smi``) load of a machine; an unreachable machine
+         *     is reported (``reachable: false``), not an error.
+         */
+        get: operations["machine_load_api_machines__machine_id__load_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/configs": {
         parameters: {
             query?: never;
@@ -495,6 +516,37 @@ export interface components {
             cached_at?: string | null;
         };
         /**
+         * CpuView
+         * @description CPU and memory of a machine (``/proc``, on the host).
+         */
+        CpuView: {
+            /** Cores */
+            cores: number;
+            /**
+             * Usage Pct
+             * @description Usage of all the cores, over 0.5 s
+             */
+            usage_pct: number;
+            /**
+             * Per Core Pct
+             * @description Usage of each core, over 0.5 s
+             */
+            per_core_pct: number[];
+            /**
+             * Load Avg
+             * @description 1, 5 and 15 min load
+             */
+            load_avg: [
+                number,
+                number,
+                number
+            ] | null;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
+        };
+        /**
          * DockerOptions
          * @description Project-specific ``docker run`` options.
          */
@@ -679,6 +731,8 @@ export interface components {
              * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
              */
             checkpoint?: string | null;
+            /** @description Repeat the run several times in a row (same container) */
+            series?: components["schemas"]["SeriesRequest"] | null;
             /** @default ui */
             source: components["schemas"]["RunSource"];
         };
@@ -694,6 +748,35 @@ export interface components {
             /** Active Runs */
             active_runs?: components["schemas"]["GpuRunView"][];
             /** Error */
+            error?: string | null;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+        };
+        /**
+         * MachineLoad
+         * @description CPU and GPU load of a machine, with the active TrainHub runs placed on it.
+         */
+        MachineLoad: {
+            /** Machine */
+            machine: string;
+            /** Reachable */
+            reachable: boolean;
+            cpu?: components["schemas"]["CpuView"] | null;
+            /** Cpu Error */
+            cpu_error?: string | null;
+            /** Gpus */
+            gpus?: components["schemas"]["GpuView"][];
+            /** Gpu Error */
+            gpu_error?: string | null;
+            /** Active Runs */
+            active_runs?: components["schemas"]["GpuRunView"][];
+            /**
+             * Error
+             * @description Machine unreachable
+             */
             error?: string | null;
             /**
              * Checked At
@@ -732,6 +815,44 @@ export interface components {
             /** Port */
             port: number | null;
             status: components["schemas"]["MachineStatus"];
+        };
+        /**
+         * MlflowInfo
+         * @description What TrainHub read of the MLflow run matching a TrainHub run.
+         */
+        MlflowInfo: {
+            /**
+             * Run Id
+             * @description None: no MLflow run found yet
+             */
+            run_id?: string | null;
+            /** Experiment Id */
+            experiment_id?: string | null;
+            /**
+             * Status
+             * @description MLflow status: RUNNING, SCHEDULED, FINISHED, FAILED, KILLED
+             */
+            status?: string | null;
+            /**
+             * Epoch
+             * @description Current epoch (metric + offset)
+             */
+            epoch?: number | null;
+            /**
+             * Max Epochs
+             * @description Maximum epoch (parameter)
+             */
+            max_epochs?: number | null;
+            /**
+             * Url
+             * @description Page of the run in the MLflow UI
+             */
+            url?: string | null;
+            /**
+             * Error
+             * @description Last error querying MLflow
+             */
+            error?: string | null;
         };
         /** PreviewResult */
         PreviewResult: {
@@ -823,6 +944,22 @@ export interface components {
              * @default false
              */
             accepts_checkpoint: boolean;
+        };
+        /**
+         * RandomRange
+         * @description Integer range a parameter is drawn from (bounds included).
+         */
+        RandomRange: {
+            /**
+             * Min
+             * @default 0
+             */
+            min: number;
+            /**
+             * Max
+             * @default 2147483647
+             */
+            max: number;
         };
         /**
          * RunAction
@@ -929,6 +1066,10 @@ export interface components {
              * @default false
              */
             container_alive: boolean;
+            /** @description Matching MLflow run (projects with MLflow only) */
+            mlflow?: components["schemas"]["MlflowInfo"] | null;
+            /** @description Repetitions of the command in the container (None: run once) */
+            series?: components["schemas"]["Series"] | null;
             /** Active */
             active: boolean;
             /** Elapsed S */
@@ -973,6 +1114,84 @@ export interface components {
              * @description {checkpoint}: absolute path of the checkpoint on the machine (as listed by a checkpoint source); translated to the container path through the volumes
              */
             checkpoint?: string | null;
+            /** @description Repeat the run several times in a row (same container) */
+            series?: components["schemas"]["SeriesRequest"] | null;
+        };
+        /**
+         * Series
+         * @description A run repeated ``count`` times in a row in its container (see :mod:`.series`).
+         */
+        Series: {
+            /**
+             * Count
+             * @description Number of repetitions
+             */
+            count: number;
+            /**
+             * Continue On Failure
+             * @description Go on with the next repetitions after a failure (default: stop the series)
+             * @default false
+             */
+            continue_on_failure: boolean;
+            /**
+             * Random
+             * @description Parameters drawn at random: name → [min, max]
+             */
+            random?: {
+                [key: string]: [
+                    number,
+                    number
+                ];
+            };
+            /**
+             * Values
+             * @description For each repetition, the values of the parameters that change (override the run's params)
+             */
+            values: {
+                [key: string]: string;
+            }[];
+            /**
+             * Current
+             * @description Repetition in progress or last started, from 1 (0: none yet)
+             * @default 0
+             */
+            current: number;
+            /**
+             * Exit Codes
+             * @description Exit codes of the finished repetitions, in order
+             */
+            exit_codes?: number[];
+        };
+        /**
+         * SeriesRequest
+         * @description Repeat the run several times in a row, in the same container.
+         */
+        SeriesRequest: {
+            /**
+             * Count
+             * @description Number of repetitions
+             */
+            count: number;
+            /**
+             * Random
+             * @description Command parameters drawn at random for each repetition (distinct values when the range allows it); they override params
+             */
+            random?: {
+                [key: string]: components["schemas"]["RandomRange"];
+            };
+            /**
+             * Values
+             * @description Explicit values of the parameters that change, one dict per repetition (instead of random; e.g. to reproduce a series)
+             */
+            values?: {
+                [key: string]: string;
+            }[] | null;
+            /**
+             * Continue On Failure
+             * @description Go on with the next repetitions after a failure (default: the series stops at the first failure)
+             * @default false
+             */
+            continue_on_failure: boolean;
         };
         /**
          * UiState
@@ -1079,6 +1298,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MachineGpus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    machine_load_api_machines__machine_id__load_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineLoad"];
                 };
             };
             /** @description Validation Error */

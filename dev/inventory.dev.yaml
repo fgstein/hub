@@ -9,6 +9,8 @@
 #   - seg-infer   : inference project (extends segmentation), command with {checkpoint}
 #   - checkpoints : simulated run directories (Checkpoints tab), one source per disk
 #   - gpu-03 flaky, gpu-old offline, “broken” image (launch failure)
+#   - MLflow simulated (progress bar, dot color), except for llm-finetune
+#   - “Machines” tab: simulated CPU (/proc) and GPU (nvidia-smi) load
 
 machines:
   - id: gpu-01
@@ -42,6 +44,13 @@ venvs:
   - id: exp
     path: /opt/venvs/exp
     images: [torch-nightly]
+
+# MLflow is simulated in fake mode (the URL is only used for the links).
+mlflow:
+  tracking_uri: http://mlflow.lab.local:5000
+  max_epochs_param: trainer.max_epochs
+  epoch_metric: epoch
+  poll_interval_s: 3
 
 projects:
   - id: segmentation
@@ -89,6 +98,7 @@ projects:
       shm_size: 64g
       tty: false
       keep_alive: false       # container not kept: it stops with the command
+    mlflow: {enabled: false}  # no MLflow tracking for this project
     configs:
       static: [llama_8b_lora]
 

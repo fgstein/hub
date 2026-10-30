@@ -5,10 +5,71 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..core.models import DockerOptions, Run, RunStatus
+from ..core.models import DockerOptions, Run, RunStatus, Series
+from ..core.series import DEFAULT_RANGE, MAX_SERIES, draw_values
 from ..core.status import elapsed_seconds, paused_seconds
+
+
+class RandomRange(BaseModel):
+    """Integer range a parameter is drawn from (bounds included)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min: int = DEFAULT_RANGE[0]
+    max: int = DEFAULT_RANGE[1]
+
+    @model_validator(mode="after")
+    def _check(self) -> RandomRange:
+        if self.min > self.max:
+            raise ValueError(f"empty range: min ({self.min}) > max ({self.max})")
+        return self
+
+
+class SeriesRequest(BaseModel):
+    """Repeat the run several times in a row, in the same container."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    count: int = Field(ge=1, le=MAX_SERIES, description="Number of repetitions")
+    random: dict[str, RandomRange] = Field(
+        default_factory=dict,
+        description="Command parameters drawn at random for each repetition (distinct "
+        "values when the range allows it); they override params",
+    )
+    values: list[dict[str, str]] | None = Field(
+        default=None,
+        description="Explicit values of the parameters that change, one dict per repetition "
+        "(instead of random; e.g. to reproduce a series)",
+    )
+    continue_on_failure: bool = Field(
+        default=False,
+        description="Go on with the next repetitions after a failure (default: the series "
+        "stops at the first failure)",
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> SeriesRequest:
+        if self.values is not None:
+            if self.random:
+                raise ValueError("series: give either random or values, not both")
+            if len(self.values) != self.count:
+                raise ValueError(
+                    f"series: {len(self.values)} set(s) of values for {self.count} repetition(s)"
+                )
+        return self
+
+    def plan(self) -> Series:
+        """The repetitions, random values drawn now."""
+        ranges = {k: (r.min, r.max) for k, r in self.random.items()}
+        values = self.values if self.values is not None else draw_values(ranges, self.count)
+        return Series(
+            count=self.count,
+            continue_on_failure=self.continue_on_failure,
+            random=ranges,
+            values=[dict(v) for v in values],
+        )
 
 
 class Selection(BaseModel):
@@ -36,6 +97,9 @@ class Selection(BaseModel):
         default=None,
         description="{checkpoint}: absolute path of the checkpoint on the machine (as listed "
         "by a checkpoint source); translated to the container path through the volumes",
+    )
+    series: SeriesRequest | None = Field(
+        default=None, description="Repeat the run several times in a row (same container)"
     )
 
 
@@ -299,6 +363,31 @@ class MachineGpus(BaseModel):
     gpus: list[GpuView] = Field(default_factory=list)
     active_runs: list[GpuRunView] = Field(default_factory=list)
     error: str | None = None
+    checked_at: datetime
+
+
+class CpuView(BaseModel):
+    """CPU and memory of a machine (``/proc``, on the host)."""
+
+    cores: int
+    usage_pct: float = Field(description="Usage of all the cores, over 0.5 s")
+    per_core_pct: list[float] = Field(description="Usage of each core, over 0.5 s")
+    load_avg: tuple[float, float, float] | None = Field(description="1, 5 and 15 min load")
+    memory_used_mib: int | None
+    memory_total_mib: int | None
+
+
+class MachineLoad(BaseModel):
+    """CPU and GPU load of a machine, with the active TrainHub runs placed on it."""
+
+    machine: str
+    reachable: bool
+    cpu: CpuView | None = None
+    cpu_error: str | None = None
+    gpus: list[GpuView] = Field(default_factory=list)
+    gpu_error: str | None = None
+    active_runs: list[GpuRunView] = Field(default_factory=list)
+    error: str | None = Field(default=None, description="Machine unreachable")
     checked_at: datetime
 
 

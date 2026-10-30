@@ -5,6 +5,13 @@
 # docker subcommands TrainHub uses. Can be overridden per machine.
 # docker_command: sudo -n docker
 
+# MLflow (optional): progress bar and training status of the runs, see the README.
+# mlflow:
+#   tracking_uri: http://mlflow.lab:5000
+#   max_epochs_param: trainer.max_epochs   # parameter: maximum epoch
+#   epoch_metric: epoch                    # metric: current epoch
+#   # experiments: [segmentation]          # default: all
+
 machines:
   - id: gpu-01
     label: GPU 01 (4×A100)
@@ -64,6 +71,9 @@ projects:
       pattern: "*.yaml"          # optional
       exclude: ["hydra/*"]       # optional: relative paths to ignore (glob)
       # static: [baseline]       # optional: configs added to the list
+    # mlflow:                    # optional: overrides the global mlflow section
+    #   epoch_metric: trainer/epoch
+    #   # enabled: false
 
   # Inference: inherits everything from segmentation (machines, docker options, configs…)
   # except id and label; docker options are merged key by key.

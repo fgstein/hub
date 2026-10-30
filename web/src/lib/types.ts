@@ -23,6 +23,11 @@ export type CheckpointRun = S["CheckpointRun"]
 export type CheckpointGroup = S["CheckpointGroup"]
 export type CheckpointFile = S["CheckpointFile"]
 export type CheckpointDeleteResult = S["CheckpointDeleteResult"]
+export type MlflowInfo = S["MlflowInfo"]
+export type MachineLoad = S["MachineLoad"]
+export type CpuView = S["CpuView"]
+export type Series = S["Series"]
+export type SeriesRequest = S["SeriesRequest"]
 
 export type RunAction = "pause" | "resume" | "stop" | "restart" | "relaunch" | "close" | "force_finish"
 export type MenuAction = RunAction | "delete"

@@ -22,15 +22,33 @@ import hashlib
 import json
 import math
 import random
+import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..core import checkpoints as ck
-from ..core.commands import discover_root, transport
+from ..core.commands import (
+    LABEL_RUN_ID,
+    LABEL_SERIES,
+    LABEL_SERIES_CONTINUE,
+    discover_root,
+    transport,
+)
 from ..core.gpus import visible_indices
-from ..core.models import CheckpointSource, Inventory, Machine, SimulationSettings
+from ..core.load import CPU_SCRIPT
+from ..core.models import (
+    CheckpointSource,
+    Inventory,
+    Machine,
+    MlflowConfig,
+    MlflowInfo,
+    Run,
+    SimulationSettings,
+)
+from ..core.series import end_marker, halt_message, start_marker
+from ..service.mlflow import MlflowSource
 from .base import (
     ExecResult,
     Executor,
@@ -124,6 +142,11 @@ class FakeContainer:
     keep_alive: bool = False
     command_done: bool = False
     command_code: int = 0
+    #: simulated MLflow run of the current execution
+    ml_run: int = 0
+    ml_status: str = "RUNNING"
+    ml_epoch: int | None = None
+    ml_epochs: int | None = None
 
     def write(self, data: bytes) -> None:
         self.logs += data
@@ -313,6 +336,8 @@ class FakeExecutor(Executor):
             return self._rm_checkpoints(argv[4], argv[5:])
         if argv[0] == "nvidia-smi":
             return self._nvidia_smi(machine, m, argv)
+        if argv[:2] == ["sh", "-c"] and argv[2:] == [CPU_SCRIPT]:
+            return self._proc(machine, m)
         if argv[0] != "docker" or len(argv) < 2:
             return 127, "", f"bash: {argv[0]}: command not found"
         sub, args = argv[1], argv[2:]
@@ -480,6 +505,58 @@ class FakeExecutor(Executor):
             )
         return 0, "".join(lines), ""
 
+    def _proc(self, machine: Machine, m: FakeMachine) -> tuple[int, str, str]:
+        """Simulate the ``/proc`` reads of :mod:`trainhub.core.load`.
+
+        Each running command keeps ~8 cores busy (cores chosen from its name), on top of a
+        light background noise; memory follows the same rule.
+        """
+        n = self.settings.cpus
+        busy = [self._rng.uniform(0.0, 0.08) for _ in range(n)]
+        jobs = 0
+        for c in m.containers.values():
+            if c.state != "running" or c.command_done:
+                continue
+            jobs += 1
+            h = int(hashlib.sha1(c.name.encode()).hexdigest()[:6], 16)
+            for k in range(min(8, n)):
+                i = (h + k * 7) % n
+                busy[i] = min(1.0, busy[i] + self._rng.uniform(0.6, 0.95))
+        tick = int((time.monotonic() - self._t0) * 100)
+        before, after = [], []
+        for i, b in enumerate([sum(busy) / n, *busy]):
+            name = "cpu" if i == 0 else f"cpu{i - 1}"
+            scale = n if i == 0 else 1
+            used0 = 1000 * scale + tick * scale // 3
+            idle0 = 5000 * scale + tick * scale
+            dt = 50 * scale  # 0.5 s at 100 Hz
+            before.append(f"{name} {used0} 0 0 {idle0} 0 0 0 0 0 0")
+            used1 = used0 + round(dt * b)
+            idle1 = idle0 + dt - round(dt * b)
+            after.append(f"{name} {used1} 0 0 {idle1} 0 0 0 0 0 0")
+        total_kb = 512 * 1024 * 1024
+        avail_kb = max(total_kb // 10, total_kb - (12 + 48 * jobs) * 1024 * 1024)
+        load1 = sum(busy)
+        out = (
+            f"{load1:.2f} {load1 * 0.9:.2f} {load1 * 0.8:.2f} 2/1234 5678\n---\n"
+            + "\n".join(before)
+            + "\n---\n"
+            + "\n".join(after)
+            + f"\n---\nMemTotal:       {total_kb} kB\nMemAvailable:   {avail_kb} kB\n"
+        )
+        return 0, out, ""
+
+    def find_container(self, run_id: str) -> FakeContainer | None:
+        """Container of a TrainHub run, on any machine."""
+        for m in self.machines.values():
+            for c in m.containers.values():
+                if c.labels.get(LABEL_RUN_ID) == run_id:
+                    return c
+        return None
+
+    def mlflow_source(self) -> MlflowSource:
+        return FakeMlflow(self)
+
     # docker run ---------------------------------------------------------------
 
     def _run(self, machine: Machine, m: FakeMachine, args: list[str]) -> tuple[int, str, str]:
@@ -545,6 +622,8 @@ class FakeExecutor(Executor):
         return 0, cid + "\n", ""
 
     def _start_container(self, c: FakeContainer) -> None:
+        c.ml_run += 1
+        c.ml_status, c.ml_epoch, c.ml_epochs = "RUNNING", None, None
         c.state = "running"
         c.exit_code = 0
         c.command_done = False
@@ -651,6 +730,7 @@ class FakeExecutor(Executor):
         elif c.state == "running":
             if c.task is not None:
                 c.task.cancel()
+            c.ml_status = "KILLED"
             reset = "\x1b[0m" if c.tty else ""
             c.write(
                 f"\r\n{reset}[{_ts()}][__main__][WARNING] - Received SIGTERM, "
@@ -761,12 +841,14 @@ class FakeExecutor(Executor):
 
     async def _simulate(self, c: FakeContainer) -> None:
         try:
-            code = await self._training(c)
+            count = int(c.labels.get(LABEL_SERIES) or 0)
+            code = await self._series(c, count) if count else await self._training(c)
         except asyncio.CancelledError:
             return
         except Exception as exc:  # pragma: no cover - safety net
             c.write(f"simulation error: {exc}\n".encode())
             code = 1
+        c.ml_status = "FINISHED" if code == 0 else "FAILED"
         if c.keep_alive:
             c.command_done = True
             c.command_code = code
@@ -778,9 +860,34 @@ class FakeExecutor(Executor):
             return
         self._finish(c, code)
 
-    async def _training(self, c: FakeContainer) -> int:
+    async def _series(self, c: FakeContainer, count: int) -> int:
+        """Repetitions of a series, with the markers of the real script."""
+        nl = "\r\n" if c.tty else "\n"
+        keep_going = c.labels.get(LABEL_SERIES_CONTINUE) == "1"
+        # Start markers of the real script, with the values of each repetition.
+        script = c.command[-1] if c.command else ""
+        starts = re.findall(r"\[trainhub\] series run \d+/\d+ started[^'\n]*", script)
+        last = 0
+        for k in range(1, count + 1):
+            if k > 1:  # each repetition creates its own MLflow run
+                c.ml_run += 1
+                c.ml_status, c.ml_epoch, c.ml_epochs = "RUNNING", None, None
+            start = starts[k - 1] if len(starts) == count else start_marker(k, count)
+            c.write(f"{start}{nl}".encode())
+            code = await self._training(c, salt=str(k))
+            c.ml_status = "FINISHED" if code == 0 else "FAILED"
+            c.write(f"{nl}{end_marker(k, count, code)}{nl}".encode())
+            if code != 0:
+                last = code
+                if not keep_going:
+                    if k < count:
+                        c.write(f"{halt_message(k, count)}{nl}".encode())
+                    break
+        return last
+
+    async def _training(self, c: FakeContainer, salt: str = "") -> int:
         s = self.settings
-        rng = random.Random(f"{c.id}{c.started_at}")
+        rng = random.Random(f"{c.id}{c.started_at}{salt}")
         nl = "\r\n" if c.tty else "\n"
         tty = c.tty
 
@@ -802,6 +909,7 @@ class FakeExecutor(Executor):
         lr = rng.choice([1e-3, 3e-4, 1e-4])
         bs = rng.choice([16, 32, 64])
         seed = rng.randrange(10000)
+        c.ml_epochs, c.ml_epoch = epochs, 0
 
         hydra = col("36", "[HYDRA]")
         w(f"{hydra} Launching 1 jobs locally")
@@ -864,6 +972,7 @@ class FakeExecutor(Executor):
                     self._traceback(c)
                     return 1
             c.write(nl.encode())
+            c.ml_epoch = epoch + 1
             val = loss * rng.uniform(1.0, 1.15)
             acc = min(
                 0.99, 0.5 + 0.45 * (1 - math.exp(-(epoch + 1) / 4)) + rng.uniform(-0.02, 0.02)
@@ -908,6 +1017,28 @@ class FakeExecutor(Executor):
             "Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.",
         ]
         c.write("".join(line + nl for line in lines).encode())
+
+
+class FakeMlflow(MlflowSource):
+    """MLflow server simulated from the containers of a :class:`FakeExecutor`."""
+
+    def __init__(self, executor: FakeExecutor) -> None:
+        self.executor = executor
+
+    async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
+        c = self.executor.find_container(run.id)
+        if c is None:
+            return MlflowInfo()
+        exp = str(int(hashlib.sha1(run.project_id.encode()).hexdigest()[:4], 16))
+        ml_id = hashlib.sha1(f"{c.id}-{c.ml_run}".encode()).hexdigest()[:32]
+        return MlflowInfo(
+            run_id=ml_id,
+            experiment_id=exp,
+            status=c.ml_status,
+            epoch=None if c.ml_epoch is None else c.ml_epoch + cfg.epoch_offset,
+            max_epochs=c.ml_epochs,
+            url=f"{cfg.tracking_uri}/#/experiments/{exp}/runs/{ml_id}",
+        )
 
 
 class _FakeShell(ShellSession):

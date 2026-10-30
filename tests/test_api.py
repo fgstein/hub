@@ -228,6 +228,14 @@ def test_machine_gpus_route(client: TestClient) -> None:
     assert client.get("/api/machines/nope/gpus").status_code == 404
 
 
+def test_machine_load_route(client: TestClient) -> None:
+    data = client.get("/api/machines/gpu-01/load").json()
+    assert data["reachable"] is True and data["machine"] == "gpu-01"
+    assert data["cpu"]["cores"] == 64 and len(data["cpu"]["per_core_pct"]) == 64
+    assert len(data["gpus"]) == 4
+    assert client.get("/api/machines/nope/load").status_code == 404
+
+
 def test_version_matches_pyproject() -> None:
     import tomllib
 

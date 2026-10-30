@@ -27,6 +27,17 @@ are a common case, see the [examples](#examples).
   restart.
 - **Kept container**: when the command finishes, the container stays started (status succeeded
   or failed from the exit code) so that you can open a shell in it, then close it yourself.
+- **MLflow progress**: for projects tracked with MLflow, a progress bar (current epoch / maximum
+  epoch) and a status dot colored by the training state: green while it goes well, red if it
+  failed, blue once finished. See [MLflow](#mlflow).
+- **Machines tab**: CPU (every core), memory and GPU load of every machine of the inventory,
+  with the TrainHub runs placed on each GPU, refreshed every 5 s; a click on a GPU prepares a run
+  on it.
+- **Series**: run the same command N times in a row in a single container, with some
+  parameters (e.g. `{seed}`) drawn at random for each repetition. See [Series](#series).
+- **Checkpoints tab**: the runs already executed on disk (by TrainHub or not), their checkpoints
+  with sizes and the total per source; send checkpoints to an inference project (`{checkpoint}`,
+  `extends`), delete checkpoints or groups. See [Checkpoints](#checkpoints).
 - **Control**: pause, resume, stop, restart, relaunch (prefilled draft), close container, delete,
   and **mark as finished** for a run stuck active whose machine or container is dead (nothing is
   run on the machine; the run becomes `failed` with an explicit error, and shows as running again
@@ -389,6 +400,97 @@ Logs are followed for every active run and written to `$TRAINHUB_DATA_DIR/logs/<
 (`<run>.done` once the backup is complete). If the Docker logs come back shorter than the backup
 (rotation), the old version is kept as `<run>.prev.log`. Deleting a run keeps its backup.
 
+### Series
+
+A **series** runs the same command several times in a row, in the **same container**: the
+next repetition starts when the previous one ends. In the draft, set the number of runs in the
+`×` field next to “Launch”, and click the die next to a parameter to draw it at random for each
+repetition, between two integer bounds (default `0` – `2147483647`, a usual seed range). Every
+other field (machine, image, venv, config, GPU, other parameters) is the same for all the
+repetitions.
+
+- The values are drawn **once, at launch**, distinct for each repetition when the range allows
+  it, and stored with the run: the run row shows the progress (`2/5`, one cell per repetition)
+  and its tooltip the values and exit codes. The logs show
+  `[trainhub] series run 2/5 started · seed=4821` before each repetition.
+- **Failure**: by default the series stops at the first failed repetition (the next ones are not
+  launched). Check “continue after a failure” to launch them anyway. The run's final code is 0 if
+  every repetition succeeded, else the code of the last failure.
+- **Stop** stops the repetition in progress and the whole series. **Restart** starts the series
+  over with the same values; **Relaunch** (API, MCP) creates a new series with the same values,
+  while “Relaunch…” in the interface prepares a draft with the same settings and new draws.
+- A series is **a single run** for TrainHub (one container, one log, one row). Each repetition
+  gets `TRAINHUB_SERIES_INDEX` (1, 2…), usable in the command as `${TRAINHUB_SERIES_INDEX}`,
+  e.g. `hydra.run.dir=outputs/{run_id}-${TRAINHUB_SERIES_INDEX}`: `{run_id}` is the same for all
+  the repetitions.
+- With MLflow, each repetition creates its own MLflow run, tagged `trainhub.run_id` and
+  `trainhub.series_index`; the progress bar follows the repetition in progress.
+
+API, MCP (`launch_run`) and Python: `series: {count: 5, random: {seed: {min: 0, max: 99999}},
+continue_on_failure: false}` (or explicit `values`, one dict per repetition). CLI:
+`trainhub launch … -n 5 -R seed -R fold=0:4 [--continue-on-failure]`. At most 100 repetitions.
+
+### MLflow
+
+With an `mlflow` section, TrainHub reads, for each run, the matching MLflow run: its status, a
+parameter giving the maximum epoch and a metric giving the current epoch. The interface then
+shows a progress bar (`3/10`), a link to the run in the MLflow UI, and colors the status dot:
+
+| Run (container) | MLflow run              | Dot                         |
+|-----------------|-------------------------|-----------------------------|
+| running         | `RUNNING` / `SCHEDULED` | green: training going well  |
+| running / succeeded | `FINISHED`          | blue: training finished     |
+| any             | `FAILED` / `KILLED`     | red: training failed        |
+| failed          | any                     | red                         |
+
+Container states (launching, paused, stopping, stopped, machine unreachable) keep their usual
+color: a deliberate stop stays grey even though MLflow reports `KILLED`.
+
+```yaml
+mlflow:                          # global section (optional)
+  tracking_uri: http://mlflow.lab:5000   # as seen from TrainHub
+  # experiments: [segmentation]  # experiments searched (default: all)
+  max_epochs_param: trainer.max_epochs   # MLflow parameter: maximum epoch (default max_epochs)
+  epoch_metric: epoch            # MLflow metric: current epoch (latest value; default epoch)
+  # epoch_offset: 1              # added to the metric, e.g. 1 if it counts from 0
+  # run_tag: trainhub.run_id     # tag holding the TrainHub run id (default)
+  # inject_env: true             # see below
+  # poll_interval_s: 10          # MLflow polling period (global section only)
+
+projects:
+  - id: segmentation
+    mlflow:                      # optional: overrides the global values for this project
+      epoch_metric: trainer/epoch
+  - id: llm
+    mlflow: {enabled: false}     # no MLflow for this project
+```
+
+**Finding the MLflow run.** TrainHub looks for the MLflow run whose tag `trainhub.run_id`
+(`run_tag`) equals the TrainHub run id. With `inject_env` (default), TrainHub passes
+`MLFLOW_RUN_CONTEXT={"trainhub.run_id": "<run id>"}` (and `TRAINHUB_RUN_ID`) to the container:
+MLflow adds the tags of this variable to every run it creates (`mlflow.start_run()`, Lightning's
+`MLFlowLogger`…), so the training code needs no change. Otherwise, tag the run yourself, e.g.
+`mlflow.set_tag("trainhub.run_id", os.environ["TRAINHUB_RUN_ID"])`. TrainHub reads MLflow
+directly from its own host (`tracking_uri`); the training keeps logging to MLflow as it already
+does.
+
+**Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own
+environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and
+`MLFLOW_TRACKING_PASSWORD`.
+
+Runs are polled while active, and up to 10 minutes after they finish until MLflow reports a
+final status. If MLflow is unreachable, the last values stay displayed with a warning.
+
+### Machines tab
+
+The **Machines** tab (left of the project tabs) shows, for every machine of the inventory:
+CPU usage (overall and one cell per core, over 0.5 s), load average and memory, read from
+`/proc` over SSH; and each GPU's utilization, memory and temperature (`nvidia-smi`), with the
+TrainHub runs pinned to it. An unreachable machine shows the SSH error. A click on a GPU
+prepares a draft on that machine with `CUDA_VISIBLE_DEVICES` set to that GPU (the project is
+asked when several can run on the machine). The tab refreshes every
+5 s while it is open; nothing is queried otherwise.
+
 ---
 
 ## Quick start (development, fake mode)
@@ -487,15 +589,16 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 ## MCP server
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
-`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `list_checkpoint_sources`,
-`list_checkpoints`, `pause_run`, `resume_run`,
+`list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `get_machine_load`,
+`list_checkpoint_sources`, `list_checkpoints`, `pause_run`, `resume_run`,
 `stop_run`, `force_finish_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
 `set_project_command`) call the same service layer as the interface: a run launched by an agent
 shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text
 (no ANSI, progress bars reduced to their last state, truncated with a note) and a cursor: passed
 back as `since`, only the new output is returned. `wait_run` waits on the server side until a
 run finishes, a log line matches a regex or its status changes (progress notifications while
-waiting). `get_gpus` runs `nvidia-smi` on the machines and shows the TrainHub runs on each GPU.
+waiting). `get_gpus` runs `nvidia-smi` on the machines and shows the TrainHub runs on each GPU;
+`get_machine_load` adds the CPU and memory load. Runs carry their MLflow state (`mlflow`).
 
 ```bash
 # Streamable HTTP (running server)
@@ -564,6 +667,7 @@ await tb.stop(run.id)
 ```bash
 trainhub preview -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline trainer.max_epochs=5
 trainhub launch  -p segmentation -m gpu-01 -i torch-2.4 -e main -c baseline --follow
+trainhub launch  -p segmentation … -n 5 -R seed   # series: 5 runs in a row, {seed} drawn
 trainhub ps [--all]
 trainhub logs r7f3k2 [-f] [--clean]
 trainhub stop r7f3k2           # also: pause, resume, rm

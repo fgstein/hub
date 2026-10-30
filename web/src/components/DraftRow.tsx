@@ -1,6 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo, For, on, onMount, Show } from "solid-js"
 import { splitArgs } from "~/lib/command"
+import { DEFAULT_MAX, DEFAULT_MIN, MAX_SERIES, parseCount } from "~/lib/series"
 import type { ProjectView } from "~/lib/types"
 import {
   commandErrors,
@@ -10,6 +11,7 @@ import {
   type Draft,
   draftParamErrors,
   draftSelection,
+  draftSeriesRequest,
   launchDraft,
   loadConfigs,
   machineReachable,
@@ -19,7 +21,7 @@ import {
 } from "~/stores/app"
 import { ConfigPicker } from "./ConfigPicker"
 import { GpuPicker } from "./GpuPicker"
-import { IconChevronDown, IconClose, IconRefresh, IconSpinner } from "./Icons"
+import { IconChevronDown, IconClose, IconDice, IconRefresh, IconSpinner } from "./Icons"
 import { StatusDot } from "./StatusDot"
 
 interface FieldProps {
@@ -180,6 +182,12 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
     return null
   }
   const paramErrors = () => draftParamErrors(p().id, d())
+  const seriesErrors = () => draftSeriesRequest(p().id, d()).errors
+  const count = () => parseCount(d().count) ?? 1
+  const toggleRandom = (name: string) =>
+    set({ random: { ...d().random, [name]: d().random[name] ? undefined : { min: "", max: "" } } })
+  const setRange = (name: string, patch: { min?: string; max?: string }) =>
+    set({ random: { ...d().random, [name]: { min: "", max: "", ...d().random[name], ...patch } } })
   const sel = () => draftSelection(p().id, d())
   const blocked = () => commandErrors[p().id] === true
   const canLaunch = () => !!sel() && !blocked() && !d().launching
@@ -274,6 +282,28 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
           <GpuPicker machine={d().machine} value={d().cuda} onChange={(v) => set({ cuda: v })} />
         </div>
         <div class="flex shrink-0 items-center gap-1">
+          <label
+            class="flex h-7 items-center rounded border bg-input pl-1.5 text-xs text-fg-weak focus-within:border-line"
+            classList={{
+              "border-line-weak": !seriesErrors().count,
+              "border-line-critical": !!seriesErrors().count,
+            }}
+            title={
+              seriesErrors().count ??
+              `Number of runs in a row, in the same container (1 to ${MAX_SERIES}); the next one starts when the previous one ends`
+            }
+          >
+            ×
+            <input
+              value={d().count}
+              onInput={(e) => set({ count: e.currentTarget.value })}
+              placeholder="1"
+              inputMode="numeric"
+              aria-label="Number of runs"
+              data-testid="field-count"
+              class="h-full w-8 min-w-0 bg-transparent px-1 font-mono text-sm text-fg-strong outline-none placeholder:text-fg-weaker"
+            />
+          </label>
           <button
             type="button"
             class="h-7 rounded-md bg-primary px-3 text-sm font-medium text-primary-fg transition-opacity disabled:opacity-30"
@@ -287,9 +317,13 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                     ? `Invalid overrides: ${overridesError()}`
                     : Object.keys(paramErrors()).length
                       ? `Invalid parameter: {${Object.keys(paramErrors())[0]}}`
-                      : !sel()
-                        ? "Incomplete selection"
-                        : "Launch (Enter)"
+                      : Object.values(seriesErrors()).length
+                        ? `Invalid series: ${Object.values(seriesErrors())[0]}`
+                        : !sel()
+                          ? "Incomplete selection"
+                          : count() > 1
+                            ? `Launch ${count()} runs in a row, in the same container (Enter)`
+                            : "Launch (Enter)"
             }
             onClick={() => void launchDraft(p().id, d().key)}
             data-testid="draft-launch"
@@ -308,7 +342,7 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
           </button>
         </div>
       </div>
-      <Show when={params().length || showOverrides || takesCheckpoint()}>
+      <Show when={params().length || showOverrides || takesCheckpoint() || count() > 1}>
         <div
           class="-mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 pb-2.5 pl-[92px]"
           data-testid="draft-params"
@@ -341,29 +375,96 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
             </label>
           </Show>
           <For each={params()}>
-            {(name) => (
-              <label class="flex min-w-0 items-center gap-1.5">
-                <span class="shrink-0 font-mono text-xs text-fg-warning">{`{${name}}`}</span>
-                <input
-                  value={d().params[name] ?? ""}
-                  onInput={(e) => set({ params: { ...d().params, [name]: e.currentTarget.value } })}
-                  placeholder="empty = nothing"
-                  title={
-                    paramErrors()[name]
-                      ? `Invalid value: ${paramErrors()[name]}`
-                      : `Value of {${name}} in the command; split as a shell would ("a b" = a single argument), empty = nothing inserted`
-                  }
-                  aria-label={`Parameter ${name}`}
-                  spellcheck={false}
-                  data-testid={`field-param-${name}`}
-                  class="h-7 w-56 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
-                  classList={{
-                    "border-line-weak": !paramErrors()[name],
-                    "border-line-critical": !!paramErrors()[name],
-                  }}
-                />
-              </label>
-            )}
+            {(name) => {
+              const range = () => d().random[name]
+              const rangeError = () => seriesErrors()[name]
+              const boundCls =
+                "h-7 w-24 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
+              return (
+                <div class="flex min-w-0 items-center gap-1.5">
+                  <span class="shrink-0 font-mono text-xs text-fg-warning">{`{${name}}`}</span>
+                  <Show
+                    when={range()}
+                    fallback={
+                      <input
+                        value={d().params[name] ?? ""}
+                        onInput={(e) => set({ params: { ...d().params, [name]: e.currentTarget.value } })}
+                        placeholder="empty = nothing"
+                        title={
+                          paramErrors()[name]
+                            ? `Invalid value: ${paramErrors()[name]}`
+                            : `Value of {${name}} in the command; split as a shell would ("a b" = a single argument), empty = nothing inserted`
+                        }
+                        aria-label={`Parameter ${name}`}
+                        spellcheck={false}
+                        data-testid={`field-param-${name}`}
+                        class="h-7 w-56 min-w-0 rounded border bg-input px-2 font-mono text-sm text-fg-strong outline-none placeholder:font-sans placeholder:text-fg-weaker focus:border-line"
+                        classList={{
+                          "border-line-weak": !paramErrors()[name],
+                          "border-line-critical": !!paramErrors()[name],
+                        }}
+                      />
+                    }
+                  >
+                    <div
+                      class="flex items-center gap-1"
+                      title={
+                        rangeError() ??
+                        `Drawn at random for each run, between the two bounds (included); distinct values when the range allows it`
+                      }
+                      data-testid={`field-range-${name}`}
+                    >
+                      <input
+                        value={range()!.min}
+                        onInput={(e) => setRange(name, { min: e.currentTarget.value })}
+                        placeholder={`min ${DEFAULT_MIN}`}
+                        inputMode="numeric"
+                        aria-label={`Minimum of ${name}`}
+                        data-testid={`field-min-${name}`}
+                        class={boundCls}
+                        classList={{
+                          "border-line-weak": !rangeError(),
+                          "border-line-critical": !!rangeError(),
+                        }}
+                      />
+                      <span class="text-xs text-fg-weaker">–</span>
+                      <input
+                        value={range()!.max}
+                        onInput={(e) => setRange(name, { max: e.currentTarget.value })}
+                        placeholder={`max ${DEFAULT_MAX}`}
+                        inputMode="numeric"
+                        aria-label={`Maximum of ${name}`}
+                        data-testid={`field-max-${name}`}
+                        class={boundCls}
+                        classList={{
+                          "border-line-weak": !rangeError(),
+                          "border-line-critical": !!rangeError(),
+                        }}
+                      />
+                    </div>
+                  </Show>
+                  <button
+                    type="button"
+                    class="flex size-7 shrink-0 items-center justify-center rounded-md transition-colors"
+                    classList={{
+                      "bg-surface-active text-fg-strong": !!range(),
+                      "text-icon hover:bg-surface-hover hover:text-icon-hover": !range(),
+                    }}
+                    aria-pressed={!!range()}
+                    aria-label={`Draw ${name} at random`}
+                    title={
+                      range()
+                        ? `{${name}} drawn at random for each run: click to enter a value`
+                        : `Draw {${name}} at random for each run (e.g. a seed)`
+                    }
+                    onClick={() => toggleRandom(name)}
+                    data-testid={`toggle-random-${name}`}
+                  >
+                    <IconDice size={13} />
+                  </button>
+                </div>
+              )
+            }}
           </For>
           <Show when={showOverrides}>
             <label class="flex min-w-0 items-center gap-1.5">
@@ -385,6 +486,21 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
                   "border-line-critical": !!overridesError(),
                 }}
               />
+            </label>
+          </Show>
+          <Show when={count() > 1}>
+            <label
+              class="flex h-7 cursor-pointer select-none items-center gap-1.5 text-xs text-fg-weak hover:text-fg-strong"
+              title="By default, the series stops at the first failed run; checked, the next runs are launched anyway"
+            >
+              <input
+                type="checkbox"
+                checked={d().continueOnFailure}
+                onChange={(e) => set({ continueOnFailure: e.currentTarget.checked })}
+                data-testid="field-continue-on-failure"
+                class="accent-[var(--color-primary)]"
+              />
+              continue after a failure
             </label>
           </Show>
         </div>
