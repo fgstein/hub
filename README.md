@@ -568,6 +568,10 @@ asked when several can run on the machine). The tab refreshes every
 
 Requirements: [uv](https://docs.astral.sh/uv/), Node 22+.
 
+**Version:** every requested change bumps the **minor** version (`0.4.2` → `0.5.0`), in
+`pyproject.toml`, `src/trainhub/__init__.py`, `web/package.json` and `web/package-lock.json`
+(then `uv lock`).
+
 ```bash
 make install   # uv sync + npm install
 make dev       # backend in fake mode (auto reload) + Vite HMR → http://localhost:5173

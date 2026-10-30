@@ -22,3 +22,10 @@ it goes stale as soon as `web/` changes without a rebuild.
   `api.app.find_static_dir` looks in `TRAINHUB_STATIC_DIR`, then `trainhub/static`, then
   `web/dist` (editable installs).
 - The Docker image rebuilds the front end itself (`.dockerignore` excludes `web/dist`).
+
+## Bump the minor version with every requested change
+
+Each change the user asks for bumps the **minor** version (`0.4.2` → `0.5.0`), in the same
+merge: `pyproject.toml`, `src/trainhub/__init__.py`, `web/package.json`, the two top
+`"version"` fields of `web/package-lock.json` (not the dependencies that happen to share the
+number), then `uv lock`. See the README (Quick start).
