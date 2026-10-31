@@ -120,10 +120,14 @@ checkpoints:
     layout: "{name}/checkpoints/{group}/*.ckpt"
     mlflow:                    # MLflow run of each directory: the one that logged its path
       match: params.callbacks/model_checkpoint/dirpath
+      show: [metrics.val_loss, params.trainer.max_epochs]  # shown for each run directory
       inference:               # inferences made with these checkpoints (other experiment)
         match: params.ckpt_path
         experiments: [seg-inference]
-        show: [params.data.dataset, params.trainer.precision]
+        show: [params.trainer.precision]
+        dataset_name: params.data.name     # badge-button: copies the dataset path
+        dataset_path: params.data.path
+        mapping_name: params.data.mapping  # badge
   - id: scratch
     label: Scratch (gpu-02 only)
     machine: gpu-02            # only visible from gpu-02: find and rm run there

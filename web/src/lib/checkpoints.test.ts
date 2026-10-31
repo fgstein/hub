@@ -185,30 +185,24 @@ describe("inferences", () => {
   const inf = (checkpoint: string, extra: Partial<CheckpointInference> = {}): CheckpointInference => ({
     checkpoint,
     exists: true,
+    mlflow: { run_id: "m", deleted: false },
     ...extra,
   })
+  const ml = (status?: string) => ({ mlflow: { run_id: "m", status, deleted: false } })
 
-  it("takes the state of the MLflow run, else of the TrainHub run", () => {
-    expect(
-      inferenceState(
-        inf("a/x", { mlflow: { run_id: "m", status: "RUNNING", deleted: false }, status: "failed" }),
-      ),
-    ).toBe("running")
-    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "KILLED", deleted: false } }))).toBe(
-      "failed",
-    )
-    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "FINISHED", deleted: false } }))).toBe(
-      "finished",
-    )
-    expect(inferenceState(inf("a/x", { status: "succeeded" }))).toBe("finished")
-    expect(inferenceState(inf("a/x", { status: "stopped" }))).toBe("other")
-    expect(inferenceState(inf("a/x"))).toBe("other")
+  it("takes the state of the MLflow run", () => {
+    expect(inferenceState(ml("RUNNING"))).toBe("running")
+    expect(inferenceState(ml("KILLED"))).toBe("failed")
+    expect(inferenceState(ml("FINISHED"))).toBe("finished")
+    expect(inferenceState(ml())).toBe("other")
   })
 
   it("groups by checkpoint and strips the run directory", () => {
-    const run = { inferences: [inf("a/c/x.ckpt"), inf("a/c/y.ckpt"), inf("a/c/x.ckpt", { config: "b" })] }
+    const run = {
+      inferences: [inf("a/c/x.ckpt"), inf("a/c/y.ckpt"), inf("a/c/x.ckpt", { dataset_name: "b" })],
+    }
     const by = inferencesByFile(run)
-    expect(by.get("a/c/x.ckpt")?.map((i) => i.config ?? null)).toEqual([null, "b"])
+    expect(by.get("a/c/x.ckpt")?.map((i) => i.dataset_name ?? null)).toEqual([null, "b"])
     expect(by.get("a/c/y.ckpt")).toHaveLength(1)
     expect(inferenceCheckpoint("a", inf("a/c/x.ckpt"))).toBe("c/x.ckpt")
     expect(inferenceCheckpoint("b", inf("a/c/x.ckpt"))).toBe("a/c/x.ckpt")

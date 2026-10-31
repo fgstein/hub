@@ -41,6 +41,7 @@ from ..core.commands import (
 from ..core.gpus import visible_indices
 from ..core.load import CPU_SCRIPT
 from ..core.models import (
+    CheckpointInferenceMlflow,
     CheckpointSource,
     Inventory,
     Machine,
@@ -1075,6 +1076,44 @@ def _matches(raw: dict[str, Any], filter_: str) -> bool:
     return True
 
 
+_DATASETS = {
+    "cityscapes": "/data/cityscapes/val",
+    "ade20k": "/data/ADEChallengeData2016/images/validation",
+    "coco-stuff": "/data/coco-stuff/val2017",
+}
+_MAPPINGS = ["cityscapes-19", "ade-150", "coarse-7"]
+
+
+def _fake_logged(
+    keys: Sequence[str], rng: random.Random, inference: CheckpointInferenceMlflow | None
+) -> dict[str, str]:
+    """Values logged by a simulated MLflow run for ``keys``: consistent dataset name and path,
+    a mapping, then params / metrics by their name."""
+    dataset = rng.choice(sorted(_DATASETS))
+    special = (
+        {
+            inference.dataset_name: dataset,
+            inference.dataset_path: _DATASETS[dataset],
+            inference.mapping_name: rng.choice(_MAPPINGS),
+        }
+        if inference
+        else {}
+    )
+    out: dict[str, str] = {}
+    for key in keys:
+        if key in special:
+            out[key] = special[key]
+        elif "epoch" in key or "step" in key:
+            out[key] = str(rng.randrange(1, 100))
+        elif key.startswith("metrics."):
+            out[key] = f"{rng.uniform(0.3, 0.9):.4g}"
+        elif "data" in key:
+            out[key] = dataset
+        else:
+            out[key] = rng.choice(["fp16", "fp32"])
+    return out
+
+
 class FakeMlflow(MlflowSource):
     """MLflow server simulated from the containers of a :class:`FakeExecutor`.
 
@@ -1279,7 +1318,13 @@ class FakeMlflow(MlflowSource):
                     hit = ref(f"{src.id}-{name}", name, status, i * 2.5 + 1)
                     if i == 2:  # in the MLflow trash
                         hit = hit.model_copy(update={"deleted": True})
-                    out.append(MlflowHit(f"/workspace/outputs/{name}/checkpoints", hit))
+                    out.append(
+                        MlflowHit(
+                            f"/workspace/outputs/{name}/checkpoints",
+                            hit,
+                            _fake_logged(extra, rng, ml.inference),
+                        )
+                    )
                 # directories deleted since: orphans
                 for k, gone in enumerate(["unet_small_2026-08-14", "segformer_b0_debug"]):
                     out.append(
@@ -1308,20 +1353,7 @@ class FakeMlflow(MlflowSource):
                             if k
                             else files[0].rsplit("/", 1)[0] + "/epoch0000099.ckpt"
                         )
-                        logged = {
-                            key: rng.choice(["cityscapes", "ade20k", "coco-stuff"])
-                            if "data" in key
-                            else rng.choice(["fp16", "fp32"])
-                            for key in extra
-                            if key.startswith("params.")
-                        }
-                        logged |= {
-                            key: str(rng.randrange(1, 100))
-                            if "epoch" in key or "step" in key
-                            else f"{rng.uniform(0.3, 0.9):.4g}"
-                            for key in extra
-                            if key.startswith("metrics.")
-                        }
+                        logged = _fake_logged(extra, rng, ml.inference)
                         out.append(
                             MlflowHit(
                                 f"/workspace/outputs/{path}",

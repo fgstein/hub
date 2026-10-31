@@ -266,13 +266,17 @@ class CheckpointRun(BaseModel):
     )
     inferences: list[CheckpointInference] = Field(
         default_factory=list,
-        description="Inferences made with the checkpoints of this directory (TrainHub runs "
-        "and MLflow runs of mlflow.inference), most recent first",
+        description="Inferences made with the checkpoints of this directory (MLflow runs of "
+        "mlflow.inference), most recent first",
     )
     mlflow_runs: list[MlflowRunRef] = Field(
         default_factory=list,
         description="MLflow runs logged from this directory, most recent first (empty: none "
         "found, or the source has no mlflow section)",
+    )
+    mlflow_logged: dict[str, str] = Field(
+        default_factory=dict,
+        description="Values of the keys of mlflow.show for the latest MLflow run (not deleted)",
     )
 
 

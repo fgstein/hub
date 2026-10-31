@@ -323,8 +323,10 @@ def build_mcp(
         annotations=READ,
         description="Runs and checkpoints of a source, most recent run first: for each run "
         "its groups (e.g. topk, last) and checkpoint files (path relative to the root, "
-        "size in bytes, date, inference runs already launched with it), its MLflow runs and "
-        "the inferences made with its checkpoints (TrainHub and MLflow). The absolute path "
+        "size in bytes, date, TrainHub runs already launched with it), its MLflow runs (with "
+        "mlflow_logged: the values of mlflow.show of the latest one) and the inferences made "
+        "with its checkpoints (MLflow runs of mlflow.inference, with dataset_name, "
+        "dataset_path, mapping_name and logged values when configured). The absolute path "
         "to pass as checkpoint is root + '/' + path. Scan cached 5 min (refresh to force).",
     )
     async def list_checkpoints(
@@ -364,6 +366,7 @@ def build_mcp(
                         if r.mlflow_runs
                         else {}
                     ),
+                    **({"mlflow_logged": r.mlflow_logged} if r.mlflow_logged else {}),
                     **(
                         {
                             "inferences": [

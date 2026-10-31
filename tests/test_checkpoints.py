@@ -811,7 +811,16 @@ INF_INVENTORY = ML_INVENTORY.replace(
 
 
 async def test_service_inferences(tmp_path: Path) -> None:
-    svc = make_service(tmp_path, text=INF_INVENTORY)
+    """The inferences come from MLflow only, with their dataset and mapping."""
+    text = INF_INVENTORY.replace(
+        "        show: [params.data]\n",
+        "        show: [params.data]\n"
+        "        dataset_name: params.ds\n"
+        "        dataset_path: params.ds_path\n"
+        "        mapping_name: params.mapping\n",
+        1,
+    )
+    svc = make_service(tmp_path, text=text)
     await svc.start()
     stub = _StubMlflow()
     svc.mlflow.source = stub
@@ -819,60 +828,87 @@ async def test_service_inferences(tmp_path: Path) -> None:
         lst = await svc.checkpoints.listing("seg")
         a = next(r for r in lst.runs if r.name == "run_a")
         ckpt = a.groups[1].files[0]
-        # a TrainHub inference on a checkpoint of run_a, already linked to its MLflow run
-        run = await svc.launch(
-            INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True
-        )
-        await svc.set_mlflow(run.id, stub.info, started_at=run.started_at)
         ref = MlflowRunRef
         stub.inferences = [
-            # the MLflow run of the TrainHub inference: merged into it
             MlflowHit(
                 f"/workspace/seg/outputs/{ckpt.path}",
-                ref(run_id="th-ml", run_name="infer-th"),
-                {"params.data": "ade20k", "tags.trainhub.run_id": run.id},
+                ref(run_id="in", run_name="infer-in"),
+                {
+                    "params.data": "ade20k",
+                    "params.ds": "ade20k-val",
+                    "params.ds_path": "/data/ade/val",
+                    "params.mapping": "ade-150",
+                },
             ),
-            # launched outside TrainHub, on a checkpoint deleted since
+            # on a checkpoint deleted since
             MlflowHit(
                 "/elsewhere/run_a/checkpoints/topk/epoch0000999.ckpt",
-                ref(run_id="ext", run_name="infer-ext"),
+                ref(run_id="gone", run_name="infer-gone"),
                 {"params.data": "coco"},
             ),
             MlflowHit("/elsewhere/unknown/x.ckpt", ref(run_id="lost")),
+            # in the MLflow trash: not shown
+            MlflowHit(f"/w/{ckpt.path}", ref(run_id="trash", deleted=True)),
         ]
         lst = await svc.checkpoints.listing("seg", refresh=True)
         assert stub.inference is not None
         cfg, extra = stub.inference
         assert cfg.experiments == ["seg-infer"]
-        assert extra == ["params.data", "tags.trainhub.run_id"]
+        assert extra == ["params.data", "params.ds", "params.ds_path", "params.mapping"]
         a = next(r for r in lst.runs if r.name == "run_a")
-        by_ml = {i.mlflow.run_id if i.mlflow else None: i for i in a.inferences}
-        assert set(by_ml) == {"th-ml", "ext"}
-        th = by_ml["th-ml"]
-        assert th.trainhub_run == run.id and th.project == "seg-infer"
-        assert th.config == "baseline" and th.checkpoint == ckpt.path and th.exists
-        assert th.mlflow is not None and th.mlflow.run_name == "infer-th"
-        assert th.logged == {"params.data": "ade20k"}
-        ext = by_ml["ext"]
-        assert ext.trainhub_run is None and not ext.exists and ext.logged == {"params.data": "coco"}
-        assert ext.checkpoint == "run_a/checkpoints/topk/epoch0000999.ckpt"
+        by_ml = {i.mlflow.run_id: i for i in a.inferences}
+        assert set(by_ml) == {"in", "gone"}
+        inf = by_ml["in"]
+        assert inf.checkpoint == ckpt.path and inf.exists and inf.mlflow.run_name == "infer-in"
+        assert (inf.dataset_name, inf.dataset_path, inf.mapping_name) == (
+            "ade20k-val",
+            "/data/ade/val",
+            "ade-150",
+        )
+        assert inf.logged == {"params.data": "ade20k"}  # the special keys have their badges
+        gone = by_ml["gone"]
+        assert (
+            not gone.exists and gone.dataset_name is None and gone.logged == {"params.data": "coco"}
+        )
+        assert gone.checkpoint == "run_a/checkpoints/topk/epoch0000999.ckpt"
         assert all(not r.inferences for r in lst.runs if r.name != "run_a")
-        assert lst.mlflow_inference is not None and lst.mlflow_inference.searched == 3
+        assert lst.mlflow_inference is not None and lst.mlflow_inference.searched == 4
         assert lst.mlflow_inference.match == "params.ckpt_path"
     finally:
         await svc.close()
 
 
-async def test_trainhub_inferences_without_mlflow(svc: RunService) -> None:
+async def test_trainhub_runs_are_not_inferences(svc: RunService) -> None:
+    """MLflow is the only source of the inferences: a TrainHub run launched with a checkpoint
+    only counts in the checkpoint's runs."""
     lst = await svc.checkpoints.listing("seg")
     ckpt = lst.runs[0].groups[1].files[0]
-    run = await svc.launch(
-        INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True
-    )
+    await svc.launch(INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True)
     lst = await svc.checkpoints.listing("seg")
-    [inf] = lst.runs[0].inferences
-    assert inf.trainhub_run == run.id and inf.config == "baseline" and inf.mlflow is None
+    assert lst.runs[0].inferences == []
+    assert lst.runs[0].groups[1].files[0].runs is not None
     assert lst.mlflow is None and lst.mlflow_inference is None
+
+
+async def test_training_show(tmp_path: Path) -> None:
+    text = ML_INVENTORY.replace(
+        "    mlflow: {match: params.callbacks/model_checkpoint/dirpath}\n",
+        "    mlflow:\n"
+        "      match: params.callbacks/model_checkpoint/dirpath\n"
+        "      show: [metrics.val_loss, params.lr]\n",
+        1,
+    )
+    svc = make_service(tmp_path, text=text)
+    await svc.start()
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        a = next(r for r in lst.runs if r.name == "run_a")
+        assert set(a.mlflow_logged) == {"metrics.val_loss", "params.lr"}
+        assert next(r for r in lst.runs if r.name == "run_b").mlflow_logged == {}
+        with pytest.raises(InventoryError, match=r"params\.<key>, tags\.<key> or metrics"):
+            parse_inventory(text.replace("show: [metrics.val_loss", "show: [val_loss"), "t.yaml")
+    finally:
+        await svc.close()
 
 
 async def test_fake_mlflow_inferences(tmp_path: Path) -> None:

@@ -102,7 +102,11 @@ projects:
 #     mlflow:                           # optional: MLflow run of each directory (global server)
 #       match: params.callbacks/model_checkpoint/dirpath   # key holding the directory path
 #       # experiments: [segmentation]   # default: those of the mlflow section
-#       # inference:                    # inferences made with these checkpoints
+#       # show: [metrics.val_loss]      # values of the training run shown on each directory
+#       # inference:                    # inferences made with these checkpoints (MLflow only)
 #       #   match: params.ckpt_path     # key holding the checkpoint path
 #       #   experiments: [seg-inference]
-#       #   show: [params.data.dataset, metrics.test/miou] # params / tags / metrics (last value)
+#       #   show: [metrics.test/miou]   # params / tags / metrics (last value)
+#       #   dataset_name: params.data.name   # button: dataset name, copies dataset_path
+#       #   dataset_path: params.data.path
+#       #   mapping_name: params.data.mapping  # badge

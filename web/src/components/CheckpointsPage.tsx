@@ -32,15 +32,12 @@ import type {
   RunView,
 } from "~/lib/types"
 import {
-  addDraft,
   checkpointPick,
   checkpointProjects,
-  draftFromRun,
   draftsFromCheckpoints,
   pickCheckpoint,
   project,
   runsByCheckpoint,
-  setActiveTab,
   setCheckpointPick,
   state,
 } from "~/stores/app"
@@ -60,7 +57,6 @@ import {
   IconCopy,
   IconMlflow,
   IconRefresh,
-  IconRelaunch,
   IconSearch,
   IconSpinner,
   IconTrash,
@@ -276,7 +272,7 @@ const INFERENCE_COLOR: Record<InferenceState, string> = {
 
 /** Short description of an inference: name, project · config, logged values. */
 function inferenceName(inf: CheckpointInference): string {
-  return inf.mlflow?.run_name ?? inf.trainhub_run ?? inf.mlflow?.run_id ?? "?"
+  return inf.mlflow.run_name ?? inf.mlflow.run_id
 }
 
 /** Inference count of a run or a checkpoint: a button that opens their list (no tooltip). */
@@ -594,32 +590,9 @@ export function CheckpointsPage(props: { source?: string }) {
     else toast("clipboard unavailable", "error")
   }
 
-  /**
-   * “Relaunch” an inference: new draft like its TrainHub run (nothing is launched). A run
-   * closed since is no longer known: the draft gets its project, config and checkpoint.
-   */
-  const relaunchInference = (inf: CheckpointInference) => {
-    const pid = inf.project
-    if (!pid) return
-    if (inf.trainhub_run && state.runs[inf.trainhub_run]) draftFromRun(inf.trainhub_run)
-    else {
-      const p = project(pid)
-      if (!p) {
-        toast(`project “${pid}” missing from the inventory`, "error")
-        return
-      }
-      const src = source()
-      const machine = src?.machine && p.machines.includes(src.machine) ? src.machine : null
-      addDraft(pid, {
-        machine,
-        config: inf.config ?? null,
-        checkpoint: p.accepts_checkpoint && src ? hostPath(src.root, inf.checkpoint) : "",
-        focus: true,
-      })
-      setActiveTab(pid)
-    }
-    if (!inf.exists) toast(`checkpoint ${inf.checkpoint} deleted since`, "error")
-    navigate(`/p/${encodeURIComponent(pid)}`)
+  const copyDataset = async (path: string) => {
+    if (await copyText(path)) toast(`copied: ${path}`, "success")
+    else toast("clipboard unavailable", "error")
   }
 
   const copyRunDir = async (name: string) => {
@@ -824,13 +797,8 @@ export function CheckpointsPage(props: { source?: string }) {
           class="dot"
           style={{ "--dot-color": INFERENCE_COLOR[state()] }}
           role="img"
-          aria-label={inf().mlflow?.status ?? inf().status ?? "unknown status"}
-          title={[
-            inf().mlflow?.status && `MLflow: ${inf().mlflow!.status}`,
-            inf().status && `TrainHub: ${inf().status}`,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          aria-label={inf().mlflow.status ?? "unknown status"}
+          title={inf().mlflow.status ? `MLflow: ${inf().mlflow.status}` : undefined}
         />
         <span
           class="w-120 min-w-40 shrink truncate font-mono text-sm text-fg-strong"
@@ -849,12 +817,30 @@ export function CheckpointsPage(props: { source?: string }) {
         <Show when={!inf().exists && rp.showCheckpoint}>
           <span class="shrink-0 text-xs text-fg-weaker">deleted</span>
         </Show>
-        <Show when={inf().config}>
+        <Show when={inf().dataset_name ?? inf().dataset_path}>
+          {(name) => (
+            <button
+              type="button"
+              class="max-w-60 shrink-0 truncate rounded bg-surface px-1.5 font-mono text-xs text-fg hover:bg-surface-hover hover:text-fg-strong disabled:cursor-default disabled:hover:bg-surface"
+              disabled={!inf().dataset_path}
+              onClick={(e) => {
+                e.stopPropagation()
+                const path = inf().dataset_path
+                if (path) void copyDataset(path)
+              }}
+              aria-label={`Dataset ${name()}: copy its path`}
+              data-testid="ckpt-inference-dataset"
+            >
+              {inf().dataset_name ?? inf().dataset_path!.split("/").filter(Boolean).pop()}
+            </button>
+          )}
+        </Show>
+        <Show when={inf().mapping_name}>
           <span
-            class="shrink-0 rounded bg-surface px-1.5 font-mono text-xs text-fg"
-            title={`TrainHub: project ${inf().project}, config ${inf().config}`}
+            class="max-w-60 shrink-0 truncate rounded border border-line-weak px-1.5 font-mono text-xs text-fg-weak"
+            data-testid="ckpt-inference-mapping"
           >
-            {inf().config}
+            {inf().mapping_name}
           </span>
         </Show>
         <For each={Object.entries(inf().logged ?? {})}>
@@ -868,19 +854,7 @@ export function CheckpointsPage(props: { source?: string }) {
           )}
         </For>
         <span class="flex w-14 shrink-0 items-center justify-center gap-0.5">
-          <Show when={inf().trainhub_run && inf().project}>
-            <button
-              type="button"
-              class="flex size-6 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
-              title={`Relaunch: new draft in ${inf().project} like TrainHub run ${inf().trainhub_run}`}
-              aria-label="Relaunch the inference (new draft)"
-              onClick={() => relaunchInference(inf())}
-              data-testid="ckpt-inference-trainhub"
-            >
-              <IconRelaunch size={13} />
-            </button>
-          </Show>
-          <Show when={inf().mlflow?.url}>
+          <Show when={inf().mlflow.url}>
             {(url) => (
               <MlflowLink url={url()} label="Open the inference in MLflow" testid="ckpt-inference-mlflow" />
             )}
@@ -965,6 +939,23 @@ export function CheckpointsPage(props: { source?: string }) {
               whole directory
             </span>
           </Show>
+          <For each={Object.entries(run().mlflow_logged ?? {})}>
+            {([k, v]) => (
+              <span
+                class="max-w-40 shrink-0 truncate rounded bg-surface px-1.5 font-mono text-xs text-fg-weak"
+                data-testid="ckpt-run-logged"
+                data-key={k}
+              >
+                <span class="text-fg-weaker">
+                  {k
+                    .slice(k.indexOf(".") + 1)
+                    .split(/[./]/)
+                    .pop()}{" "}
+                </span>
+                {v}
+              </span>
+            )}
+          </For>
           <Show when={listing()?.mlflow && mlflowRunning(run().mlflow_runs ?? [])}>
             <span
               class="shrink-0 rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-st-green"
