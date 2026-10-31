@@ -146,6 +146,37 @@ export function pruneSelection(
   return new Set([...selected].filter((p) => present.has(p)))
 }
 
+export interface RunSelectionSummary {
+  runs: number
+  /** Checkpoints of the selected directories (their other files are not listed). */
+  files: number
+  size: number
+}
+
+/** Selected run directories (whole-directory deletion). */
+export function runSelectionSummary(
+  listing: CheckpointListing | undefined,
+  names: ReadonlySet<string>,
+): RunSelectionSummary {
+  const sum: RunSelectionSummary = { runs: 0, files: 0, size: 0 }
+  for (const r of listing?.runs ?? []) {
+    if (!names.has(r.name)) continue
+    sum.runs++
+    sum.files += r.count
+    sum.size += r.size
+  }
+  return sum
+}
+
+/** Selected run directories still present in the listing. */
+export function pruneRunSelection(
+  listing: CheckpointListing | undefined,
+  names: ReadonlySet<string>,
+): Set<string> {
+  const present = new Set((listing?.runs ?? []).map((r) => r.name))
+  return new Set([...names].filter((n) => present.has(n)))
+}
+
 // -- inferences ----------------------------------------------------------------------------
 
 export type InferenceState = "running" | "finished" | "failed" | "other"

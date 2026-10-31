@@ -2,7 +2,7 @@
 
 It interprets the docker argv actually built by :mod:`trainhub.core.commands`
 (``docker run/ps/inspect/logs/pause/unpause/stop/start/restart/rm``, ``find`` and the
-checkpoint deletion script), which also
+checkpoint deletion scripts), which also
 tests command building. Each container produces realistic logs: Hydra banner, resolved
 config, colored ANSI lines, tqdm bars rewritten with ``\\r``, per-epoch metrics, warnings,
 and possibly a traceback with exit code 1.
@@ -335,6 +335,8 @@ class FakeExecutor(Executor):
             return self._find(argv)
         if argv[0] == "sh" and len(argv) > 4 and argv[3] == ck.RM_SCRIPT_NAME:
             return self._rm_checkpoints(argv[4], argv[5:])
+        if argv[0] == "sh" and len(argv) > 4 and argv[3] == ck.RM_RUNS_SCRIPT_NAME:
+            return self._rm_run_dirs(argv[4], argv[5:])
         if argv[0] == "nvidia-smi":
             return self._nvidia_smi(machine, m, argv)
         if argv[:2] == ["sh", "-c"] and argv[2:] == [CPU_SCRIPT]:
@@ -470,6 +472,23 @@ class FakeExecutor(Executor):
             if tree.get(rel, ("",))[0] == "d" and not any(p.startswith(rel + "/") for p in tree):
                 del tree[rel]
                 out.append(f"rmdir\t{rel}")
+        return 0, "".join(line + "\n" for line in out), ""
+
+    def _rm_run_dirs(self, root: str, names: list[str]) -> tuple[int, str, str]:
+        tree = self._checkpoint_tree(root)
+        if tree is None:
+            return 2, f"root\t{root}\n", ""
+        out: list[str] = []
+        for name in names:
+            entry = tree.get(name)
+            if entry is None:
+                out.append(f"gone\t{name}")
+            elif entry[0] != "d":
+                out.append(f"err\t{name}\tnot a directory")
+            else:
+                for p in [p for p in tree if p == name or p.startswith(name + "/")]:
+                    del tree[p]
+                out.append(f"ok\t{name}")
         return 0, "".join(line + "\n" for line in out), ""
 
     def _nvidia_smi(

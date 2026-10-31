@@ -10,9 +10,11 @@ import {
   inferenceCheckpoint,
   inferenceState,
   inferencesByFile,
+  pruneRunSelection,
   pruneSelection,
   type RunRowView,
   runFiles,
+  runSelectionSummary,
   type SortKey,
   selectionSummary,
   toggleFiles,
@@ -37,7 +39,14 @@ import {
   setCheckpointPick,
   state,
 } from "~/stores/app"
-import { deleteCheckpoints, listings, loadCheckpoints, loadOrphans, orphans } from "~/stores/checkpoints"
+import {
+  deleteCheckpoints,
+  deleteRunDirs,
+  listings,
+  loadCheckpoints,
+  loadOrphans,
+  orphans,
+} from "~/stores/checkpoints"
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
 import {
@@ -136,7 +145,7 @@ function Cols(props: { count?: JSX.Element; size: number; date?: string | null; 
 const INSET_LINE =
   "relative before:pointer-events-none before:absolute before:top-0 before:right-0 before:h-px before:bg-line-weaker before:content-['']"
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
+const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`
 
 /** MLflow column of a run directory: green dot and link if an MLflow run logged from it. */
 function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
@@ -345,6 +354,10 @@ export function CheckpointsPage(props: { source?: string }) {
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set())
   const [deleteMode, setDeleteMode] = createSignal(false)
   const [toDelete, setToDelete] = createSignal<Set<string>>(new Set())
+  /** What the delete mode removes: checkpoint files, or whole run directories. */
+  const [deleteScope, setDeleteScope] = createSignal<"files" | "runs">("files")
+  const [runsToDelete, setRunsToDelete] = createSignal<Set<string>>(new Set())
+  const deletingRuns = () => deleteMode() && deleteScope() === "runs"
   const [toSend, setToSend] = createSignal<Set<string>>(new Set())
   const [deleting, setDeleting] = createSignal(false)
   const [target, setTarget] = createSignal<string | null>(null)
@@ -378,6 +391,7 @@ export function CheckpointsPage(props: { source?: string }) {
       setExpanded(new Set<string>())
       setOpenInf(new Set<string>())
       setToDelete(new Set<string>())
+      setRunsToDelete(new Set<string>())
       setToSend(new Set<string>())
       setDeleteMode(false)
     }),
@@ -386,6 +400,7 @@ export function CheckpointsPage(props: { source?: string }) {
   createEffect(
     on(listing, (l) => {
       setToDelete((s) => pruneSelection(l, s))
+      setRunsToDelete((s) => pruneRunSelection(l, s))
       setToSend((s) => pruneSelection(l, s))
     }),
   )
@@ -410,6 +425,14 @@ export function CheckpointsPage(props: { source?: string }) {
     return t && list.some((p) => p.id === t) ? t : (list[0]?.id ?? null)
   }
   const deleteSummary = createMemo(() => selectionSummary(listing(), toDelete()))
+  const runDeleteSummary = createMemo(() => runSelectionSummary(listing(), runsToDelete()))
+  const toggleRunDir = (name: string) =>
+    setRunsToDelete((s) => {
+      const n = new Set(s)
+      if (n.has(name)) n.delete(name)
+      else n.add(name)
+      return n
+    })
   const sendSummary = createMemo(() => selectionSummary(listing(), toSend()))
 
   const isOpen = (r: RunRowView) => r.expand || expanded().has(r.run.name)
@@ -425,11 +448,18 @@ export function CheckpointsPage(props: { source?: string }) {
   const enterDelete = () => {
     setToSend(new Set<string>())
     setToDelete(new Set<string>())
+    setRunsToDelete(new Set<string>())
+    setDeleteScope("files")
     setDeleteMode(true)
   }
   const exitDelete = () => {
     setDeleteMode(false)
     setToDelete(new Set<string>())
+    setRunsToDelete(new Set<string>())
+  }
+  const clearDeleteSelection = () => {
+    setToDelete(new Set<string>())
+    setRunsToDelete(new Set<string>())
   }
 
   onMount(() => {
@@ -452,7 +482,36 @@ export function CheckpointsPage(props: { source?: string }) {
   // Leaving the tab without choosing cancels the pick.
   onCleanup(() => setCheckpointPick(null))
 
+  const confirmDeleteRuns = async () => {
+    const src = sourceId()
+    const names = [...runsToDelete()]
+    if (!src || !names.length || deleting()) return
+    setDeleting(true)
+    const res = await deleteRunDirs(src, names)
+    setDeleting(false)
+    if (!res) return
+    const failed = Object.entries(res.failed ?? {})
+    if (res.deleted.length) {
+      toast(
+        `${plural(res.deleted.length, "run directory", "run directories")} deleted, ${formatBytes(res.freed)} of checkpoints freed`,
+        "success",
+      )
+    }
+    if (failed.length) {
+      const [name, err] = failed[0]!
+      toast(
+        `${plural(failed.length, "run directory", "run directories")} not deleted: ${name}: ${err}${failed.length > 1 ? " (…)" : ""}`,
+        "error",
+        10000,
+      )
+      setRunsToDelete(new Set(failed.map(([n]) => n)))
+    } else {
+      exitDelete()
+    }
+  }
+
   const confirmDelete = async () => {
+    if (deleteScope() === "runs") return confirmDeleteRuns()
     const src = sourceId()
     const paths = [...toDelete()]
     if (!src || !paths.length || deleting()) return
@@ -539,10 +598,11 @@ export function CheckpointsPage(props: { source?: string }) {
     const path = () => (source() ? hostPath(source()!.root, fp.file.path) : fp.file.path)
     const runs = (): RunView[] => byCheckpoint()[path()] ?? []
     const selected = () => (deleteMode() ? toDelete() : toSend()).has(fp.file.path)
+    const deletable = () => fp.deletable && !deletingRuns()
     const toggle = () => {
       if (picking()) pickFile(fp.file)
       else if (deleteMode()) {
-        if (fp.deletable) setToDelete((s) => toggleFiles([fp.file], s))
+        if (deletable()) setToDelete((s) => toggleFiles([fp.file], s))
       } else setToSend((s) => toggleFiles([fp.file], s))
     }
     const writing = () => now() - Date.parse(fp.file.mtime) < WRITING_MS
@@ -555,17 +615,22 @@ export function CheckpointsPage(props: { source?: string }) {
             "bg-surface-active": selected() && !deleteMode(),
             "bg-critical-bg": selected() && deleteMode(),
             "opacity-50": deleteMode() && !fp.deletable,
+            "cursor-default": deletingRuns(),
           }}
           onClick={toggle}
           data-testid="ckpt-file"
           data-path={fp.file.path}
         >
           <Show
-            when={!picking() && (!deleteMode() || fp.deletable)}
+            when={!picking() && (!deleteMode() || deletable())}
             fallback={
               <span
                 class="size-3.5 shrink-0"
-                title={picking() ? undefined : "Not under a run directory: cannot be deleted here"}
+                title={
+                  picking() || deletingRuns()
+                    ? undefined
+                    : "Not under a run directory: cannot be deleted here"
+                }
               />
             }
           >
@@ -795,13 +860,16 @@ export function CheckpointsPage(props: { source?: string }) {
     const run = () => rp.row.run
     const open = () => isOpen(rp.row)
     const filesSelected = () => {
+      if (deletingRuns()) return 0
       const sel = deleteMode() ? toDelete() : toSend()
       return runFiles(rp.row).filter((f) => sel.has(f.path)).length
     }
+    const dirSelected = () => deletingRuns() && runsToDelete().has(run().name)
     return (
       <div class="border-b border-line-weak" data-testid="ckpt-run" data-run={run().name}>
         <div
           class="flex h-10 cursor-pointer items-center gap-2 px-4 outline-none hover:bg-surface-hover focus-visible:bg-surface-hover"
+          classList={{ "bg-critical-bg": dirSelected() }}
           role="button"
           tabIndex={0}
           aria-expanded={open()}
@@ -817,7 +885,16 @@ export function CheckpointsPage(props: { source?: string }) {
             size={11}
             class={`shrink-0 text-icon transition-transform duration-150 ${open() ? "rotate-90" : ""}`}
           />
-          <Show when={deleteMode() && runFiles(rp.row).length}>
+          <Show when={deletingRuns()}>
+            <Check
+              state={dirSelected() ? "all" : "none"}
+              onToggle={() => toggleRunDir(run().name)}
+              label={`Select the whole directory ${run().name}`}
+              danger
+              testid="ckpt-rundir-check"
+            />
+          </Show>
+          <Show when={deleteMode() && !deletingRuns() && runFiles(rp.row).length}>
             <Check
               state={checkState(runFiles(rp.row), toDelete())}
               onToggle={() => setToDelete((s) => toggleFiles(runFiles(rp.row), s))}
@@ -841,6 +918,11 @@ export function CheckpointsPage(props: { source?: string }) {
               }}
             >
               {filesSelected()} selected
+            </span>
+          </Show>
+          <Show when={dirSelected()}>
+            <span class="shrink-0 rounded bg-critical-bg px-1.5 text-xs text-fg-critical">
+              whole directory
             </span>
           </Show>
           <Show when={listing()?.mlflow}>
@@ -1108,8 +1190,50 @@ export function CheckpointsPage(props: { source?: string }) {
               }
             >
               <Show when={deleteMode()}>
-                <div class="border-b border-line-weaker px-4 py-1.5 text-xs text-fg-critical">
-                  Delete mode: tick checkpoints or whole runs, then slide to confirm at the bottom.
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line-weaker px-4 py-1.5 text-xs text-fg-critical">
+                  <div
+                    class="flex h-6 items-center rounded border border-line-critical p-0.5"
+                    role="group"
+                    aria-label="What to delete"
+                  >
+                    <For
+                      each={
+                        [
+                          ["files", "Checkpoints"],
+                          ["runs", "Whole run directories"],
+                        ] as const
+                      }
+                    >
+                      {([k, label]) => (
+                        <button
+                          type="button"
+                          class="h-full rounded px-2"
+                          classList={{
+                            "bg-critical-bg text-fg-critical": deleteScope() === k,
+                            "text-fg-weak hover:text-fg-strong": deleteScope() !== k,
+                          }}
+                          onClick={() => {
+                            if (deleteScope() === k) return
+                            clearDeleteSelection()
+                            setDeleteScope(k)
+                          }}
+                          aria-pressed={deleteScope() === k}
+                          data-testid={`ckpt-delete-scope-${k}`}
+                        >
+                          {label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                  <span>
+                    <Show
+                      when={deletingRuns()}
+                      fallback="Tick checkpoints or all those of a run (the run directory stays), then slide to confirm at the bottom."
+                    >
+                      Tick runs: their whole directory is removed (checkpoints, logs, configs, everything in
+                      it), then slide to confirm at the bottom.
+                    </Show>
+                  </span>
                 </div>
               </Show>
               <For
@@ -1141,32 +1265,53 @@ export function CheckpointsPage(props: { source?: string }) {
             >
               <span class="text-sm text-fg-strong" data-testid="ckpt-delete-summary">
                 <Show
-                  when={deleteSummary().files}
-                  fallback={<span class="text-fg-weak">Nothing selected</span>}
+                  when={!deletingRuns()}
+                  fallback={
+                    <Show
+                      when={runDeleteSummary().runs}
+                      fallback={<span class="text-fg-weak">Nothing selected</span>}
+                    >
+                      {plural(runDeleteSummary().runs, "run directory", "run directories")} (
+                      {plural(runDeleteSummary().files, "checkpoint")} ·{" "}
+                      <span class="font-mono font-medium text-fg-critical">
+                        {formatBytes(runDeleteSummary().size)}
+                      </span>
+                      , plus their other files)
+                    </Show>
+                  }
                 >
-                  <Show when={deleteSummary().groups}>{plural(deleteSummary().groups, "group")}, </Show>
-                  {plural(deleteSummary().files, "checkpoint")} in {plural(deleteSummary().runs, "run")} ·{" "}
-                  <span class="font-mono font-medium text-fg-critical">
-                    {formatBytes(deleteSummary().size)}
-                  </span>
+                  <Show
+                    when={deleteSummary().files}
+                    fallback={<span class="text-fg-weak">Nothing selected</span>}
+                  >
+                    <Show when={deleteSummary().groups}>{plural(deleteSummary().groups, "group")}, </Show>
+                    {plural(deleteSummary().files, "checkpoint")} in {plural(deleteSummary().runs, "run")} ·{" "}
+                    <span class="font-mono font-medium text-fg-critical">
+                      {formatBytes(deleteSummary().size)}
+                    </span>
+                  </Show>
                 </Show>
               </span>
               <div class="flex-1" />
               <button
                 type="button"
                 class="h-7 rounded px-2 text-xs text-fg-weak hover:text-fg-strong"
-                onClick={() => setToDelete(new Set<string>())}
-                disabled={!toDelete().size}
+                onClick={clearDeleteSelection}
+                disabled={!toDelete().size && !runsToDelete().size}
               >
                 Clear selection
               </button>
               <SlideToConfirm
                 label={
-                  deleteSummary().files
-                    ? `Slide to delete ${plural(deleteSummary().files, "checkpoint")}`
-                    : "Select checkpoints"
+                  deletingRuns()
+                    ? runDeleteSummary().runs
+                      ? `Slide to delete ${plural(runDeleteSummary().runs, "run directory", "run directories")}`
+                      : "Select runs"
+                    : deleteSummary().files
+                      ? `Slide to delete ${plural(deleteSummary().files, "checkpoint")}`
+                      : "Select checkpoints"
                 }
-                disabled={!deleteSummary().files}
+                disabled={deletingRuns() ? !runDeleteSummary().runs : !deleteSummary().files}
                 busy={deleting()}
                 onConfirm={() => void confirmDelete()}
                 testid="ckpt-slide"

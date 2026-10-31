@@ -29,6 +29,7 @@ from .schemas import (
     CheckpointListing,
     CheckpointMlflowStatus,
     CheckpointRun,
+    CheckpointRunDeleteResult,
     CheckpointSourceView,
     MlflowDeleteResult,
     MlflowOrphan,
@@ -392,6 +393,63 @@ class CheckpointService:
             deleted=outcome.deleted,
             failed=outcome.failed,
             removed_dirs=outcome.removed_dirs,
+            freed=freed,
+            size=view.size or 0,
+            count=view.count or 0,
+        )
+
+    async def delete_runs(self, source_id: str, names: list[str]) -> CheckpointRunDeleteResult:
+        """Delete whole run directories of a source (``rm -rf``: checkpoints, logs, configs…).
+
+        Each name must be a single path component; the machine checks that it is a real
+        directory directly under the root (not a symbolic link) before removing it.
+        """
+        from .runs import InvalidRequestError, UnreachableError
+
+        src = self._source(source_id)
+        dirs = list(dict.fromkeys(n.strip() for n in names))
+        bad = [n for n in dirs if not ck.valid_run_name(n)]
+        if bad:
+            raise InvalidRequestError(
+                f"not a run directory of source '{src.id}' (a single directory name): "
+                f"{', '.join(repr(b) for b in bad[:5])}"
+            )
+        machine = self._machine(src)
+        try:
+            res = await self.svc.executor.exec(
+                machine, ck.delete_run_dirs(src.root, dirs), timeout=DELETE_TIMEOUT_S
+            )
+        except MachineUnreachableError as exc:
+            raise UnreachableError(str(exc)) from exc
+        except ExecutorError as exc:
+            raise InvalidRequestError(f"deletion failed: {exc}") from exc
+        outcome = ck.parse_delete_output(res.out, dirs)
+        if outcome.root_missing:
+            raise InvalidRequestError(f"root of source '{src.id}' not found: {src.root}")
+        log.info(
+            "run directories deleted",
+            extra={
+                "source": src.id,
+                "deleted": len(outcome.deleted),
+                "failed": len(outcome.failed),
+            },
+        )
+        freed = 0
+        scan = self._cache.get(src.id)
+        if scan is not None:
+            gone = set(outcome.deleted)
+
+            def under(e: ck.Entry) -> bool:
+                return e.parts[0] in gone
+
+            freed = sum(e.size for e in scan.entries if e.kind == "f" and under(e))
+            scan.entries = [e for e in scan.entries if not under(e)]
+        self._publish(src)
+        view = self.source_view(src)
+        return CheckpointRunDeleteResult(
+            source=src.id,
+            deleted=outcome.deleted,
+            failed=outcome.failed,
             freed=freed,
             size=view.size or 0,
             count=view.count or 0,

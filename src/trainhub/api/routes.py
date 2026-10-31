@@ -15,6 +15,8 @@ from ..service.schemas import (
     CheckpointDeleteRequest,
     CheckpointDeleteResult,
     CheckpointListing,
+    CheckpointRunDeleteRequest,
+    CheckpointRunDeleteResult,
     CheckpointSourceView,
     ConfigList,
     Health,
@@ -136,6 +138,19 @@ async def delete_checkpoints(
     """Delete checkpoint files (paths relative to the root); empty group directories are
     removed. Partial failures are listed in ``failed``."""
     return await svc.checkpoints.delete(source_id, req.paths)
+
+
+@router.post(
+    "/checkpoints/{source_id}/delete-runs",
+    response_model=CheckpointRunDeleteResult,
+    tags=["checkpoints"],
+)
+async def delete_checkpoint_runs(
+    source_id: str, req: CheckpointRunDeleteRequest, svc: Svc
+) -> CheckpointRunDeleteResult:
+    """Delete whole run directories of a source (everything in them, not only the
+    checkpoints)."""
+    return await svc.checkpoints.delete_runs(source_id, req.names)
 
 
 @router.get("/ui-state", response_model=UiState, tags=["ui"])

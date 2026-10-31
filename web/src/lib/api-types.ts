@@ -228,6 +228,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/checkpoints/{source_id}/delete-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete Checkpoint Runs
+         * @description Delete whole run directories of a source (everything in them, not only the
+         *     checkpoints).
+         */
+        post: operations["delete_checkpoint_runs_api_checkpoints__source_id__delete_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui-state": {
         parameters: {
             query?: never;
@@ -587,6 +608,43 @@ export interface components {
              * @description MLflow runs logged from this directory, most recent first (empty: none found, or the source has no mlflow section)
              */
             mlflow_runs?: components["schemas"]["MlflowRunRef"][];
+        };
+        /** CheckpointRunDeleteRequest */
+        CheckpointRunDeleteRequest: {
+            /**
+             * Names
+             * @description Run directories ({name} of the layout) to delete entirely
+             */
+            names: string[];
+        };
+        /** CheckpointRunDeleteResult */
+        CheckpointRunDeleteResult: {
+            /** Source */
+            source: string;
+            /**
+             * Deleted
+             * @description Deleted (or already missing) run directories
+             */
+            deleted: string[];
+            /**
+             * Failed
+             * @description Directory → error
+             */
+            failed?: {
+                [key: string]: string;
+            };
+            /**
+             * Freed
+             * @description Bytes of the checkpoints they held (last scan; other files not counted)
+             */
+            freed: number;
+            /**
+             * Size
+             * @description New total size of the source
+             */
+            size: number;
+            /** Count */
+            count: number;
         };
         /**
          * CheckpointSourceView
@@ -1816,6 +1874,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CheckpointDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_checkpoint_runs_api_checkpoints__source_id__delete_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckpointRunDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointRunDeleteResult"];
                 };
             };
             /** @description Validation Error */

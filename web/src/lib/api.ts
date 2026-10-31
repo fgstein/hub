@@ -1,6 +1,7 @@
 import type {
   CheckpointDeleteResult,
   CheckpointListing,
+  CheckpointRunDeleteResult,
   CheckpointSourceView,
   ConfigList,
   InventoryView,
@@ -90,6 +91,10 @@ export const api = {
   deleteCheckpoints: (source: string, paths: string[]) =>
     request<CheckpointDeleteResult>("POST", `/api/checkpoints/${encodeURIComponent(source)}/delete`, {
       paths,
+    }),
+  deleteRunDirs: (source: string, names: string[]) =>
+    request<CheckpointRunDeleteResult>("POST", `/api/checkpoints/${encodeURIComponent(source)}/delete-runs`, {
+      names,
     }),
   logsUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/logs`,
 }

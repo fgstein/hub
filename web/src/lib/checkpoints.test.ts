@@ -6,7 +6,9 @@ import {
   inferenceCheckpoint,
   inferenceState,
   inferencesByFile,
+  pruneRunSelection,
   pruneSelection,
+  runSelectionSummary,
   selectionSummary,
   toggleFiles,
   viewRuns,
@@ -136,6 +138,18 @@ describe("selection", () => {
       "alpha/checkpoints/topk/epoch0000003.ckpt",
       "stray.ckpt",
     ])
+  })
+
+  it("summarizes and prunes whole run directories", () => {
+    const [alpha, beta] = LISTING.runs
+    const sel = new Set(["alpha", "beta", "gone"])
+    expect(runSelectionSummary(LISTING, sel)).toEqual({
+      runs: 2,
+      files: alpha!.count + beta!.count,
+      size: alpha!.size + beta!.size,
+    })
+    expect([...pruneRunSelection(LISTING, sel)].sort()).toEqual(["alpha", "beta"])
+    expect(runSelectionSummary(undefined, sel)).toEqual({ runs: 0, files: 0, size: 0 })
   })
 
   it("builds machine paths", () => {

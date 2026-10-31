@@ -262,6 +262,32 @@ def test_real_delete_permission_error(tmp_path: Path) -> None:
         locked.chmod(0o755)
 
 
+@pytest.mark.skipif(find_missing, reason="find/realpath missing")
+def test_real_delete_runs_script(tmp_path: Path) -> None:
+    root = tmp_path / "out"
+    _tree(root)
+    outside = tmp_path / "precious"
+    outside.mkdir()
+    (outside / "keep.ckpt").write_text("x")
+    (root / "link").symlink_to(outside)
+    (root / "r1" / "escape").symlink_to(outside)  # links inside a run are not followed
+    (root / "file.ckpt").write_text("x")
+    names = ["r1", "r2 with space", "link", "file.ckpt", "missing"]
+    res = subprocess.run(ck.delete_run_dirs(str(root), names), capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    o = ck.parse_delete_output(res.stdout, names)
+    assert set(o.deleted) == {"r1", "r2 with space", "missing"}
+    assert o.failed == {"link": "symbolic link", "file.ckpt": "not a directory"}
+    assert sorted(p.name for p in root.iterdir()) == ["file.ckpt", "link", "r3"]
+    assert (outside / "keep.ckpt").exists()
+
+
+def test_valid_run_name() -> None:
+    assert ck.valid_run_name("run_a") and ck.valid_run_name("r2 with space")
+    for bad in ["", ".", "..", ".hydra", "a/b", "/abs", "a\nb"]:
+        assert not ck.valid_run_name(bad), bad
+
+
 def test_delete_missing_root_output() -> None:
     o = ck.parse_delete_output("root\t/nope\n", ["a/b.ckpt"])
     assert o.root_missing and o.failed == {"a/b.ckpt": "root not found"}
@@ -399,6 +425,22 @@ async def test_service_delete_rejects(svc: RunService, bad: str) -> None:
         await svc.checkpoints.delete("seg", [bad])
 
 
+async def test_service_delete_runs(svc: RunService) -> None:
+    lst = await svc.checkpoints.listing("seg")
+    run = lst.runs[0]
+    empty = next(r for r in lst.runs if r.count == 0)
+    res = await svc.checkpoints.delete_runs("seg", [run.name, empty.name, "nope"])
+    assert sorted(res.deleted) == sorted([run.name, empty.name, "nope"]) and not res.failed
+    assert res.freed == run.size and res.size == lst.size - run.size
+    after = await svc.checkpoints.listing("seg")
+    assert {r.name for r in after.runs} == {r.name for r in lst.runs} - {run.name, empty.name}
+    rescan = await svc.checkpoints.listing("seg", refresh=True)
+    assert rescan.size == res.size and rescan.count == res.count
+    for bad in ["run_a/checkpoints", "..", ".hydra", ""]:
+        with pytest.raises(InvalidRequestError, match="not a run directory"):
+            await svc.checkpoints.delete_runs("seg", [bad])
+
+
 async def test_inference_with_checkpoint(svc: RunService) -> None:
     lst = await svc.checkpoints.listing("seg")
     f = lst.runs[0].groups[1].files[0]
@@ -460,6 +502,12 @@ def test_api(tmp_path: Path) -> None:
         r = client.post("/api/checkpoints/seg/delete", json={"paths": ["../x.ckpt"]})
         assert r.status_code == 422 and "not a checkpoint" in r.json()["detail"]
         assert client.post("/api/checkpoints/seg/delete", json={"paths": []}).status_code == 422
+        run = lst["runs"][0]["name"]
+        r = client.post("/api/checkpoints/seg/delete-runs", json={"names": [run]})
+        assert r.status_code == 200 and r.json()["deleted"] == [run]
+        assert run not in {x["name"] for x in client.get("/api/checkpoints/seg").json()["runs"]}
+        r = client.post("/api/checkpoints/seg/delete-runs", json={"names": ["a/b"]})
+        assert r.status_code == 422 and "not a run directory" in r.json()["detail"]
         assert client.get("/api/checkpoints/nope").status_code == 404
         inv = client.get("/api/inventory").json()
         assert [s["id"] for s in inv["checkpoint_sources"]] == ["seg", "flat"]

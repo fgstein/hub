@@ -4,6 +4,7 @@ import { api } from "~/lib/api"
 import type {
   CheckpointDeleteResult,
   CheckpointListing,
+  CheckpointRunDeleteResult,
   CheckpointSourceView,
   MlflowDeleteResult,
   MlflowOrphanListing,
@@ -88,6 +89,21 @@ export async function deleteCheckpoints(
   try {
     const res = await api.deleteCheckpoints(source, paths)
     // The server updated its cache: reload without rescanning the disk.
+    await loadCheckpoints(source, "reload")
+    return res
+  } catch (e) {
+    toastError(e)
+    return null
+  }
+}
+
+/** Delete whole run directories (everything in them), then reload from the server cache. */
+export async function deleteRunDirs(
+  source: string,
+  names: string[],
+): Promise<CheckpointRunDeleteResult | null> {
+  try {
+    const res = await api.deleteRunDirs(source, names)
     await loadCheckpoints(source, "reload")
     return res
   } catch (e) {
