@@ -1043,9 +1043,6 @@ export function CheckpointsPage(props: { source?: string }) {
               >
                 <IconCopy size={12} /> copy path
               </button>
-              <Show when={source()?.machine}>
-                {(m) => <span class="shrink-0 text-fg-weaker">on {m()}</span>}
-              </Show>
             </div>
             <For each={flatFiles(rp.row)}>
               {(x) => (

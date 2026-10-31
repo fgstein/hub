@@ -376,8 +376,10 @@ Several sources may point to the same shared disk (NFS) from different machines.
 
 **Link with MLflow.** With an `mlflow` block, each run directory is linked to the MLflow run that
 logged its path, under a parameter or tag. The tab then shows a column with a green dot and a
-link to the run in the MLflow UI (an orange `orphan` label: no MLflow run found), and `MLflow 6/7` next to
-the root (directories linked / directories). The search box also finds a directory from the
+link to the run in the MLflow UI (the blue MLflow mark; an orange `orphan` label: no MLflow run
+found; a red `deleted` label: its MLflow runs are all in the MLflow trash, until `mlflow gc`), and
+`MLflow 6/7` next to the root (directories linked / directories). Runs in the MLflow trash are
+never orphans nor inferences. The search box also finds a directory from the
 name or id of its MLflow run.
 
 ```yaml
@@ -440,9 +442,11 @@ As for the directories, the path may be seen from the container: from its last c
 is a run directory, the rest is the checkpoint. An inference whose checkpoint was deleted since
 stays listed, struck through.
 
-With `machine: null` (or no `machine`), `find` and `rm` run directly on the host of the TrainHub
-server, without SSH, with its user (in the Docker image, mount the directory into the container
-at the same path). Sending such a checkpoint to a project leaves the machine to pick in the draft.
+Without `machine` (the usual case: a shared volume), `find` and `rm` run directly on the host of
+the TrainHub server, without SSH, with its user (in the Docker image, mount the directory into the
+container at the same path). Sending such a checkpoint to a project keeps the last machine used
+for that project in the draft. Set `machine` only for a directory visible from that machine alone:
+`find` and `rm` then run there.
 
 In the tab:
 
@@ -453,6 +457,9 @@ In the tab:
   `{group}` (`topk`, `last`…; `other`: outside the layout);
 - each checkpoint shows its size, its date (“writing?” if modified less than a minute ago) and
   `⟲ N`, the TrainHub runs launched with it (hover for the list, click to open the project);
+- an opened run starts with a line giving its directory path, with a **copy path** button;
+- an inference launched by TrainHub has a relaunch button: a new draft like that run (nothing is
+  launched);
 - **sending**: tick checkpoints (click on the line), choose a project taking a `{checkpoint}`,
   “Create N drafts”: one draft per checkpoint in that project, on the source's machine; the
   draft's `{checkpoint}` field can also be filled by hand;

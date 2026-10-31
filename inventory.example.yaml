@@ -88,8 +88,10 @@ projects:
 # checkpoints:
 #   - id: seg-outputs
 #     label: Segmentation outputs
-#     machine: gpu-01                   # where find and rm run (null: the TrainHub server)
-#     root: /home/alice/seg/outputs     # absolute, on the machine
+#     # machine: gpu-01                 # only if the directory is visible from that machine
+#     #                                 # alone: find and rm run there (SSH). Without it, the
+#     #                                 # root is read on the TrainHub server (shared volume).
+#     root: /home/alice/seg/outputs     # absolute (on the machine, if any)
 #     # {name}: one directory per run; {group}: optional level (topk, last…);
 #     # last component: file pattern
 #     layout: "{name}/checkpoints/{group}/*.ckpt"
