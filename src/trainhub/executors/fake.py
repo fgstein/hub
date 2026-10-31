@@ -1044,7 +1044,7 @@ class FakeMlflow(MlflowSource):
 
     def __init__(self, executor: FakeExecutor) -> None:
         self.executor = executor
-        #: MLflow runs deleted (they no longer show in the searches)
+        #: MLflow runs deleted (still found by the searches, flagged ``deleted``)
         self.deleted: set[str] = set()
 
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
@@ -1066,8 +1066,8 @@ class FakeMlflow(MlflowSource):
         self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
     ) -> tuple[list[MlflowHit], bool]:
         """Simulated MLflow runs of the checkpoint sources: a training run logged from each
-        run directory but the second one; zero to three inferences per directory, one of
-        them on a checkpoint deleted since."""
+        run directory but the second one (the third one's is in the MLflow trash); zero to
+        three inferences per directory, one of them on a checkpoint deleted since."""
         inv = self.executor.inventory
         out: list[MlflowHit] = []
         for src in inv.checkpoints if inv else []:
@@ -1094,12 +1094,10 @@ class FakeMlflow(MlflowSource):
                     if i == 1:
                         continue
                     status = "RUNNING" if i == 0 else rng.choice(["FINISHED"] * 3 + ["FAILED"])
-                    out.append(
-                        MlflowHit(
-                            f"/workspace/outputs/{name}/checkpoints",
-                            ref(f"{src.id}-{name}", name, status, i * 2.5 + 1),
-                        )
-                    )
+                    hit = ref(f"{src.id}-{name}", name, status, i * 2.5 + 1)
+                    if i == 2:  # in the MLflow trash
+                        hit = hit.model_copy(update={"deleted": True})
+                    out.append(MlflowHit(f"/workspace/outputs/{name}/checkpoints", hit))
                 # directories deleted since: orphans
                 for k, gone in enumerate(["unet_small_2026-08-14", "segformer_b0_debug"]):
                     out.append(
@@ -1147,7 +1145,12 @@ class FakeMlflow(MlflowSource):
                                 logged,
                             )
                         )
-        out = [h for h in out if h.ref.run_id not in self.deleted]
+        out = [
+            MlflowHit(h.value, h.ref.model_copy(update={"deleted": True}), h.logged)
+            if h.ref.run_id in self.deleted
+            else h
+            for h in out
+        ]
         out.sort(key=lambda h: h.ref.started_at or datetime.min.replace(tzinfo=UTC), reverse=True)
         return out, False
 

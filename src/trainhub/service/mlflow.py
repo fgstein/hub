@@ -104,6 +104,7 @@ def read_ref(cfg: MlflowConfig, run: dict[str, Any]) -> MlflowRunRef | None:
         status=info.get("status"),
         started_at=datetime.fromtimestamp(start / 1000, UTC) if start else None,
         url=f"{cfg.tracking_uri}/#/experiments/{exp}/runs/{run_id}" if exp else None,
+        deleted=info.get("lifecycle_stage") == "deleted",
     )
 
 
@@ -137,7 +138,8 @@ class MlflowSource(abc.ABC):
         self, cfg: MlflowConfig, match: str, extra: Sequence[str] = ()
     ) -> tuple[list[MlflowHit], bool]:
         """Runs having the key ``match`` (``params.<key>`` / ``tags.<key>``), most recent
-        first, with its value and those of ``extra``; and whether the search stopped early."""
+        first, with its value and those of ``extra``; and whether the search stopped early.
+        Runs in the MLflow trash are included, with ``ref.deleted``."""
         raise MlflowError("MLflow search not available")
 
     async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
@@ -265,6 +267,8 @@ class HttpMlflow(MlflowSource):
                 "filter": f"{kind}.`{key}` LIKE '%'",
                 "max_results": SEARCH_PAGE_SIZE,
                 "order_by": ["attributes.start_time DESC"],
+                # Deleted runs too (soft delete: still there until ``mlflow gc``).
+                "run_view_type": "ALL",
             }
             if token:
                 body["page_token"] = token
