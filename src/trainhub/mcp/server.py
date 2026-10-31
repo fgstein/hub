@@ -323,7 +323,7 @@ def build_mcp(
         annotations=READ,
         description="Runs and checkpoints of a source, most recent run first: for each run "
         "its groups (e.g. topk, last) and checkpoint files (path relative to the root, "
-        "size in bytes, date, TrainHub runs already launched with it), its MLflow runs (with "
+        "size in bytes, date), its MLflow runs (with "
         "mlflow_logged: the values of mlflow.show of the latest one) and the inferences made "
         "with its checkpoints (MLflow runs of mlflow.inference, with dataset_name, "
         "dataset_path, mapping_name and logged values when configured). The absolute path "
@@ -341,10 +341,7 @@ def build_mcp(
         runs = [r for r in lst.runs if not name or name.lower() in r.name.lower()]
 
         def file(f: Any) -> dict[str, Any]:
-            d = {"path": f.path, "size": f.size, "mtime": f.mtime.isoformat()}
-            if f.runs:
-                d["runs"] = f.runs.model_dump()
-            return d
+            return {"path": f.path, "size": f.size, "mtime": f.mtime.isoformat()}
 
         return {
             "source": lst.source,

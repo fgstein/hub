@@ -470,22 +470,6 @@ export function pickCheckpoint(machine: string | null, path: string): string | n
   return pick.projectId
 }
 
-/** TrainHub runs launched with each checkpoint (path on the machine), live. */
-export function runsByCheckpoint(): Record<string, RunView[]> {
-  const out: Record<string, RunView[]> = {}
-  for (const r of Object.values(state.runs)) {
-    if (!r.checkpoint) continue
-    let list = out[r.checkpoint]
-    if (!list) {
-      list = []
-      out[r.checkpoint] = list
-    }
-    list.push(r)
-  }
-  for (const list of Object.values(out)) list.sort((a, b) => b.created_at.localeCompare(a.created_at))
-  return out
-}
-
 /** Projects whose command takes a ``{checkpoint}`` (targets of the Checkpoints tab). */
 export function checkpointProjects(): ProjectView[] {
   return (state.inventory?.projects ?? []).filter((p) => p.accepts_checkpoint)

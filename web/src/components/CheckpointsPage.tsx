@@ -29,7 +29,6 @@ import type {
   CheckpointListing,
   CheckpointSourceView,
   MlflowRunRef,
-  RunView,
 } from "~/lib/types"
 import {
   checkpointPick,
@@ -37,7 +36,6 @@ import {
   draftsFromCheckpoints,
   pickCheckpoint,
   project,
-  runsByCheckpoint,
   setCheckpointPick,
   state,
 } from "~/stores/app"
@@ -63,7 +61,6 @@ import {
 } from "./Icons"
 import { MlflowOrphansView } from "./MlflowOrphans"
 import { SlideToConfirm } from "./SlideToConfirm"
-import { statusLabel } from "./StatusDot"
 
 const SOURCE_KEY = "trainhub.checkpoints.source"
 /** Pseudo source “Orphans”: MLflow runs without a directory (not a valid source id). */
@@ -415,7 +412,6 @@ export function CheckpointsPage(props: { source?: string }) {
   )
 
   const rows = createMemo(() => viewRuns(listing(), { query: query(), sort: sort(), hideEmpty: hideEmpty() }))
-  const byCheckpoint = createMemo(runsByCheckpoint)
   /** Inferences per checkpoint of the listing (path relative to the root). */
   const inferencesByPath = createMemo(() => {
     const out = new Map<string, CheckpointInference[]>()
@@ -614,7 +610,6 @@ export function CheckpointsPage(props: { source?: string }) {
     labels?: boolean
   }) => {
     const path = () => (source() ? hostPath(source()!.root, fp.file.path) : fp.file.path)
-    const runs = (): RunView[] => byCheckpoint()[path()] ?? []
     const selected = () => (deleteMode() ? toDelete() : toSend()).has(fp.file.path)
     const deletable = () => fp.deletable && !deletingRuns()
     const toggle = () => {
@@ -694,39 +689,6 @@ export function CheckpointsPage(props: { source?: string }) {
                 onClick={() => toggleInf(fp.file.path)}
               />
             )}
-          </Show>
-          <Show when={runs().length}>
-            <Tip
-              class="shrink-0"
-              content={
-                <div class="space-y-0.5 font-mono">
-                  <For each={runs().slice(0, 8)}>
-                    {(r) => (
-                      <div>
-                        {r.id} · {r.project_id} · {statusLabel(r.status)} · {formatDateTime(r.created_at)}
-                      </div>
-                    )}
-                  </For>
-                  <Show when={runs().length > 8}>
-                    <div>…</div>
-                  </Show>
-                </div>
-              }
-            >
-              <button
-                type="button"
-                class="flex h-5 items-center rounded bg-surface px-1.5 font-mono text-xs text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const r = runs()[0]
-                  if (r) navigate(`/p/${encodeURIComponent(r.project_id)}`)
-                }}
-                aria-label={`${plural(runs().length, "run")} launched with this checkpoint`}
-                data-testid="ckpt-file-runs"
-              >
-                ⟲ {runs().length}
-              </button>
-            </Tip>
           </Show>
           <Cols size={fp.file.size} date={fp.file.mtime} dateTitle={formatDateTime(fp.file.mtime)} />
         </div>

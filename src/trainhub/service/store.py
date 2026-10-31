@@ -226,18 +226,6 @@ class Store:
             rows = await cur.fetchall()
         return {r["config"]: {"total": r["total"], "active": r["active"] or 0} for r in rows}
 
-    async def count_runs_by_checkpoint(self) -> dict[str, Any]:
-        """Number of runs per checkpoint (path on the machine): ``{path: {"total", "active"}}``."""
-        active = [str(s) for s in RunStatus if s.is_active]
-        sql = (
-            "SELECT checkpoint, COUNT(*) AS total, "
-            f"SUM(CASE WHEN status IN ({','.join('?' for _ in active)}) THEN 1 ELSE 0 END) "
-            "AS active FROM runs WHERE checkpoint IS NOT NULL GROUP BY checkpoint"
-        )
-        async with self.db.execute(sql, active) as cur:
-            rows = await cur.fetchall()
-        return {r["checkpoint"]: {"total": r["total"], "active": r["active"] or 0} for r in rows}
-
     async def delete_run(self, run_id: str) -> None:
         await self.db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
         await self.db.commit()

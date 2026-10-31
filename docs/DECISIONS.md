@@ -487,3 +487,10 @@ Request: linking the TrainHub runs and the MLflow runs of the inferences did not
   These keys are not repeated among the `show` values unless listed there too.
 - `mlflow.show` (training side): values of the latest MLflow run not in the trash, shown on
   the line of each run directory (`CheckpointRun.mlflow_logged`), short key + value.
+
+## Change — no count of TrainHub runs on the checkpoints (October 31)
+
+Request: MLflow only for the inferences, the `⟲ N` included. The count of the TrainHub runs
+launched with a checkpoint is gone from the tab (`CheckpointFile.runs`, the store's
+`count_runs_by_checkpoint`, `runs` of the MCP `list_checkpoints` files). Sending a checkpoint to
+a project is unchanged.
