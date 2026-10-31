@@ -16,7 +16,6 @@ from ..core.models import (
     CheckpointSource,
     Machine,
     MlflowRunRef,
-    Run,
     UnknownResourceError,
 )
 from ..core.status import utcnow
@@ -129,7 +128,6 @@ class CheckpointService:
             self._search_mlflow(src, "inference", refresh=refresh),
         )
         counts = await self.svc.store.count_runs_by_checkpoint()
-        runs = await self.svc.store.list_runs()
         return build_listing(
             src,
             scan.entries,
@@ -138,7 +136,6 @@ class CheckpointService:
             scanned_at=scan.at,
             mlflow=ml,
             inference=inf,
-            runs=runs,
         )
 
     async def _search_mlflow(
@@ -152,10 +149,11 @@ class CheckpointService:
         if cfg is None or match is None:
             self._mlflow_cache.pop((src.id, which), None)
             return None
-        # Inferences: also the TrainHub run id (tag), to merge with the TrainHub runs.
-        extra = (
-            (*ml.inference.show, f"tags.{cfg.run_tag}") if inference and ml and ml.inference else ()
-        )
+        # Values shown: show (and the dataset / mapping keys of the inferences).
+        if inference:
+            extra: tuple[str, ...] = ml.inference.keys if ml and ml.inference else ()
+        else:
+            extra = tuple(ml.show) if ml else ()
         key = (cfg.tracking_uri, match, tuple(cfg.experiments or ()), extra)
         hit = self._mlflow_cache.get((src.id, which))
         if hit is not None and hit.key != key:
@@ -476,7 +474,6 @@ def build_listing(
     scanned_at: datetime | None = None,
     mlflow: _MlflowSearch | None = None,
     inference: _MlflowSearch | None = None,
-    runs: list[Run] | None = None,
 ) -> CheckpointListing:
     """Scan entries → tree run / group / checkpoint, runs most recent first."""
     layout = ck.parse_layout(src.layout)
@@ -513,11 +510,14 @@ def build_listing(
 
     names = set(run_dirs) | set(groups) | set(others)
     ml_runs: dict[str, list[MlflowRunRef]] = {}
-    for h in mlflow.hits if mlflow else []:
+    ml_logged: dict[str, dict[str, str]] = {}
+    for h in mlflow.hits if mlflow else []:  # most recent first
         if (name := ck.run_in_path(h.value, names)) is not None:
             ml_runs.setdefault(name, []).append(h.ref)
+            if not h.ref.deleted and name not in ml_logged:
+                ml_logged[name] = h.logged
     files = {e.path for e in entries if e.kind == "f"}
-    inferences = _inferences(src, names, files, runs or [], inference)
+    inferences = _inferences(src, names, files, inference)
 
     out: list[CheckpointRun] = []
     for name in names:
@@ -545,6 +545,7 @@ def build_listing(
                 groups=gs,
                 others=extra,
                 mlflow_runs=ml_runs.get(name, []),
+                mlflow_logged=ml_logged.get(name, {}),
                 inferences=inferences.get(name, []),
             )
         )
@@ -573,66 +574,32 @@ def _inferences(
     src: CheckpointSource,
     names: set[str],
     files: set[str],
-    runs: list[Run],
     search: _MlflowSearch | None,
 ) -> dict[str, list[CheckpointInference]]:
-    """Inferences per run directory: TrainHub runs launched with one of its checkpoints,
-    merged with the MLflow runs that logged the path of one of them."""
-    by_trainhub: dict[str, CheckpointInference] = {}
-    by_mlflow: dict[str, CheckpointInference] = {}
+    """Inferences per run directory: the MLflow runs of ``mlflow.inference`` that logged the
+    path of one of its checkpoints (MLflow is the only source), most recent first."""
+    ml = src.mlflow.inference if src.mlflow else None
+    special = {k for k in (ml.dataset_name, ml.dataset_path, ml.mapping_name) if k} if ml else set()
     out: list[CheckpointInference] = []
-    prefix = src.root.rstrip("/") + "/"
-    for r in runs:
-        if not r.checkpoint or not r.checkpoint.startswith(prefix):
-            continue
-        rel = posixpath.normpath(r.checkpoint[len(prefix) :])
-        if rel.split("/", 1)[0] not in names:
-            continue
-        ml = r.mlflow
-        inf = CheckpointInference(
-            checkpoint=rel,
-            exists=rel in files,
-            started_at=r.started_at or r.created_at,
-            trainhub_run=r.id,
-            project=r.project_id,
-            config=r.config,
-            status=str(r.status),
-            mlflow=MlflowRunRef(
-                run_id=ml.run_id, experiment_id=ml.experiment_id, status=ml.status, url=ml.url
-            )
-            if ml and ml.run_id
-            else None,
-        )
-        by_trainhub[r.id] = inf
-        if inf.mlflow:
-            by_mlflow[inf.mlflow.run_id] = inf
-        out.append(inf)
-    trainhub = {r.id: r for r in runs}
-    tag_key = f"tags.{search.run_tag}" if search else ""
     for h in search.hits if search else []:
         path = ck.path_from_run(h.value, names)
         if path is None or h.ref.deleted:
             continue
-        tag = h.logged.get(tag_key)
-        logged = {k: v for k, v in h.logged.items() if k != tag_key}
-        same = by_mlflow.get(h.ref.run_id) or (by_trainhub.get(tag) if tag else None)
-        if same is not None:
-            # Launched by TrainHub: the MLflow run completes it (run name, logged values).
-            same.mlflow = h.ref
-            same.logged = logged
-            continue
-        th = trainhub.get(tag) if tag else None
         out.append(
             CheckpointInference(
                 checkpoint=path,
                 exists=path in files,
                 started_at=h.ref.started_at,
-                trainhub_run=tag,
-                project=th.project_id if th else None,
-                config=th.config if th else None,
-                status=str(th.status) if th else None,
                 mlflow=h.ref,
-                logged=logged,
+                dataset_name=h.logged.get(ml.dataset_name) if ml and ml.dataset_name else None,
+                dataset_path=h.logged.get(ml.dataset_path) if ml and ml.dataset_path else None,
+                mapping_name=h.logged.get(ml.mapping_name) if ml and ml.mapping_name else None,
+                # The special keys have their own badges, unless also asked in show.
+                logged={
+                    k: v
+                    for k, v in h.logged.items()
+                    if k not in special or (ml is not None and k in ml.show)
+                },
             )
         )
     epoch = datetime.min.replace(tzinfo=UTC)

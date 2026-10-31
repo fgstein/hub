@@ -546,7 +546,7 @@ export interface components {
         };
         /**
          * CheckpointInference
-         * @description An inference made with a checkpoint: TrainHub run, MLflow run, or both.
+         * @description An inference made with a checkpoint: an MLflow run of ``mlflow.inference``.
          */
         CheckpointInference: {
             /**
@@ -561,27 +561,22 @@ export interface components {
             exists: boolean;
             /** Started At */
             started_at?: string | null;
+            mlflow: components["schemas"]["MlflowRunRef"];
             /**
-             * Trainhub Run
-             * @description TrainHub run id
+             * Dataset Name
+             * @description Value of inference.dataset_name
              */
-            trainhub_run?: string | null;
+            dataset_name?: string | null;
             /**
-             * Project
-             * @description TrainHub project
+             * Dataset Path
+             * @description Value of inference.dataset_path
              */
-            project?: string | null;
+            dataset_path?: string | null;
             /**
-             * Config
-             * @description TrainHub config
+             * Mapping Name
+             * @description Value of inference.mapping_name
              */
-            config?: string | null;
-            /**
-             * Status
-             * @description Status of the TrainHub run
-             */
-            status?: string | null;
-            mlflow?: components["schemas"]["MlflowRunRef"] | null;
+            mapping_name?: string | null;
             /**
              * Logged
              * @description Values of the keys of mlflow.inference.show
@@ -682,7 +677,7 @@ export interface components {
             others?: components["schemas"]["CheckpointFile"][];
             /**
              * Inferences
-             * @description Inferences made with the checkpoints of this directory (TrainHub runs and MLflow runs of mlflow.inference), most recent first
+             * @description Inferences made with the checkpoints of this directory (MLflow runs of mlflow.inference), most recent first
              */
             inferences?: components["schemas"]["CheckpointInference"][];
             /**
@@ -690,6 +685,13 @@ export interface components {
              * @description MLflow runs logged from this directory, most recent first (empty: none found, or the source has no mlflow section)
              */
             mlflow_runs?: components["schemas"]["MlflowRunRef"][];
+            /**
+             * Mlflow Logged
+             * @description Values of the keys of mlflow.show for the latest MLflow run (not deleted)
+             */
+            mlflow_logged?: {
+                [key: string]: string;
+            };
         };
         /** CheckpointRunDeleteRequest */
         CheckpointRunDeleteRequest: {

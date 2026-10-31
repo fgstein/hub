@@ -182,28 +182,13 @@ export function pruneRunSelection(
 
 export type InferenceState = "running" | "finished" | "failed" | "other"
 
-/** State of an inference: its MLflow run if known, else its TrainHub run. */
-export function inferenceState(inf: CheckpointInference): InferenceState {
-  const ml = inf.mlflow?.status
-  if (ml) {
-    if (ml === "RUNNING" || ml === "SCHEDULED") return "running"
-    if (ml === "FINISHED") return "finished"
-    return "failed"
-  }
-  switch (inf.status) {
-    case "launching":
-    case "running":
-    case "paused":
-    case "stopping":
-      return "running"
-    case "succeeded":
-      return "finished"
-    case "failed":
-    case "unreachable":
-      return "failed"
-    default:
-      return "other"
-  }
+/** State of an inference: that of its MLflow run. */
+export function inferenceState(inf: Pick<CheckpointInference, "mlflow">): InferenceState {
+  const ml = inf.mlflow.status
+  if (ml === "RUNNING" || ml === "SCHEDULED") return "running"
+  if (ml === "FINISHED") return "finished"
+  if (ml === "FAILED" || ml === "KILLED") return "failed"
+  return "other"
 }
 
 /** Inferences of a run per checkpoint (path relative to the root), most recent first. */

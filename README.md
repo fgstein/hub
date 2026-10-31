@@ -422,15 +422,18 @@ only runs that are orphans at that moment, and nothing while a source cannot be 
 
 **Inferences.** Each run directory also lists the inferences made with its checkpoints: `⇢ N` on
 the run and on each checkpoint. A click on `⇢ N` shows the inferences under their checkpoint
-(hidden by default; on the run: those of all its checkpoints): status dot, name, config, logged
-values, date, links to TrainHub and MLflow. Inferences of checkpoints deleted since are grouped
-at the bottom of the run. They come from:
+(hidden by default; on the run: those of all its checkpoints): status dot, name, dataset, mapping,
+logged values, date, link to MLflow. Inferences of checkpoints deleted since are grouped at the
+bottom of the run. **MLflow is their only source**: with `mlflow.inference`, the MLflow runs,
+typically of a separate experiment, that logged the path of a checkpoint of the source (a TrainHub
+run launched with a checkpoint only counts in its `⟲ N`). To launch an inference again, start
+from the checkpoint (send it to a project).
 
-- the TrainHub runs launched with a `{checkpoint}` of the source (always, MLflow or not), with
-  their project and config;
-- with `mlflow.inference`, the MLflow runs, typically of a separate experiment, that logged the
-  path of a checkpoint of the source. An MLflow run tagged `trainhub.run_id` (`run_tag`) by a
-  TrainHub run is merged into it.
+- `dataset_name` / `dataset_path`: a button showing the name of the dataset (its last path
+  component without a name); a click copies its path.
+- `mapping_name`: a badge with the name of the mapping.
+- `show` on the training side (`mlflow.show`) shows, on each run directory, values of its latest
+  MLflow run (not in the trash), e.g. the best validation loss.
 
 ```yaml
 checkpoints:
@@ -438,14 +441,19 @@ checkpoints:
     root: /home/alice/seg/outputs
     mlflow:
       match: params.callbacks/model_checkpoint/dirpath   # optional: the training runs
+      show: [metrics.val_loss, params.trainer.max_epochs] # shown on each run directory
       inference:
         match: params.ckpt_path                # key holding the checkpoint path
         experiments: [seg-inference]           # default: those of the mlflow section
-        show: [params.data.dataset, metrics.test/miou]   # params / tags / metrics shown
+        show: [metrics.test/miou]              # params / tags / metrics shown
+        dataset_name: params.data.name         # button: dataset name, copies dataset_path
+        dataset_path: params.data.path
+        mapping_name: params.data.mapping      # badge
 ```
 
 `show` takes `params.<key>`, `tags.<key>` or `metrics.<key>`; a metric shows its last value
-(`12` rather than `12.0`, otherwise 6 significant digits). `match` stays a parameter or a tag.
+(`12` rather than `12.0`, otherwise 6 significant digits). `match`, `dataset_name`,
+`dataset_path` and `mapping_name` are a parameter or a tag.
 
 As for the directories, the path may be seen from the container: from its last component that
 is a run directory, the rest is the checkpoint. An inference whose checkpoint was deleted since

@@ -472,3 +472,18 @@ was up; running them again a few times worked.
   kept-alive connection closed by the server as the request went out) is sent once more, never
   `runs/delete`.
 - Not reproduced against a real server (none here): deduced from the code and the symptoms.
+
+## Change — inferences from MLflow only; dataset, mapping; show for the training runs (October 31)
+
+Request: linking the TrainHub runs and the MLflow runs of the inferences did not work well
+(doubles); simplify: MLflow is the only source of the inferences.
+
+- `CheckpointInference` is an MLflow run (`mlflow` required): no more TrainHub run, project,
+  config or status, no merge by `run_tag`, no relaunch button (the user starts from the
+  checkpoint). The `⟲ N` count of the TrainHub runs launched with a checkpoint stays.
+- `mlflow.inference.dataset_name`, `dataset_path`, `mapping_name`: MLflow keys (params / tags)
+  read for each inference. Dataset: a button showing the name (else the last component of the
+  path), a click copies the path (disabled without a path). Mapping: a badge, not clickable yet.
+  These keys are not repeated among the `show` values unless listed there too.
+- `mlflow.show` (training side): values of the latest MLflow run not in the trash, shown on
+  the line of each run directory (`CheckpointRun.mlflow_logged`), short key + value.

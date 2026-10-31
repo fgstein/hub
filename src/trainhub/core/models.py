@@ -464,12 +464,37 @@ class CheckpointInferenceMlflow(_Strict):
         description="Parameters, tags or metrics shown for each inference "
         "(params.<key> / tags.<key> / metrics.<key>: last value)",
     )
+    dataset_name: str | None = Field(
+        default=None,
+        description="MLflow key holding the name of the dataset of the inference "
+        "(params.<key> / tags.<key>): shown as a button that copies its path",
+    )
+    dataset_path: str | None = Field(
+        default=None,
+        description="MLflow key holding the path of the dataset (copied by the dataset button)",
+    )
+    mapping_name: str | None = Field(
+        default=None, description="MLflow key holding the name of the mapping (badge)"
+    )
 
     @field_validator("match")
     @classmethod
     def _check_match(cls, v: str) -> str:
         split_mlflow_key(v)
         return v
+
+    @field_validator("dataset_name", "dataset_path", "mapping_name")
+    @classmethod
+    def _check_special(cls, v: str | None) -> str | None:
+        if v is not None:
+            split_mlflow_key(v)
+        return v
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """MLflow keys read for each inference."""
+        special = (self.dataset_name, self.dataset_path, self.mapping_name)
+        return tuple(dict.fromkeys([*self.show, *(k for k in special if k)]))
 
     @field_validator("show")
     @classmethod
@@ -498,6 +523,11 @@ class CheckpointMlflow(_Strict):
     experiments: list[str] | None = Field(
         default=None, description="Experiment names searched (default: those of mlflow)"
     )
+    show: list[str] = Field(
+        default_factory=list,
+        description="Parameters, tags or metrics of the training run shown for each run "
+        "directory (params.<key> / tags.<key> / metrics.<key>: last value)",
+    )
     inference: CheckpointInferenceMlflow | None = Field(
         default=None, description="MLflow runs of the inferences made with the checkpoints"
     )
@@ -507,6 +537,13 @@ class CheckpointMlflow(_Strict):
     def _check_match(cls, v: str | None) -> str | None:
         if v is not None:
             split_mlflow_key(v)
+        return v
+
+    @field_validator("show")
+    @classmethod
+    def _check_show(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_shown_key(key)
         return v
 
     @model_validator(mode="after")
@@ -837,16 +874,15 @@ class MlflowRunRef(BaseModel):
 
 
 class CheckpointInference(BaseModel):
-    """An inference made with a checkpoint: TrainHub run, MLflow run, or both."""
+    """An inference made with a checkpoint: an MLflow run of ``mlflow.inference``."""
 
     checkpoint: str = Field(description="Checkpoint, relative to the source root")
     exists: bool = Field(description="The checkpoint is still on disk (last scan)")
     started_at: datetime | None = None
-    trainhub_run: str | None = Field(default=None, description="TrainHub run id")
-    project: str | None = Field(default=None, description="TrainHub project")
-    config: str | None = Field(default=None, description="TrainHub config")
-    status: str | None = Field(default=None, description="Status of the TrainHub run")
-    mlflow: MlflowRunRef | None = None
+    mlflow: MlflowRunRef
+    dataset_name: str | None = Field(default=None, description="Value of inference.dataset_name")
+    dataset_path: str | None = Field(default=None, description="Value of inference.dataset_path")
+    mapping_name: str | None = Field(default=None, description="Value of inference.mapping_name")
     logged: dict[str, str] = Field(
         default_factory=dict, description="Values of the keys of mlflow.inference.show"
     )
