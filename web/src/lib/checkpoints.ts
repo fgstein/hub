@@ -5,6 +5,7 @@ import type {
   CheckpointInference,
   CheckpointListing,
   CheckpointRun,
+  MlflowRunRef,
 } from "./types"
 
 export type SortKey = "date" | "name" | "size"
@@ -219,4 +220,15 @@ export function inferencesByFile(run: Pick<CheckpointRun, "inferences">): Map<st
 /** Checkpoint of an inference as shown under its run: path without the run directory. */
 export function inferenceCheckpoint(run: string, inf: CheckpointInference): string {
   return inf.checkpoint.startsWith(`${run}/`) ? inf.checkpoint.slice(run.length + 1) : inf.checkpoint
+}
+
+/**
+ * A run directory whose training is still going on: its most recent MLflow run (the first
+ * one not in the MLflow trash; the listing is most recent first) is running or scheduled.
+ */
+export function mlflowRunning(
+  runs: readonly { status?: MlflowRunRef["status"]; deleted?: boolean }[],
+): boolean {
+  const latest = runs.find((m) => !m.deleted)
+  return latest?.status === "RUNNING" || latest?.status === "SCHEDULED"
 }

@@ -6,6 +6,7 @@ import {
   inferenceCheckpoint,
   inferenceState,
   inferencesByFile,
+  mlflowRunning,
   pruneRunSelection,
   pruneSelection,
   runSelectionSummary,
@@ -233,5 +234,16 @@ describe("flatFiles", () => {
       ["r/c/last/e3.ckpt", "last"],
       ["r/c/topk/e3.ckpt", "topk"],
     ])
+  })
+})
+
+describe("mlflowRunning", () => {
+  it("follows the most recent MLflow run not in the trash", () => {
+    expect(mlflowRunning([])).toBe(false)
+    expect(mlflowRunning([{ status: "RUNNING" }])).toBe(true)
+    expect(mlflowRunning([{ status: "SCHEDULED" }])).toBe(true)
+    expect(mlflowRunning([{ status: "FINISHED" }, { status: "RUNNING" }])).toBe(false)
+    expect(mlflowRunning([{ status: "RUNNING", deleted: true }, { status: "FAILED" }])).toBe(false)
+    expect(mlflowRunning([{ status: "FAILED", deleted: true }, { status: "RUNNING" }])).toBe(true)
   })
 })

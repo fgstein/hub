@@ -382,7 +382,8 @@ Several sources may point to the same shared disk (NFS) from different machines.
 **Link with MLflow.** With an `mlflow` block, each run directory is linked to the MLflow run that
 logged its path, under a parameter or tag. The tab then shows a column with a green dot and a
 link to the run in the MLflow UI (the blue MLflow mark; an orange `orphan` label: no MLflow run
-found; a red `deleted` label: its MLflow runs are all in the MLflow trash, until `mlflow gc`), and
+found; a red `deleted` label: its MLflow runs are all in the MLflow trash, until `mlflow gc`; a green
+`running` label: its latest MLflow run is still running, the training goes on), and
 `MLflow 6/7` next to the root (directories linked / directories). Runs in the MLflow trash are
 never orphans nor inferences. The search box also finds a directory from the
 name or id of its MLflow run.
