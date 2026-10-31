@@ -376,7 +376,7 @@ already executed (TrainHub or not, complex trees) and sends a checkpoint to an i
 - E2E: `infer` (extends `seg`) is first in the test inventory so the tab order of the existing
   tests stays `seg → det`. Fake mode: when several projects share a configs root, the simulated
   tree is the one declared for any of them. The “GPU picker” e2e test already failed before this
-  change (last selection `gpu-down` left by an earlier test).
+  change (fixed on October 31, see “Fix — every test green”).
 
 ## Addition — mark a run as finished by hand (October 30)
 
@@ -494,3 +494,29 @@ Request: MLflow only for the inferences, the `⟲ N` included. The count of the 
 launched with a checkpoint is gone from the tab (`CheckpointFile.runs`, the store's
 `count_runs_by_checkpoint`, `runs` of the MCP `list_checkpoints` files). Sending a checkpoint to
 a project is unchanged.
+
+## Fix — every test green (October 31)
+
+- e2e “GPU picker”: it expected a new draft without machine (“Choose a machine first”), but a
+  draft always gets one (the last one used in the project, else the first allowed), since the
+  first version of the interface: the test failed whatever ran before it. That step is gone;
+  the test still checks the GPU rows, the CUDA_VISIBLE_DEVICES toggles, Escape closing only the
+  picker, and an unreachable machine.
+- CI, front-end job: `ubuntu-latest` became Ubuntu 26.04, on which Playwright 1.56 cannot install
+  Chromium (“does not support chromium on ubuntu26.04-x64”): the job failed before running any
+  test. Pinned to `ubuntu-24.04` until Playwright is upgraded.
+- Once the job ran again, “unreachable machine” failed in CI (not locally): **a real bug**. The
+  draft cancels itself on Escape unless the focused element says its list is open
+  (`aria-expanded`); right after a picker (config, GPU) opens, the focus may still be on a field
+  of the draft (the machine combobox, list closed): Escape then cancelled the whole draft
+  instead of closing the picker. Fixed in `DraftRow`: Escape and Enter leave the draft alone
+  while any floating list or picker (`.menu-content`) is open. New e2e test sending Escape to a
+  field of the draft while the config picker is open (it failed before the fix).
+- e2e “MLflow”: it took the first running row and expected a single stopped run in the project;
+  it now follows the run it launched, by id (`launchedRow`).
+- The e2e suite runs once on a fresh server (`.trainhub/e2e` is deleted at start): some tests
+  rely on the state of a first pass (number of active runs, checkpoints deleted by the
+  checkpoints test), so `--repeat-each` is not supported.
+- Skipped locally only (they run in CI or need a setup): the local Docker test (Docker and the
+  `trainhub-fake-train` image), the simulated SSH machines (`make sim-up`) and one test that
+  needs a non-root user.

@@ -233,14 +233,18 @@ export function DraftRow(props: { project: ProjectView; draft: Draft; autofocus?
         el.addEventListener(
           "keydown",
           (e) => {
-            listOpenAtKeydown = (e.target as HTMLElement).getAttribute("aria-expanded") === "true"
+            // A list of the draft, or a floating picker (config, GPU…) that may not hold the
+            // focus yet (the key then reaches a field of the draft): it is closed first.
+            listOpenAtKeydown =
+              (e.target as HTMLElement).getAttribute("aria-expanded") === "true" ||
+              document.querySelector(".menu-content") !== null
           },
           true,
         )
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
-          // Escape first closes an open list (handled by Kobalte), then the draft.
+          // Escape first closes an open list or picker (handled by Kobalte), then the draft.
           if (listOpenAtKeydown) return
           e.preventDefault()
           removeDraft(p().id, d().key)

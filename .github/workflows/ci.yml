@@ -23,7 +23,9 @@ jobs:
 
   web:
     name: Front end (biome, tsc, vitest, build, playwright)
-    runs-on: ubuntu-latest
+    # Pinned: Playwright 1.56 cannot install its browser on ubuntu-latest (26.04). Move to
+    # ubuntu-latest again together with a Playwright version that supports it.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
