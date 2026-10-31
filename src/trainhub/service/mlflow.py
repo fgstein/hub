@@ -668,4 +668,6 @@ def _external(
         mlflow=info,
         discovered_at=previous.discovered_at if previous else now,
         unseen_failure=failed and unseen,
+        # Seen while stalled: until it logs again (or ends).
+        stale_seen_at=previous.stale_seen_at if previous and info.stale else None,
     )

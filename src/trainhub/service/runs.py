@@ -1306,13 +1306,19 @@ class RunService:
         self.bus.publish("external_run.deleted", {"id": run.id, "project_id": run.project_id})
 
     async def mark_external_seen(self, run_id: str) -> ExternalRun:
-        """Mark the failure of an external run as seen: it moves to the finished runs."""
+        """Mark an external run as seen: a failure, or a stalled run (running in MLflow but
+        no new metric: often a killed process). It moves to the finished runs; a stalled run
+        comes back among the active ones if it logs again."""
         run = await self.get_external_run(run_id)
         if run.unseen_failure:
-            run = run.model_copy(update={"unseen_failure": False})
-            await self.store.save_external(run)
-            self._publish_external(run)
-        return run
+            changed = run.model_copy(update={"unseen_failure": False})
+        elif run.is_active and run.mlflow.stale and run.stale_seen_at is None:
+            changed = run.model_copy(update={"stale_seen_at": utcnow()})
+        else:
+            return run
+        await self.store.save_external(changed)
+        self._publish_external(changed)
+        return changed
 
     def _publish_external(self, run: ExternalRun) -> None:
         self.bus.publish(

@@ -952,6 +952,12 @@ class ExternalRun(BaseModel):
         default=False,
         description="Failed and not marked as seen yet: stays among the active runs until then",
     )
+    stale_seen_at: datetime | None = Field(
+        default=None,
+        description="Stalled (running, no new metric: often a killed process MLflow was never "
+        "told about) and marked as seen at that time: shown among the finished runs until a "
+        "new metric arrives",
+    )
 
     @property
     def is_active(self) -> bool:

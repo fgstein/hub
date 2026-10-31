@@ -33,7 +33,8 @@ list_checkpoints. Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
 To run the same command several times in a row (e.g. with different seeds), pass series
 to launch_run: one run, one container, the repetitions one after the other.
-A failed run (unseen_failure) stays among the active runs until mark_run_seen. Projects
+A failed run (unseen_failure) stays among the active runs until mark_run_seen (also for
+a stalled external run). Projects
 tracked with MLflow also show external runs: MLflow runs TrainHub did not launch, found in
 the experiments the project names (list_external_runs); TrainHub only reads them.
 """
@@ -131,6 +132,7 @@ def external_summary(run: ExternalRun) -> dict[str, Any]:
         "active": run.is_active,
         "failed": run.is_failure,
         "unseen_failure": run.unseen_failure,
+        "stale_seen": run.stale_seen_at is not None,
         "started_at": ml.started_at.isoformat() if ml.started_at else None,
         "finished_at": ml.finished_at.isoformat() if ml.finished_at else None,
         "mlflow": mlflow_summary(ml),
@@ -674,9 +676,11 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Mark the failure of a run as seen (unseen_failure=true: a failed run "
-        "stays among the active runs until then): it moves to the finished runs. Takes a "
-        "TrainHub run id or an external run id (MLflow run id).",
+        description="Mark a run as seen: a failed run (unseen_failure=true stays among the "
+        "active runs until then), or a stalled external run (still RUNNING in MLflow but "
+        "mlflow.stale: no new metric for a while, often a process killed without MLflow "
+        "knowing). It moves to the finished runs; a stalled one comes back if it logs again. "
+        "Takes a TrainHub run id or an external run id (MLflow run id).",
     )
     async def mark_run_seen(
         run_id: Annotated[str, Field(description="TrainHub run id, or MLflow run id")],
@@ -687,8 +691,8 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
-        description="Remove an external run from TrainHub: it is no longer shown and does not "
-        "come back. Nothing changes in MLflow.",
+        description="Remove an external run from TrainHub, running or not: it is no longer "
+        "shown and does not come back. Nothing changes in MLflow.",
     )
     async def delete_external_run(
         run_id: Annotated[str, Field(description="External run id (MLflow run id)")],

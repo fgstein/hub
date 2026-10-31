@@ -437,3 +437,18 @@ server) into TrainHub, merged with what TrainHub already shows; mlwatcher stays 
   failed 20 min before the start). The dev inventory names `segmentation` for that project.
 - Test fixed on the way: `test_tracker_with_fake` assumed the container ended before MLflow
   (failed about 2 times out of 3 before this change).
+
+## Change — stalled external runs can be seen or removed (October 31)
+
+Request: a stalled external run (orange) is often a dead one — a process killed without MLflow
+knowing stays `RUNNING` forever — and could be neither seen nor removed.
+
+- The trash button of an external run is always there, running or not (it only hides the run
+  in TrainHub, as before; the server already allowed it).
+- **Seen** on a stalled external run (running, `mlflow.stale`) sets `stale_seen_at`: the run
+  moves to the finished runs (“stalled, seen”) and no longer counts in the tab. Cleared as soon
+  as it is no longer stalled (a new metric) or ends: it then follows the usual rules (a
+  failure is to be seen). Same call as for a failure (`POST /api/external-runs/<id>/seen`, MCP
+  `mark_run_seen`). Still nothing written to MLflow.
+- TrainHub runs are unchanged: a dead container is seen by the monitoring (`failed`, then
+  **Seen**), a stuck training is stopped (*Stop*, or *Mark as finished* if the machine is down).
