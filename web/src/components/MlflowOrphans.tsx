@@ -5,7 +5,7 @@ import type { MlflowOrphan } from "~/lib/types"
 import { deleteOrphans, loadOrphans, orphans } from "~/stores/checkpoints"
 import { now } from "~/stores/clock"
 import { toast } from "~/stores/toasts"
-import { IconExternal, IconRefresh, IconSearch, IconSpinner } from "./Icons"
+import { IconMlflow, IconRefresh, IconSearch, IconSpinner } from "./Icons"
 import { SlideToConfirm } from "./SlideToConfirm"
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
@@ -141,18 +141,19 @@ export function MlflowOrphansView() {
         >
           {run().started_at ? formatAgo(run().started_at, now()) : ""}
         </span>
-        <span class="flex w-6 shrink-0 justify-end">
+        <span class="flex w-7 shrink-0 justify-end">
           <Show when={run().url}>
             <a
               href={run().url!}
               target="_blank"
               rel="noopener noreferrer"
-              class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+              class="flex size-6 items-center justify-center rounded hover:bg-surface-hover"
               aria-label="Open the run in MLflow"
+              title="Open the run in MLflow"
               onClick={(e) => e.stopPropagation()}
               data-testid="mlflow-orphan-link"
             >
-              <IconExternal size={11} />
+              <IconMlflow size={16} />
             </a>
           </Show>
         </span>

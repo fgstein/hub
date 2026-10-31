@@ -797,6 +797,9 @@ class MlflowRunRef(BaseModel):
     )
     started_at: datetime | None = None
     url: str | None = Field(default=None, description="Page of the run in the MLflow UI")
+    deleted: bool = Field(
+        default=False, description="In the MLflow trash (lifecycle_stage deleted, until mlflow gc)"
+    )
 
 
 class CheckpointInference(BaseModel):

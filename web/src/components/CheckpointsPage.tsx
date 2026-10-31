@@ -20,6 +20,7 @@ import {
   toggleFiles,
   viewRuns,
 } from "~/lib/checkpoints"
+import { copyText } from "~/lib/clipboard"
 import { formatAgo, formatBytes, formatDateTime } from "~/lib/format"
 import type {
   CheckpointFile,
@@ -30,12 +31,15 @@ import type {
   RunView,
 } from "~/lib/types"
 import {
+  addDraft,
   checkpointPick,
   checkpointProjects,
+  draftFromRun,
   draftsFromCheckpoints,
   pickCheckpoint,
   project,
   runsByCheckpoint,
+  setActiveTab,
   setCheckpointPick,
   state,
 } from "~/stores/app"
@@ -53,8 +57,9 @@ import {
   IconChevronRight,
   IconClose,
   IconCopy,
-  IconExternal,
+  IconMlflow,
   IconRefresh,
+  IconRelaunch,
   IconSearch,
   IconSpinner,
   IconTrash,
@@ -147,15 +152,42 @@ const INSET_LINE =
 
 const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`
 
-/** MLflow column of a run directory: green dot and link if an MLflow run logged from it. */
+/** Link to a run in the MLflow UI: the (blue) MLflow mark. */
+function MlflowLink(props: { url: string; label: string; testid: string }) {
+  return (
+    <a
+      href={props.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="flex size-6 shrink-0 items-center justify-center rounded hover:bg-surface-hover"
+      aria-label={props.label}
+      title={props.label}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      data-testid={props.testid}
+    >
+      <IconMlflow size={16} />
+    </a>
+  )
+}
+
+const mlName = (m: MlflowRunRef) => m.run_name ?? m.run_id
+
+/**
+ * MLflow column of a run directory: green dot and link if an MLflow run logged from it,
+ * red “deleted” if its only MLflow runs are in the MLflow trash, “orphan” if none.
+ */
 function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
-  const latest = () => props.runs[0]
+  const active = () => props.runs.filter((m) => !m.deleted)
+  const deleted = () => props.runs.filter((m) => m.deleted)
+  const latest = () => active()[0]
+  const shown = () => latest() ?? deleted()[0]
   return (
     <Tip
-      class="flex w-16 shrink-0 items-center justify-center gap-1"
+      class="flex w-20 shrink-0 items-center justify-center gap-1"
       content={
         <Show
-          when={latest()}
+          when={shown()}
           fallback={
             <span>
               Orphan: no MLflow run has <code class="font-mono">{props.match}</code> under this directory.
@@ -164,23 +196,31 @@ function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
         >
           {(ml) => (
             <div class="space-y-0.5">
+              <Show when={!latest()}>
+                <div class="text-fg-critical">
+                  Deleted in MLflow: {deleted().length === 1 ? "its MLflow run is" : "its MLflow runs are"} in
+                  the MLflow trash (until <code class="font-mono">mlflow gc</code>).
+                </div>
+              </Show>
               <div>
-                MLflow run <span class="font-mono text-fg-strong">{ml().run_name ?? ml().run_id}</span>
+                MLflow run <span class="font-mono text-fg-strong">{mlName(ml())}</span>
                 {ml().status ? ` · ${ml().status}` : ""}
               </div>
               <Show when={ml().started_at}>
                 <div class="text-fg-weak">started {formatDateTime(ml().started_at)}</div>
               </Show>
-              <Show when={props.runs.length > 1}>
+              <Show when={active().length > 1}>
                 <div class="text-fg-weak">
-                  {plural(props.runs.length - 1, "earlier MLflow run")} also logged from this directory:{" "}
-                  <span class="font-mono">
-                    {props.runs
-                      .slice(1, 6)
-                      .map((m) => m.run_name ?? m.run_id)
-                      .join(", ")}
-                  </span>
-                  {props.runs.length > 6 ? "…" : ""}
+                  {plural(active().length - 1, "earlier MLflow run")} also logged from this directory:{" "}
+                  <span class="font-mono">{active().slice(1, 6).map(mlName).join(", ")}</span>
+                  {active().length > 6 ? "…" : ""}
+                </div>
+              </Show>
+              <Show when={latest() ? deleted().length : deleted().length > 1}>
+                <div class="text-fg-weak">
+                  {latest() ? `${plural(deleted().length, "deleted MLflow run")} too: ` : "All deleted: "}
+                  <span class="font-mono">{deleted().slice(0, 5).map(mlName).join(", ")}</span>
+                  {deleted().length > 5 ? "…" : ""}
                 </div>
               </Show>
             </div>
@@ -191,12 +231,24 @@ function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
       <Show
         when={latest()}
         fallback={
-          <span
-            class="rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-fg-warning"
-            data-testid="ckpt-mlflow-orphan"
+          <Show
+            when={deleted().length}
+            fallback={
+              <span
+                class="rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-fg-warning"
+                data-testid="ckpt-mlflow-orphan"
+              >
+                orphan
+              </span>
+            }
           >
-            orphan
-          </span>
+            <span
+              class="rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-fg-critical"
+              data-testid="ckpt-mlflow-deleted"
+            >
+              deleted
+            </span>
+          </Show>
         }
       >
         <span
@@ -207,19 +259,8 @@ function MlflowCell(props: { runs: MlflowRunRef[]; match: string }) {
           data-testid="ckpt-mlflow-dot"
         />
       </Show>
-      <Show when={latest()?.url}>
-        <a
-          href={latest()!.url!}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
-          aria-label="Open the run in MLflow"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          data-testid="ckpt-mlflow-link"
-        >
-          <IconExternal size={11} />
-        </a>
+      <Show when={shown()?.url}>
+        {(url) => <MlflowLink url={url()} label="Open the run in MLflow" testid="ckpt-mlflow-link" />}
       </Show>
     </Tip>
   )
@@ -298,7 +339,7 @@ function InferenceBadge(props: {
 /** Toolbar summary of the MLflow link of a source: directories linked, errors. */
 function MlflowSummary(props: { listing: CheckpointListing }) {
   const ml = () => props.listing.mlflow!
-  const linked = () => props.listing.runs.filter((r) => r.mlflow_runs?.length).length
+  const linked = () => props.listing.runs.filter((r) => r.mlflow_runs?.some((m) => !m.deleted)).length
   return (
     <Tip
       class="shrink-0 text-xs"
@@ -577,12 +618,44 @@ export function CheckpointsPage(props: { source?: string }) {
     const src = source()
     if (!src) return
     const text = [...toSend()].map((p) => hostPath(src.root, p)).join("\n")
-    try {
-      await navigator.clipboard.writeText(text)
-      toast(`${plural(toSend().size, "path")} copied`, "success")
-    } catch {
-      toast("clipboard unavailable", "error")
+    if (await copyText(text)) toast(`${plural(toSend().size, "path")} copied`, "success")
+    else toast("clipboard unavailable", "error")
+  }
+
+  /**
+   * “Relaunch” an inference: new draft like its TrainHub run (nothing is launched). A run
+   * closed since is no longer known: the draft gets its project, config and checkpoint.
+   */
+  const relaunchInference = (inf: CheckpointInference) => {
+    const pid = inf.project
+    if (!pid) return
+    if (inf.trainhub_run && state.runs[inf.trainhub_run]) draftFromRun(inf.trainhub_run)
+    else {
+      const p = project(pid)
+      if (!p) {
+        toast(`project “${pid}” missing from the inventory`, "error")
+        return
+      }
+      const src = source()
+      const machine = src?.machine && p.machines.includes(src.machine) ? src.machine : null
+      addDraft(pid, {
+        machine,
+        config: inf.config ?? null,
+        checkpoint: p.accepts_checkpoint && src ? hostPath(src.root, inf.checkpoint) : "",
+        focus: true,
+      })
+      setActiveTab(pid)
     }
+    if (!inf.exists) toast(`checkpoint ${inf.checkpoint} deleted since`, "error")
+    navigate(`/p/${encodeURIComponent(pid)}`)
+  }
+
+  const copyRunDir = async (name: string) => {
+    const src = source()
+    if (!src) return
+    const path = hostPath(src.root, name)
+    if (await copyText(path)) toast(`copied: ${path}`, "success")
+    else toast("clipboard unavailable", "error")
   }
 
   // -- rows --------------------------------------------------------------------------------
@@ -820,30 +893,23 @@ export function CheckpointsPage(props: { source?: string }) {
             </span>
           )}
         </For>
-        <span class="flex w-12 shrink-0 justify-center gap-0.5">
+        <span class="flex w-14 shrink-0 items-center justify-center gap-0.5">
           <Show when={inf().trainhub_run && inf().project}>
             <button
               type="button"
-              class="flex size-5 items-center justify-center rounded font-mono text-xs text-icon hover:bg-surface-hover hover:text-icon-hover"
-              title={`TrainHub run ${inf().trainhub_run} (${inf().project})`}
-              aria-label="Open the TrainHub project"
-              onClick={() => navigate(`/p/${encodeURIComponent(inf().project!)}`)}
+              class="flex size-6 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
+              title={`Relaunch: new draft in ${inf().project} like TrainHub run ${inf().trainhub_run}`}
+              aria-label="Relaunch the inference (new draft)"
+              onClick={() => relaunchInference(inf())}
               data-testid="ckpt-inference-trainhub"
             >
-              ⟲
+              <IconRelaunch size={13} />
             </button>
           </Show>
           <Show when={inf().mlflow?.url}>
-            <a
-              href={inf().mlflow!.url!}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="flex size-5 items-center justify-center rounded text-icon hover:bg-surface-hover hover:text-icon-hover"
-              aria-label="Open the inference in MLflow"
-              data-testid="ckpt-inference-mlflow"
-            >
-              <IconExternal size={11} />
-            </a>
+            {(url) => (
+              <MlflowLink url={url()} label="Open the inference in MLflow" testid="ckpt-inference-mlflow" />
+            )}
           </Show>
         </span>
         <span
@@ -955,6 +1021,32 @@ export function CheckpointsPage(props: { source?: string }) {
         </div>
         <Show when={open()}>
           <div class="pb-1">
+            <div
+              class={`${INSET_LINE} before:left-10 flex h-8 items-center gap-2 pr-4 pl-10 text-xs`}
+              data-testid="ckpt-run-info"
+            >
+              <span class="shrink-0 text-fg-weaker">directory</span>
+              <span
+                class="min-w-0 truncate font-mono text-fg"
+                title={source() ? hostPath(source()!.root, run().name) : run().name}
+                data-testid="ckpt-run-path"
+              >
+                {source() ? hostPath(source()!.root, run().name) : run().name}
+              </span>
+              <button
+                type="button"
+                class="flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-fg-weak hover:bg-surface-hover hover:text-fg-strong"
+                title="Copy the path of the directory on the machine"
+                aria-label="Copy the path of the directory"
+                onClick={() => void copyRunDir(run().name)}
+                data-testid="ckpt-run-copy-path"
+              >
+                <IconCopy size={12} /> copy path
+              </button>
+              <Show when={source()?.machine}>
+                {(m) => <span class="shrink-0 text-fg-weaker">on {m()}</span>}
+              </Show>
+            </div>
             <For each={flatFiles(rp.row)}>
               {(x) => (
                 <FileRow file={x.file} group={x.group} labels={hasLabels()} indent="pl-10" deletable={true} />

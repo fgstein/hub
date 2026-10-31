@@ -200,3 +200,22 @@ export const IconRepeat = (p: P) => (
     <path d="M3 7.5V6a2 2 0 0 1 2-2h7.5M10.5 2l2 2-2 2M13 8.5V10a2 2 0 0 1-2 2H3.5M5.5 14l-2-2 2-2" />
   </Svg>
 )
+
+/** MLflow mark (simplified): blue loop with a rising curve, coloured whatever the theme. */
+export const IconMlflow = (p: P) => (
+  <svg
+    width={p.size ?? 16}
+    height={p.size ?? 16}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    class={p.class}
+    aria-hidden="true"
+  >
+    <path d="M2.4 10.4A6 6 0 0 1 12.3 3.4" stroke="#0194E2" />
+    <path d="M13.6 5.6A6 6 0 0 1 3.7 12.6" stroke="#43C9ED" />
+    <path d="M4.6 10.2l2.4-2.6 2 1.6 2.6-3" stroke="#0194E2" stroke-width="1.6" />
+  </svg>
+)

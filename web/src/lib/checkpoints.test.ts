@@ -92,7 +92,9 @@ describe("viewRuns", () => {
     const withMlflow: CheckpointListing = {
       ...LISTING,
       runs: LISTING.runs.map((r) =>
-        r.name === "beta" ? { ...r, mlflow_runs: [{ run_id: "a1b2c3d4", run_name: "unet-large" }] } : r,
+        r.name === "beta"
+          ? { ...r, mlflow_runs: [{ run_id: "a1b2c3d4", run_name: "unet-large", deleted: false }] }
+          : r,
       ),
     }
     for (const query of ["UNET-LA", "a1b2"]) {
@@ -186,11 +188,17 @@ describe("inferences", () => {
   })
 
   it("takes the state of the MLflow run, else of the TrainHub run", () => {
-    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "RUNNING" }, status: "failed" }))).toBe(
-      "running",
+    expect(
+      inferenceState(
+        inf("a/x", { mlflow: { run_id: "m", status: "RUNNING", deleted: false }, status: "failed" }),
+      ),
+    ).toBe("running")
+    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "KILLED", deleted: false } }))).toBe(
+      "failed",
     )
-    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "KILLED" } }))).toBe("failed")
-    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "FINISHED" } }))).toBe("finished")
+    expect(inferenceState(inf("a/x", { mlflow: { run_id: "m", status: "FINISHED", deleted: false } }))).toBe(
+      "finished",
+    )
     expect(inferenceState(inf("a/x", { status: "succeeded" }))).toBe("finished")
     expect(inferenceState(inf("a/x", { status: "stopped" }))).toBe("other")
     expect(inferenceState(inf("a/x"))).toBe("other")

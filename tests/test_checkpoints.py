@@ -645,7 +645,9 @@ def test_inventory_checkpoint_mlflow() -> None:
         )
 
 
-def _ml(run_id: str, path: str | None, start: int = 1_700_000_000_000) -> dict[str, Any]:
+def _ml(
+    run_id: str, path: str | None, start: int = 1_700_000_000_000, stage: str = "active"
+) -> dict[str, Any]:
     params = [{"key": "callbacks/model_checkpoint/dirpath", "value": path}] if path else []
     return {
         "info": {
@@ -654,6 +656,7 @@ def _ml(run_id: str, path: str | None, start: int = 1_700_000_000_000) -> dict[s
             "experiment_id": "7",
             "status": "FINISHED",
             "start_time": start,
+            "lifecycle_stage": stage,
         },
         "data": {"params": [{"key": "lr", "value": "0.1"}, *params]},
     }
@@ -672,7 +675,8 @@ async def test_http_search_by_key() -> None:
         if "page_token" not in body:
             runs = [_ml("m1", "/ws/out/run_a/checkpoints"), _ml("m0", None)]
             return httpx.Response(200, json={"runs": runs, "next_page_token": "p2"})
-        return httpx.Response(200, json={"runs": [_ml("m2", "/ws/out/run_b/checkpoints")]})
+        runs = [_ml("m2", "/ws/out/run_b/checkpoints", stage="deleted")]
+        return httpx.Response(200, json={"runs": runs})
 
     client = HttpMlflow(transport=httpx.MockTransport(handler))
     cfg = MlflowConfig(tracking_uri="http://mlflow.lab:5000", experiments=["seg"])
@@ -691,6 +695,9 @@ async def test_http_search_by_key() -> None:
     ref = hits[0].ref
     assert ref.run_name == "name-m1" and ref.status == "FINISHED" and ref.started_at
     assert ref.url == "http://mlflow.lab:5000/#/experiments/7/runs/m1"
+    # runs in the MLflow trash are searched too, flagged
+    assert not ref.deleted and hits[1].ref.deleted
+    assert all(b["run_view_type"] == "ALL" for b in bodies)
     assert bodies[0]["filter"] == "params.`callbacks/model_checkpoint/dirpath` LIKE '%'"
     assert bodies[0]["experiment_ids"] == ["7"] and bodies[1]["page_token"] == "p2"
 
@@ -744,6 +751,7 @@ async def test_service_listing_with_mlflow(tmp_path: Path) -> None:
         assert runs == {"run_a": ["new", "old"], "run_b": [], "run_c": ["c"]}
         assert lst.mlflow is not None and lst.mlflow.searched == 4 and not lst.mlflow.error
         assert lst.mlflow.match == "params.callbacks/model_checkpoint/dirpath"
+        assert not any(m.deleted for r in lst.runs for m in r.mlflow_runs)
         # cached with the scan, refreshed with it
         await svc.checkpoints.listing("seg")
         assert stub.calls == 1
@@ -891,6 +899,16 @@ async def test_mlflow_orphans(tmp_path: Path) -> None:
         stub.extra = [flat_hit]
         lst = await svc.checkpoints.mlflow_orphans(refresh=True)
         assert [o.run.run_id for o in lst.runs] == ["x"] and lst.linked == 4
+        # runs in the MLflow trash: never orphans, still linked to their directory
+        trash = MlflowRunRef(run_id="t", deleted=True)
+        stub.extra = [
+            MlflowHit("/ws/out/gone/checkpoints", MlflowRunRef(run_id="g", deleted=True)),
+            MlflowHit("/ws/out/run_b/checkpoints", trash),
+        ]
+        lst = await svc.checkpoints.mlflow_orphans(refresh=True)
+        assert [o.run.run_id for o in lst.runs] == ["x"] and lst.searched == 4
+        seg = await svc.checkpoints.listing("seg")
+        assert {r.name: r.mlflow_runs for r in seg.runs}["run_b"] == [trash]
         # MLflow down: the error is reported
         stub.fail = True
         svc.checkpoints.clear()

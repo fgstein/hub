@@ -214,6 +214,8 @@ class CheckpointService:
             if search is None:
                 continue
             for h in search.hits:
+                if h.ref.deleted:
+                    continue  # already in the MLflow trash
                 seen.add(h.ref.run_id)
                 if h.ref.run_id in linked or ck.run_in_path(h.value, names) is not None:
                     linked.add(h.ref.run_id)
@@ -609,7 +611,7 @@ def _inferences(
     tag_key = f"tags.{search.run_tag}" if search else ""
     for h in search.hits if search else []:
         path = ck.path_from_run(h.value, names)
-        if path is None:
+        if path is None or h.ref.deleted:
             continue
         tag = h.logged.get(tag_key)
         logged = {k: v for k, v in h.logged.items() if k != tag_key}

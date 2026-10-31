@@ -1177,6 +1177,12 @@ export interface components {
              * @description Page of the run in the MLflow UI
              */
             url?: string | null;
+            /**
+             * Deleted
+             * @description In the MLflow trash (lifecycle_stage deleted, until mlflow gc)
+             * @default false
+             */
+            deleted: boolean;
         };
         /** PreviewResult */
         PreviewResult: {
