@@ -31,7 +31,13 @@ from trainhub.executors.base import MachineUnreachableError
 from trainhub.mcp.server import build_mcp
 from trainhub.service import InvalidRequestError, NotFoundError, RunService, Selection
 from trainhub.service.checkpoints import build_listing
-from trainhub.service.mlflow import HttpMlflow, MlflowError, MlflowHit, MlflowSource
+from trainhub.service.mlflow import (
+    HttpMlflow,
+    MlflowError,
+    MlflowHit,
+    MlflowSource,
+    format_metric,
+)
 
 from .conftest import BASIC_INVENTORY
 from .helpers import SIMULATION, make_service, wait_for
@@ -658,7 +664,13 @@ def _ml(
             "start_time": start,
             "lifecycle_stage": stage,
         },
-        "data": {"params": [{"key": "lr", "value": "0.1"}, *params]},
+        "data": {
+            "params": [{"key": "lr", "value": "0.1"}, *params],
+            "metrics": [
+                {"key": "epoch", "value": 12.0, "step": 12},
+                {"key": "test/miou", "value": 0.712345678, "step": 12},
+            ],
+        },
     }
 
 
@@ -682,7 +694,9 @@ async def test_http_search_by_key() -> None:
     cfg = MlflowConfig(tracking_uri="http://mlflow.lab:5000", experiments=["seg"])
     try:
         hits, truncated = await client.search_by_key(
-            cfg, "params.callbacks/model_checkpoint/dirpath", ["params.lr", "tags.nope"]
+            cfg,
+            "params.callbacks/model_checkpoint/dirpath",
+            ["params.lr", "tags.nope", "metrics.epoch", "metrics.test/miou", "metrics.nope"],
         )
     finally:
         await client.close()
@@ -691,7 +705,11 @@ async def test_http_search_by_key() -> None:
         ("/ws/out/run_a/checkpoints", "m1"),
         ("/ws/out/run_b/checkpoints", "m2"),
     ]
-    assert hits[0].logged == {"params.lr": "0.1"}
+    assert hits[0].logged == {
+        "params.lr": "0.1",
+        "metrics.epoch": "12",
+        "metrics.test/miou": "0.712346",
+    }
     ref = hits[0].ref
     assert ref.run_name == "name-m1" and ref.status == "FINISHED" and ref.started_at
     assert ref.url == "http://mlflow.lab:5000/#/experiments/7/runs/m1"
@@ -870,6 +888,20 @@ async def test_fake_mlflow_inferences(tmp_path: Path) -> None:
         await svc.close()
 
 
+async def test_fake_mlflow_inference_metrics(tmp_path: Path) -> None:
+    text = INF_INVENTORY.replace("show: [params.data]", "show: [params.data, metrics.epoch]")
+    svc = make_service(tmp_path, text=text)
+    await svc.start()
+    try:
+        lst = await svc.checkpoints.listing("seg")
+        a = next(r for r in lst.runs if r.name == "run_a")
+        assert a.inferences
+        assert all(set(i.logged) == {"params.data", "metrics.epoch"} for i in a.inferences)
+        assert all(i.logged["metrics.epoch"].isdigit() for i in a.inferences)
+    finally:
+        await svc.close()
+
+
 def test_inventory_inference_settings() -> None:
     inv = parse_inventory(INF_INVENTORY, "t.yaml")
     seg = inv.checkpoint_source("seg")
@@ -877,8 +909,17 @@ def test_inventory_inference_settings() -> None:
     assert cfg is not None and cfg.experiments == ["seg-infer"] and cfg.run_tag == "trainhub.run_id"
     assert inv.checkpoint_mlflow(seg) is not None
     assert inv.checkpoint_mlflow(inv.checkpoint_source("flat"), inference=True) is None
-    with pytest.raises(InventoryError, match=r"params\.<key> or tags\.<key>"):
+    with pytest.raises(InventoryError, match=r"params\.<key>, tags\.<key> or metrics\.<key>"):
         parse_inventory(INF_INVENTORY.replace("show: [params.data]", "show: [data]"), "t.yaml")
+    # metrics may be shown, not matched
+    shown = INF_INVENTORY.replace("show: [params.data]", "show: [params.data, metrics.epoch]")
+    seg = parse_inventory(shown, "t.yaml").checkpoint_source("seg")
+    assert seg.mlflow is not None and seg.mlflow.inference is not None
+    assert seg.mlflow.inference.show == ["params.data", "metrics.epoch"]
+    with pytest.raises(InventoryError, match=r"params\.<key> or tags\.<key>"):
+        parse_inventory(
+            INF_INVENTORY.replace("match: params.ckpt_path", "match: metrics.x"), "t.yaml"
+        )
 
 
 async def test_mlflow_orphans(tmp_path: Path) -> None:
@@ -1039,3 +1080,20 @@ def test_api_mlflow_orphans(tmp_path: Path) -> None:
         assert res["deleted"] == ids[:1] and res["remaining"] == 1
         lst = client.get("/api/mlflow-orphans?refresh=true").json()
         assert [r["run"]["run_id"] for r in lst["runs"]] == ids[1:]
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (3.0, "3"),
+        (-2, "-2"),
+        (0.5, "0.5"),
+        (1234567.89, "1.23457e+06"),
+        (12345678.0, "12345678"),
+        ("NaN", "NaN"),
+        (None, None),
+        (True, None),
+    ],
+)
+def test_format_metric(value: object, text: str | None) -> None:
+    assert format_metric(value) == text

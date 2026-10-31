@@ -23,6 +23,7 @@ import abc
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import time
 from collections.abc import Sequence
@@ -42,6 +43,7 @@ from ..core.models import (
     Run,
     UnknownResourceError,
     split_mlflow_key,
+    split_shown_key,
 )
 from ..core.status import utcnow
 
@@ -159,13 +161,30 @@ def read_ref(cfg: MlflowConfig, run: dict[str, Any]) -> MlflowRunRef | None:
 
 
 def logged_value(run: dict[str, Any], full_key: str) -> str | None:
-    """Value of ``params.<key>`` / ``tags.<key>`` in a run of the REST API."""
-    kind, key = split_mlflow_key(full_key)
+    """Value of ``params.<key>`` / ``tags.<key>`` / ``metrics.<key>`` (last value, as text)
+    in a run of the REST API."""
+    kind, key = split_shown_key(full_key)
     for item in (run.get("data") or {}).get(kind) or []:
         if item.get("key") == key:
             value = item.get("value")
+            if kind == "metrics":
+                return format_metric(value)
             return value if isinstance(value, str) else None
     return None
+
+
+def format_metric(value: object) -> str | None:
+    """A metric value as text: ``12`` rather than ``12.0``, 6 significant digits otherwise."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):  # NaN / Infinity, as sent by some servers
+        return value
+    number = _number(value)
+    if number is None:
+        return None
+    if math.isfinite(number) and number.is_integer() and abs(number) < 1e15:
+        return str(int(number))
+    return format(number, ".6g")
 
 
 def _number(value: object) -> float | None:
