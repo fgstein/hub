@@ -278,61 +278,32 @@ function inferenceName(inf: CheckpointInference): string {
   return inf.mlflow?.run_name ?? inf.trainhub_run ?? inf.mlflow?.run_id ?? "?"
 }
 
-/** Inference count of a run or a checkpoint, with the list in its tooltip. */
+/** Inference count of a run or a checkpoint: a button that opens their list (no tooltip). */
 function InferenceBadge(props: {
   inferences: CheckpointInference[]
-  run: string
   testid: string
   active?: boolean
   onClick?: () => void
 }) {
   return (
-    <Tip
-      class="shrink-0"
-      content={
-        <div class="space-y-0.5">
-          <div>
-            {plural(props.inferences.length, "inference")} with{" "}
-            {props.testid === "ckpt-file-inferences" ? "this checkpoint" : "the checkpoints of this run"}:
-          </div>
-          <For each={props.inferences.slice(0, 8)}>
-            {(inf) => (
-              <div class="flex items-center gap-1.5 font-mono">
-                <span class="dot" style={{ "--dot-color": INFERENCE_COLOR[inferenceState(inf)] }} />
-                {inferenceName(inf)}
-                <span class="text-fg-weak">
-                  {inf.config ? ` · ${inf.config}` : ""}
-                  {props.testid === "ckpt-file-inferences" ? "" : ` · ${inferenceCheckpoint(props.run, inf)}`}
-                  {inf.started_at ? ` · ${formatAgo(inf.started_at, now())}` : ""}
-                </span>
-              </div>
-            )}
-          </For>
-          <Show when={props.inferences.length > 8}>
-            <div>…</div>
-          </Show>
-        </div>
-      }
+    <button
+      type="button"
+      class="flex h-5 shrink-0 items-center rounded px-1.5 font-mono text-xs hover:bg-surface-hover hover:text-fg-strong"
+      classList={{
+        "bg-surface text-fg-weak": !props.active,
+        "bg-surface-active text-fg-strong": !!props.active,
+      }}
+      aria-expanded={props.active}
+      onClick={(e) => {
+        e.stopPropagation()
+        props.onClick?.()
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      aria-label={plural(props.inferences.length, "inference")}
+      data-testid={props.testid}
     >
-      <button
-        type="button"
-        class="flex h-5 items-center rounded px-1.5 font-mono text-xs hover:bg-surface-hover hover:text-fg-strong"
-        classList={{
-          "bg-surface text-fg-weak": !props.active,
-          "bg-surface-active text-fg-strong": !!props.active,
-        }}
-        aria-expanded={props.active}
-        onClick={(e) => {
-          e.stopPropagation()
-          props.onClick?.()
-        }}
-        onKeyDown={(e) => e.stopPropagation()}
-        aria-label={plural(props.inferences.length, "inference")}
-        data-testid={props.testid}
-      >
-        ⇢ {props.inferences.length}
-      </button>
-    </Tip>
+      ⇢ {props.inferences.length}
+    </button>
   )
 }
 
@@ -744,7 +715,6 @@ export function CheckpointsPage(props: { source?: string }) {
             {(list) => (
               <InferenceBadge
                 inferences={list()}
-                run=""
                 testid="ckpt-file-inferences"
                 active={openInf().has(fp.file.path)}
                 onClick={() => toggleInf(fp.file.path)}
@@ -861,7 +831,7 @@ export function CheckpointsPage(props: { source?: string }) {
             .filter(Boolean)
             .join(" · ")}
         />
-        <span class="w-40 shrink-0 truncate font-mono text-sm text-fg-strong" title={inferenceName(inf())}>
+        <span class="w-120 min-w-40 shrink truncate font-mono text-sm text-fg-strong" title={inferenceName(inf())}>
           {inferenceName(inf())}
         </span>
         <span
@@ -999,7 +969,6 @@ export function CheckpointsPage(props: { source?: string }) {
               <Show when={run().inferences?.length}>
                 <InferenceBadge
                   inferences={run().inferences ?? []}
-                  run={run().name}
                   testid="ckpt-run-inferences"
                   onClick={() => {
                     if (!open()) toggleRun(run().name)
