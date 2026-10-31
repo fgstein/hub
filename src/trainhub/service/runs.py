@@ -30,6 +30,7 @@ from ..core.models import (
     FINISHED_STATUSES,
     PLACEHOLDER_RE,
     ConfigDiscover,
+    ExternalRun,
     Inventory,
     Machine,
     MlflowInfo,
@@ -62,6 +63,7 @@ from .mlflow import HttpMlflow, MlflowSource, MlflowTracker
 from .schemas import (
     ConfigList,
     CpuView,
+    ExternalRunView,
     GpuRunView,
     GpuView,
     Health,
@@ -643,6 +645,7 @@ class RunService:
             seq=self.bus.seq,
             inventory=self.inventory_view(),
             runs=[RunView.of(r, now) for r in runs],
+            external_runs=[ExternalRunView.of(e) for e in await self.store.list_external()],
             ui_state=await self.get_ui_state(),
             server_time=now,
             version=self.version,
@@ -784,6 +787,7 @@ class RunService:
             run,
             status=RunStatus.FAILED,
             error=f"marked as finished by hand (was {run.status}, {why}): actual outcome unknown",
+            unseen_failure=False,  # finished by the user: nothing to point out
             finished_at=utcnow(),
             exit_code=None,
             stop_requested=False,
@@ -1258,6 +1262,63 @@ class RunService:
         if run is not None and run.started_at == started_at:
             await self._update(run, mlflow=info)
 
+    async def mark_seen(self, run_id: str) -> Run:
+        """Mark the failure of a run as seen: it moves to the finished runs."""
+        return await self._update(await self.get_run(run_id), unseen_failure=False)
+
+    # -- external runs (found in MLflow, not launched by TrainHub) -------------------------
+
+    async def list_external_runs(self, project: str | None = None) -> list[ExternalRun]:
+        """External runs shown, most recent first."""
+        runs = await self.store.list_external()
+        if project:
+            runs = [r for r in runs if r.project_id == project]
+        return sorted(runs, key=lambda r: r.mlflow.started_at or r.discovered_at, reverse=True)
+
+    async def get_external_run(self, run_id: str) -> ExternalRun:
+        found = await self.store.get_external(run_id)
+        if found is None or found[1]:
+            raise NotFoundError(f"external run '{run_id}' not found")
+        return found[0]
+
+    async def save_external(self, run: ExternalRun, *, previous: ExternalRun | None) -> None:
+        """Record the state of an external run (published as ``external_run.updated``)."""
+        if run == previous:
+            return
+        if previous is None:
+            log.info(
+                "external MLflow run found",
+                extra={"mlflow_run": run.id, "project": run.project_id, "user": run.user},
+            )
+        await self.store.save_external(run)
+        self._publish_external(run)
+
+    async def forget_external(self, run: ExternalRun) -> None:
+        """An external run gone from MLflow (deleted): forget it."""
+        await self.store.forget_external(run.id)
+        self.bus.publish("external_run.deleted", {"id": run.id, "project_id": run.project_id})
+
+    async def delete_external(self, run_id: str) -> None:
+        """Remove an external run from TrainHub (nothing changes in MLflow); it does not come
+        back."""
+        run = await self.get_external_run(run_id)
+        await self.store.save_external(run, hidden=True)
+        self.bus.publish("external_run.deleted", {"id": run.id, "project_id": run.project_id})
+
+    async def mark_external_seen(self, run_id: str) -> ExternalRun:
+        """Mark the failure of an external run as seen: it moves to the finished runs."""
+        run = await self.get_external_run(run_id)
+        if run.unseen_failure:
+            run = run.model_copy(update={"unseen_failure": False})
+            await self.store.save_external(run)
+            self._publish_external(run)
+        return run
+
+    def _publish_external(self, run: ExternalRun) -> None:
+        self.bus.publish(
+            "external_run.updated", {"run": ExternalRunView.of(run).model_dump(mode="json")}
+        )
+
     # -- series ----------------------------------------------------------------------------
 
     def _observe_logs(self, run_id: str, data: bytes | None) -> None:
@@ -1313,6 +1374,12 @@ class RunService:
             if only_if_active and not fresh.status.is_active:
                 return fresh
             updated = fresh.model_copy(update=changes)
+            if "unseen_failure" not in changes:
+                # A failure stays among the active runs until someone marks it as seen.
+                if updated.is_failure and not fresh.is_failure:
+                    updated = updated.model_copy(update={"unseen_failure": True})
+                elif not updated.is_failure and updated.unseen_failure:
+                    updated = updated.model_copy(update={"unseen_failure": False})
             if updated == fresh:
                 return updated
             await self.store.save_run(updated)

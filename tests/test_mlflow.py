@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,7 @@ def test_settings_disabled_or_absent() -> None:
     assert inv.mlflow_config(inv.project("detection")) is not None
     plain = parse_inventory(BASIC_INVENTORY, "t.yaml")
     assert plain.mlflow_config(plain.project("segmentation")) is None
-    assert plain.mlflow_poll_interval == 10
+    assert plain.mlflow_poll_interval == 30
     # project only, without global section
     own = parse_inventory(
         _with_project_mlflow(BASIC_INVENTORY, "    mlflow: {tracking_uri: 'https://ml.x'}\n"),
@@ -276,7 +277,8 @@ async def test_tracker_with_fake(tmp_path: Path) -> None:
         async def finished() -> bool:
             await svc.mlflow.poll()
             r = await svc.get_run(run.id)
-            return r.mlflow is not None and r.mlflow.status == "FINISHED"
+            # MLflow may end its run just before or after the container
+            return r.mlflow is not None and r.mlflow.status == "FINISHED" and not r.status.is_active
 
         await wait_for(finished, timeout=30)
         r = await svc.get_run(run.id)
@@ -304,6 +306,16 @@ async def test_tracker_stop_is_killed(tmp_path: Path) -> None:
 class _Flaky(MlflowSource):
     def __init__(self) -> None:
         self.fail = False
+
+    async def experiments(self, cfg: MlflowConfig) -> dict[str, str]:
+        if self.fail:
+            raise MlflowError("MLflow unreachable")
+        return {"1": "segmentation"}
+
+    async def search_runs(
+        self, cfg: MlflowConfig, experiment_ids: Sequence[str], filter_: str
+    ) -> list[dict[str, Any]]:
+        return []
 
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
         if self.fail:

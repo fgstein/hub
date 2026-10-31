@@ -2,7 +2,7 @@ import { Popover } from "@kobalte/core/popover"
 import { useLocation, useNavigate } from "@solidjs/router"
 import { createMemo, createSignal, For, Show } from "solid-js"
 import { formatBytes } from "~/lib/format"
-import { activeCount, closeTab, moveTab, project, setActiveTab, state } from "~/stores/app"
+import { activeCount, closeTab, moveTab, project, setActiveTab, state, unseenCount } from "~/stores/app"
 import { cycleTheme, themePref } from "~/stores/theme"
 import {
   IconClose,
@@ -66,6 +66,7 @@ export function TabBar() {
             const p = () => project(id)
             const active = () => !onCheckpoints() && !onMachines() && state.ui.active_tab === id
             const count = () => activeCount(id)
+            const unseen = () => unseenCount(id)
             return (
               <div
                 role="tab"
@@ -123,6 +124,15 @@ export function TabBar() {
                 <Show when={count() > 0}>
                   <span class="tabular text-xs text-fg-weak" data-testid="tab-count">
                     · {count()}
+                  </span>
+                </Show>
+                <Show when={unseen() > 0}>
+                  <span
+                    class="flex h-4 min-w-4 items-center justify-center rounded-full bg-st-red px-1 text-[10px] font-semibold tabular text-white"
+                    title={`${unseen()} failed run${unseen() === 1 ? "" : "s"} not seen yet`}
+                    data-testid="tab-unseen"
+                  >
+                    {unseen()}
                   </span>
                 </Show>
                 <button

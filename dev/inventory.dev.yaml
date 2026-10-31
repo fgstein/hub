@@ -68,6 +68,9 @@ projects:
       env:
         WANDB_MODE: offline
       extra_args: ["--ipc=host"]
+    # its experiment: the MLflow runs not launched by TrainHub show up here (external runs;
+    # three are simulated in fake mode)
+    mlflow: {experiments: [segmentation]}
     configs:
       # root of the Hydra configs on the machine: every *.yaml (recursive) is offered
       root: /home/alice/seg/configs

@@ -4,10 +4,11 @@ import { prettyCommand, shellJoin } from "~/lib/command"
 import { elapsedSeconds, formatDateTime, formatDuration, pausedSeconds } from "~/lib/format"
 import { formatEpoch, progress, trainingState } from "~/lib/mlflow"
 import { describeValues, type RepetitionState, repetitions } from "~/lib/series"
-import { isActive, isFinished, type RunView, shellAvailable } from "~/lib/types"
+import { isActive, isFinished, type MlflowInfo, type RunView, shellAvailable } from "~/lib/types"
 import {
   displayStatus,
   fullscreenRun,
+  markSeen,
   openShell,
   openTerminals,
   panelViews,
@@ -26,7 +27,7 @@ import { StatusDot, statusLabel, trainingLabel } from "./StatusDot"
 
 const UNSUBSCRIBE_DELAY_MS = 10_000
 
-function Tip(props: { content: JSX.Element; children: JSX.Element; class?: string }) {
+export function Tip(props: { content: JSX.Element; children: JSX.Element; class?: string }) {
   return (
     <Tooltip openDelay={350} placement="top">
       <Tooltip.Trigger as="span" class={props.class}>
@@ -42,7 +43,7 @@ function Tip(props: { content: JSX.Element; children: JSX.Element; class?: strin
 }
 
 /** Training progress read from MLflow: current epoch / maximum epoch, link to the run. */
-function MlflowProgress(props: { run: RunView; color: string }) {
+export function MlflowProgress(props: { run: { mlflow?: MlflowInfo | null }; color: string }) {
   const p = () => progress(props.run)
   const ml = () => props.run.mlflow
   return (
@@ -52,6 +53,9 @@ function MlflowProgress(props: { run: RunView; color: string }) {
         content={
           <div class="space-y-0.5 font-mono">
             <div>MLflow: {ml()!.run_id ? (ml()!.status ?? "?") : "no run found yet"}</div>
+            <Show when={ml()!.stale}>
+              <div class="text-st-orange">no new metric since {formatDateTime(ml()!.last_activity)}</div>
+            </Show>
             <Show when={p()}>
               <div>
                 epoch {formatEpoch(p()!.epoch)} / {formatEpoch(p()!.max)}
@@ -173,17 +177,36 @@ function SeriesProgress(props: { run: RunView }) {
   )
 }
 
-const TRAINING_COLOR = {
+export const TRAINING_COLOR = {
   healthy: "var(--status-green)",
+  stale: "var(--status-orange)",
   failed: "var(--status-red)",
   finished: "var(--status-blue)",
 } as const
+
+/** “Seen” on a failed run: it then moves to the finished runs. */
+export function SeenButton(props: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      class="flex h-6 shrink-0 items-center rounded-md border border-line-weak px-2 text-xs font-medium text-fg-critical hover:border-line hover:bg-surface-hover"
+      title="Failed run: mark it as seen to move it to the finished runs"
+      onClick={(e) => {
+        e.stopPropagation()
+        props.onClick()
+      }}
+      data-testid="run-seen"
+    >
+      Seen
+    </button>
+  )
+}
 
 /** Left + middle + right part of a run (reused in the fullscreen header). */
 function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; header?: boolean }) {
   const run = () => state.runs[props.id]!
   const status = () => displayStatus(props.id)
-  const training = () => trainingState(status(), run().mlflow?.status)
+  const training = () => trainingState(status(), run().mlflow?.status, run().mlflow?.stale ?? false)
   const elapsed = () =>
     run().started_at ? formatDuration(elapsedSeconds(run(), isActive(run().status) ? now() : 0)) : "—"
   const paused = () => pausedSeconds(run(), now())
@@ -289,6 +312,9 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
         <Tip class="shrink-0 text-xs text-fg-weak" content="Container found on the machine and imported">
           imported
         </Tip>
+      </Show>
+      <Show when={run().unseen_failure}>
+        <SeenButton onClick={() => markSeen(props.id)} />
       </Show>
       <ActionButton run={run()} />
     </div>

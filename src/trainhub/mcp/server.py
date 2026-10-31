@@ -16,7 +16,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ..core.logs_clean import readable_logs
-from ..core.models import Run, RunSource, RunStatus
+from ..core.models import ExternalRun, MlflowInfo, Run, RunSource, RunStatus
 from ..core.status import elapsed_seconds, format_duration, paused_seconds
 from ..service import RunService, ServiceError, allowed_actions
 from ..service.schemas import MlflowOrphanListing, Selection, SeriesRequest
@@ -33,6 +33,9 @@ list_checkpoints. Statuses: launching, running, paused, stopping,
 succeeded, failed, stopped, unreachable (machine unreachable, actual status unknown).
 To run the same command several times in a row (e.g. with different seeds), pass series
 to launch_run: one run, one container, the repetitions one after the other.
+A failed run (unseen_failure) stays among the active runs until mark_run_seen. Projects
+tracked with MLflow also show external runs: MLflow runs TrainHub did not launch, found in
+the experiments the project names (list_external_runs); TrainHub only reads them.
 """
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
@@ -100,6 +103,40 @@ def series_summary(run: Run) -> dict[str, Any] | None:
     }
 
 
+def mlflow_summary(info: MlflowInfo | None) -> dict[str, Any] | None:
+    """What a model needs of an MLflow run."""
+    if info is None:
+        return None
+    return {
+        "run_id": info.run_id,
+        "status": info.status,
+        "epoch": info.epoch,
+        "max_epochs": info.max_epochs,
+        "stale": info.stale,
+        "last_activity": info.last_activity.isoformat() if info.last_activity else None,
+        "url": info.url,
+        "error": info.error,
+    }
+
+
+def external_summary(run: ExternalRun) -> dict[str, Any]:
+    """Compact view of an external run (MLflow run not launched by TrainHub)."""
+    ml = run.mlflow
+    return {
+        "id": run.id,
+        "project": run.project_id,
+        "name": run.name,
+        "user": run.user,
+        "experiment": run.experiment,
+        "active": run.is_active,
+        "failed": run.is_failure,
+        "unseen_failure": run.unseen_failure,
+        "started_at": ml.started_at.isoformat() if ml.started_at else None,
+        "finished_at": ml.finished_at.isoformat() if ml.finished_at else None,
+        "mlflow": mlflow_summary(ml),
+    }
+
+
 def run_summary(run: Run) -> dict[str, Any]:
     """Compact view of a run, readable by a model."""
     return {
@@ -121,6 +158,9 @@ def run_summary(run: Run) -> dict[str, Any]:
         "container_alive": run.container_alive,
         "allowed_actions": allowed_actions(run.status, container_alive=run.container_alive),
         "series": series_summary(run),
+        "failed": run.is_failure,
+        "unseen_failure": run.unseen_failure,
+        "mlflow": mlflow_summary(run.mlflow),
     }
 
 
@@ -509,6 +549,19 @@ def build_mcp(
         loads = await asyncio.gather(*(call(svc.machine_load(m)) for m in ids))
         return [x.model_dump(mode="json") for x in loads]
 
+    @mcp.tool(
+        annotations=READ,
+        description="External runs: MLflow runs that TrainHub did not launch, found in the "
+        "experiments a project names in its mlflow settings (a training started by hand, from "
+        "a notebook...). TrainHub knows only what MLflow logged: no machine, container nor "
+        "logs, and no action but mark_run_seen and delete_external_run. Most recent first; "
+        "mlflow.stale: running but no new metric for a while.",
+    )
+    async def list_external_runs(
+        project: Annotated[str | None, Field(description="Filter by project")] = None,
+    ) -> list[dict[str, Any]]:
+        return [external_summary(r) for r in await call(svc.list_external_runs(project))]
+
     if readonly:
         return mcp
 
@@ -621,6 +674,30 @@ def build_mcp(
 
     @mcp.tool(
         annotations=WRITE,
+        description="Mark the failure of a run as seen (unseen_failure=true: a failed run "
+        "stays among the active runs until then): it moves to the finished runs. Takes a "
+        "TrainHub run id or an external run id (MLflow run id).",
+    )
+    async def mark_run_seen(
+        run_id: Annotated[str, Field(description="TrainHub run id, or MLflow run id")],
+    ) -> dict[str, Any]:
+        if await svc.store.get_run(run_id) is not None:
+            return run_summary(await call(svc.mark_seen(run_id)))
+        return external_summary(await call(svc.mark_external_seen(run_id)))
+
+    @mcp.tool(
+        annotations=WRITE,
+        description="Remove an external run from TrainHub: it is no longer shown and does not "
+        "come back. Nothing changes in MLflow.",
+    )
+    async def delete_external_run(
+        run_id: Annotated[str, Field(description="External run id (MLflow run id)")],
+    ) -> dict[str, Any]:
+        await call(svc.delete_external(run_id))
+        return {"deleted": run_id}
+
+    @mcp.tool(
+        annotations=WRITE,
         description="Change the generic command of a project (persisted; only affects "
         "runs launched afterwards). Placeholders: {config} (required), {run_id}, "
         "{machine}, {project}. A command identical to the YAML one cancels the override.",
@@ -682,5 +759,6 @@ READ_TOOLS = frozenset(
         "list_checkpoints",
         "list_mlflow_orphans",
         "get_machine_load",
+        "list_external_runs",
     }
 )

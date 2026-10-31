@@ -19,6 +19,7 @@ from ..service.schemas import (
     CheckpointRunDeleteResult,
     CheckpointSourceView,
     ConfigList,
+    ExternalRunView,
     Health,
     InventoryView,
     MachineGpus,
@@ -217,6 +218,12 @@ async def get_run(run_id: str, svc: Svc) -> RunView:
     return RunView.of(await svc.get_run(run_id))
 
 
+@router.post("/runs/{run_id}/seen", response_model=RunView, tags=["runs"])
+async def run_seen(run_id: str, svc: Svc) -> RunView:
+    """Mark the failure of a run as seen: it moves to the finished runs."""
+    return RunView.of(await svc.mark_seen(run_id))
+
+
 @router.post("/runs/{run_id}/{action}", response_model=RunView, tags=["runs"])
 async def run_action(
     run_id: str,
@@ -250,3 +257,23 @@ async def run_logs(
     if download:
         headers["Content-Disposition"] = f'attachment; filename="trainhub-{run_id}.log"'
     return Response(content=data, media_type="text/plain; charset=utf-8", headers=headers)
+
+
+@router.get("/external-runs", response_model=list[ExternalRunView], tags=["runs"])
+async def list_external_runs(svc: Svc, project: str | None = None) -> list[ExternalRunView]:
+    """MLflow runs that TrainHub did not launch, found in the experiments a project names
+    (``mlflow.experiments``), most recent first."""
+    return [ExternalRunView.of(r) for r in await svc.list_external_runs(project)]
+
+
+@router.post("/external-runs/{run_id}/seen", response_model=ExternalRunView, tags=["runs"])
+async def external_run_seen(run_id: str, svc: Svc) -> ExternalRunView:
+    """Mark the failure of an external run as seen: it moves to the finished runs."""
+    return ExternalRunView.of(await svc.mark_external_seen(run_id))
+
+
+@router.delete("/external-runs/{run_id}", status_code=204, tags=["runs"])
+async def delete_external_run(run_id: str, svc: Svc) -> Response:
+    """Remove an external run from TrainHub (nothing changes in MLflow)."""
+    await svc.delete_external(run_id)
+    return Response(status_code=204)

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ..core.models import (
     CheckpointInference,
     DockerOptions,
+    ExternalRun,
     MlflowRunRef,
     Run,
     RunStatus,
@@ -405,6 +406,9 @@ class RunView(Run):
     """Run enriched with computed values."""
 
     active: bool
+    failed: bool = Field(
+        description="Its command failed, or its training (MLflow FAILED/KILLED) while it ran"
+    )
     elapsed_s: float
     paused_s: float
 
@@ -413,9 +417,21 @@ class RunView(Run):
         return cls(
             **run.model_dump(),
             active=run.status.is_active,
+            failed=run.is_failure,
             elapsed_s=round(elapsed_seconds(run, now), 3),
             paused_s=round(paused_seconds(run, now), 3),
         )
+
+
+class ExternalRunView(ExternalRun):
+    """External run (found in MLflow, not launched by TrainHub), with computed values."""
+
+    active: bool = Field(description="MLflow status RUNNING or SCHEDULED")
+    failed: bool = Field(description="MLflow status FAILED or KILLED")
+
+    @classmethod
+    def of(cls, run: ExternalRun) -> ExternalRunView:
+        return cls(**run.model_dump(), active=run.is_active, failed=run.is_failure)
 
 
 class Snapshot(BaseModel):
@@ -423,6 +439,9 @@ class Snapshot(BaseModel):
     seq: int
     inventory: InventoryView
     runs: list[RunView]
+    external_runs: list[ExternalRunView] = Field(
+        default_factory=list, description="MLflow runs not launched by TrainHub"
+    )
     ui_state: UiState
     server_time: datetime
     version: str = Field(description="TrainHub version of the server")

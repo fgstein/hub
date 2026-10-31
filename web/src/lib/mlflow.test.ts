@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatEpoch, progress, trainingState } from "./mlflow"
+import { externalTraining, formatEpoch, progress, trainingState } from "./mlflow"
 
 describe("trainingState", () => {
   it("keeps the docker color without MLflow", () => {
@@ -13,6 +13,12 @@ describe("trainingState", () => {
     expect(trainingState("running", "KILLED")).toBe("failed")
     expect(trainingState("running", "FINISHED")).toBe("finished")
   })
+  it("shows a stalled training (no new metric) only while it runs", () => {
+    expect(trainingState("running", "RUNNING", true)).toBe("stale")
+    expect(trainingState("running", "FAILED", true)).toBe("failed")
+    expect(trainingState("succeeded", "FINISHED", true)).toBe("finished")
+    expect(trainingState("paused", "RUNNING", true)).toBeNull()
+  })
   it("maps finished runs", () => {
     expect(trainingState("succeeded", "FINISHED")).toBe("finished")
     expect(trainingState("succeeded", "RUNNING")).toBe("finished")
@@ -22,6 +28,15 @@ describe("trainingState", () => {
   it("never overrides container states", () => {
     for (const s of ["launching", "paused", "stopping", "stopped", "unreachable"] as const)
       expect(trainingState(s, "FAILED")).toBeNull()
+  })
+})
+
+describe("externalTraining", () => {
+  it("maps the MLflow status", () => {
+    expect(externalTraining("RUNNING")).toBe("healthy")
+    expect(externalTraining("RUNNING", true)).toBe("stale")
+    expect(externalTraining("FINISHED")).toBe("finished")
+    expect(externalTraining("KILLED")).toBe("failed")
   })
 })
 
