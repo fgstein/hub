@@ -105,4 +105,4 @@ projects:
 #       # inference:                    # inferences made with these checkpoints
 #       #   match: params.ckpt_path     # key holding the checkpoint path
 #       #   experiments: [seg-inference]
-#       #   show: [params.data.dataset] # values shown for each inference
+#       #   show: [params.data.dataset, metrics.test/miou] # params / tags / metrics (last value)

@@ -1315,6 +1315,13 @@ class FakeMlflow(MlflowSource):
                             for key in extra
                             if key.startswith("params.")
                         }
+                        logged |= {
+                            key: str(rng.randrange(1, 100))
+                            if "epoch" in key or "step" in key
+                            else f"{rng.uniform(0.3, 0.9):.4g}"
+                            for key in extra
+                            if key.startswith("metrics.")
+                        }
                         out.append(
                             MlflowHit(
                                 f"/workspace/outputs/{path}",

@@ -440,8 +440,11 @@ checkpoints:
       inference:
         match: params.ckpt_path                # key holding the checkpoint path
         experiments: [seg-inference]           # default: those of the mlflow section
-        show: [params.data.dataset]            # params / tags shown for each inference
+        show: [params.data.dataset, metrics.test/miou]   # params / tags / metrics shown
 ```
+
+`show` takes `params.<key>`, `tags.<key>` or `metrics.<key>`; a metric shows its last value
+(`12` rather than `12.0`, otherwise 6 significant digits). `match` stays a parameter or a tag.
 
 As for the directories, the path may be seen from the container: from its last component that
 is a run directory, the rest is the checkpoint. An inference whose checkpoint was deleted since

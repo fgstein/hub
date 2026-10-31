@@ -429,6 +429,20 @@ def split_mlflow_key(v: str) -> tuple[Literal["params", "tags"], str]:
     return ("params" if kind == "params" else "tags"), key
 
 
+def split_shown_key(v: str) -> tuple[Literal["params", "tags", "metrics"], str]:
+    """Like :func:`split_mlflow_key`, ``metrics.<key>`` accepted too (values shown, not
+    searched)."""
+    kind, _, key = v.partition(".")
+    if kind == "metrics" and key:
+        if any(c in key for c in "`'\"\n"):
+            raise ValueError(f"{v!r}: invalid MLflow key (quote character)")
+        return "metrics", key
+    try:
+        return split_mlflow_key(v)
+    except ValueError:
+        raise ValueError(f"{v!r}: params.<key>, tags.<key> or metrics.<key> expected") from None
+
+
 class CheckpointInferenceMlflow(_Strict):
     """MLflow runs of inferences made with the checkpoints of a source.
 
@@ -447,7 +461,8 @@ class CheckpointInferenceMlflow(_Strict):
     )
     show: list[str] = Field(
         default_factory=list,
-        description="Parameters or tags shown for each inference (params.<key> / tags.<key>)",
+        description="Parameters, tags or metrics shown for each inference "
+        "(params.<key> / tags.<key> / metrics.<key>: last value)",
     )
 
     @field_validator("match")
@@ -460,7 +475,7 @@ class CheckpointInferenceMlflow(_Strict):
     @classmethod
     def _check_show(cls, v: list[str]) -> list[str]:
         for key in v:
-            split_mlflow_key(key)
+            split_shown_key(key)
         return v
 
 
