@@ -10,6 +10,7 @@ import {
   inferenceCheckpoint,
   inferenceState,
   inferencesByFile,
+  mlflowRunning,
   pruneRunSelection,
   pruneSelection,
   type RunRowView,
@@ -831,7 +832,10 @@ export function CheckpointsPage(props: { source?: string }) {
             .filter(Boolean)
             .join(" · ")}
         />
-        <span class="w-120 min-w-40 shrink truncate font-mono text-sm text-fg-strong" title={inferenceName(inf())}>
+        <span
+          class="w-120 min-w-40 shrink truncate font-mono text-sm text-fg-strong"
+          title={inferenceName(inf())}
+        >
           {inferenceName(inf())}
         </span>
         <span
@@ -959,6 +963,14 @@ export function CheckpointsPage(props: { source?: string }) {
           <Show when={dirSelected()}>
             <span class="shrink-0 rounded bg-critical-bg px-1.5 text-xs text-fg-critical">
               whole directory
+            </span>
+          </Show>
+          <Show when={listing()?.mlflow && mlflowRunning(run().mlflow_runs ?? [])}>
+            <span
+              class="shrink-0 rounded-full border border-current px-1.5 text-[10px] font-medium leading-4 text-st-green"
+              data-testid="ckpt-mlflow-running"
+            >
+              running
             </span>
           </Show>
           <Show when={listing()?.mlflow}>
