@@ -61,6 +61,16 @@ START_MARGIN = timedelta(minutes=5)
 EXPERIMENTS_TTL_S = 60.0
 #: Queries to MLflow running at the same time.
 MAX_CONCURRENCY = 8
+#: Requests in flight to one MLflow server at the same time (a server has few workers: more
+#: only queue up there and run into the timeout).
+SERVER_CONCURRENCY = 2
+#: Time allowed for an answer: polling and single reads; searches of the checkpoint sources
+#: (pages of 1000 runs with all their data, slow on a busy server).
+TIMEOUT_S = 10.0
+SEARCH_TIMEOUT_S = 60.0
+#: Connection errors after which a request is sent once more (the server closed a kept-alive
+#: connection, or dropped it, while the request went out).
+_RETRIED = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError)
 #: Search of the runs of a checkpoint source: pages of 1000 runs, most recent first.
 SEARCH_PAGE_SIZE = 1000
 SEARCH_MAX_PAGES = 10
@@ -187,6 +197,11 @@ def format_metric(value: object) -> str | None:
     return format(number, ".6g")
 
 
+def _describe(exc: Exception) -> str:
+    """Text of a transport error (some have an empty message)."""
+    return str(exc) or type(exc).__name__
+
+
 def _number(value: object) -> float | None:
     if value is None:
         return None
@@ -245,8 +260,12 @@ class HttpMlflow(MlflowSource):
         elif user := os.environ.get("MLFLOW_TRACKING_USERNAME"):
             auth = httpx.BasicAuth(user, os.environ.get("MLFLOW_TRACKING_PASSWORD", ""))
         self._client = httpx.AsyncClient(
-            timeout=10.0, transport=transport, auth=auth, headers=headers
+            timeout=httpx.Timeout(TIMEOUT_S, connect=5.0),
+            transport=transport,
+            auth=auth,
+            headers=headers,
         )
+        self._slots: dict[str, asyncio.Semaphore] = {}
         self._experiments: dict[tuple[str, tuple[str, ...] | None], tuple[float, list[str]]] = {}
         self._names: dict[str, tuple[float, dict[str, str]]] = {}
 
@@ -254,14 +273,47 @@ class HttpMlflow(MlflowSource):
         await self._client.aclose()
 
     async def _call(
-        self, cfg: MlflowConfig, method: str, path: str, **kwargs: Any
+        self,
+        cfg: MlflowConfig,
+        method: str,
+        path: str,
+        *,
+        timeout: float = TIMEOUT_S,
+        retry: bool = True,
+        **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """JSON answer of the API; ``None`` for a missing resource."""
+        """JSON answer of the API; ``None`` for a missing resource.
+
+        At most :data:`SERVER_CONCURRENCY` requests per server at a time; a request whose
+        connection was cut is sent once more (``retry``); a timeout is reported as such, not
+        as an unreachable server.
+        """
         url = f"{cfg.tracking_uri}/api/2.0/mlflow/{path}"
-        try:
-            res = await self._client.request(method, url, **kwargs)
-        except httpx.HTTPError as exc:
-            raise MlflowError(f"MLflow unreachable ({cfg.tracking_uri}): {exc}") from exc
+        slot = self._slots.setdefault(cfg.tracking_uri, asyncio.Semaphore(SERVER_CONCURRENCY))
+        tries = 2 if retry else 1
+        async with slot:
+            for attempt in range(tries):
+                try:
+                    res = await self._client.request(
+                        method, url, timeout=httpx.Timeout(timeout, connect=5.0), **kwargs
+                    )
+                    break
+                except httpx.TimeoutException as exc:
+                    what = "connect" if isinstance(exc, httpx.ConnectTimeout) else "answer"
+                    raise MlflowError(
+                        f"MLflow did not {what} within {timeout:g} s ({cfg.tracking_uri}, {path})"
+                    ) from exc
+                except _RETRIED as exc:
+                    if attempt + 1 < tries:
+                        log.info("MLflow %s: %s, sent again", path, _describe(exc))
+                        continue
+                    raise MlflowError(
+                        f"MLflow unreachable ({cfg.tracking_uri}): {_describe(exc)}"
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    raise MlflowError(
+                        f"MLflow unreachable ({cfg.tracking_uri}): {_describe(exc)}"
+                    ) from exc
         if res.status_code == 404:
             return None
         if res.status_code >= 400:
@@ -357,7 +409,10 @@ class HttpMlflow(MlflowSource):
             }
             if token:
                 body["page_token"] = token
-            data = await self._call(cfg, "POST", "runs/search", json=body) or {}
+            data = (
+                await self._call(cfg, "POST", "runs/search", json=body, timeout=SEARCH_TIMEOUT_S)
+                or {}
+            )
             for run in data.get("runs") or []:
                 value = logged_value(run, match)
                 ref = read_ref(cfg, run)
@@ -371,7 +426,11 @@ class HttpMlflow(MlflowSource):
         return out, True
 
     async def delete_run(self, cfg: MlflowConfig, run_id: str) -> None:
-        if await self._call(cfg, "POST", "runs/delete", json={"run_id": run_id}) is None:
+        # Not sent again: a first attempt may have deleted it already.
+        if (
+            await self._call(cfg, "POST", "runs/delete", json={"run_id": run_id}, retry=False)
+            is None
+        ):
             raise MlflowError(f"MLflow run not found: {run_id}")
 
     async def experiments(self, cfg: MlflowConfig) -> dict[str, str]:
