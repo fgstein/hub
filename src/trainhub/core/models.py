@@ -266,7 +266,10 @@ class MlflowOptions(_Strict):
         default=None, description="MLflow server URL, as seen from TrainHub (http[s]://…)"
     )
     experiments: list[str] | None = Field(
-        default=None, description="Experiment names searched (default: all)"
+        default=None,
+        description="Experiment names searched (default: all). The running MLflow runs of "
+        "the experiments a project names that TrainHub did not launch are shown in that "
+        "project as external runs",
     )
     run_tag: str | None = Field(
         default=None, description="Tag of the MLflow run holding the TrainHub run id"
@@ -284,6 +287,12 @@ class MlflowOptions(_Strict):
         default=None,
         description="Pass MLFLOW_RUN_CONTEXT (run_tag = run id) and TRAINHUB_RUN_ID to the "
         "container, so that MLflow tags the run without code change",
+    )
+    stale_after_min: float | None = Field(
+        default=None,
+        gt=0,
+        description="A running MLflow run with no new metric for this long is shown as "
+        "stalled (orange); default 30",
     )
     poll_interval_s: float | None = Field(
         default=None, ge=2, description="Polling period of MLflow (global section only)"
@@ -316,6 +325,7 @@ class MlflowConfig(_Strict):
     epoch_metric: str = "epoch"
     epoch_offset: int = 0
     inject_env: bool = True
+    stale_after_min: float = 30.0
 
 
 class Project(_Strict):
@@ -628,7 +638,7 @@ class Inventory(_Strict):
 
     @property
     def mlflow_poll_interval(self) -> float:
-        return (self.mlflow.poll_interval_s if self.mlflow else None) or 10.0
+        return (self.mlflow.poll_interval_s if self.mlflow else None) or 30.0
 
     @model_validator(mode="after")
     def _apply_docker_command(self) -> Inventory:
@@ -783,6 +793,15 @@ class MlflowInfo(BaseModel):
     epoch: float | None = Field(default=None, description="Current epoch (metric + offset)")
     max_epochs: float | None = Field(default=None, description="Maximum epoch (parameter)")
     url: str | None = Field(default=None, description="Page of the run in the MLflow UI")
+    started_at: datetime | None = Field(default=None, description="Start of the MLflow run")
+    finished_at: datetime | None = Field(default=None, description="End of the MLflow run")
+    last_activity: datetime | None = Field(
+        default=None, description="Time of the most recent metric logged"
+    )
+    stale: bool = Field(
+        default=False,
+        description="Running, but no new metric for stale_after_min (training stalled?)",
+    )
     error: str | None = Field(default=None, description="Last error querying MLflow")
 
 
@@ -820,6 +839,8 @@ class CheckpointInference(BaseModel):
 
 #: MLflow statuses after which the MLflow run no longer changes.
 MLFLOW_TERMINAL = frozenset({"FINISHED", "FAILED", "KILLED"})
+#: MLflow statuses of a failed training.
+MLFLOW_FAILED = frozenset({"FAILED", "KILLED"})
 
 
 class Series(BaseModel):
@@ -895,3 +916,47 @@ class Run(BaseModel):
     series: Series | None = Field(
         default=None, description="Repetitions of the command in the container (None: run once)"
     )
+    unseen_failure: bool = Field(
+        default=False,
+        description="The run failed and nobody marked it as seen yet: it stays among the "
+        "active runs until then",
+    )
+
+    @property
+    def is_failure(self) -> bool:
+        """The run failed: its command (status ``failed``), or its training (MLflow
+        ``FAILED``/``KILLED``) while it ran. A deliberate stop is not a failure."""
+        if self.status is RunStatus.FAILED:
+            return True
+        ml = self.mlflow.status if self.mlflow else None
+        return self.status in (RunStatus.RUNNING, RunStatus.SUCCEEDED) and ml in MLFLOW_FAILED
+
+
+class ExternalRun(BaseModel):
+    """A run found in MLflow that TrainHub did not launch.
+
+    It is shown in the project whose ``mlflow.experiments`` names its experiment, with what
+    MLflow knows of it: TrainHub has no machine, container nor logs for it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(description="MLflow run id")
+    project_id: str
+    name: str | None = Field(default=None, description="MLflow run name")
+    user: str | None = Field(default=None, description="mlflow.user tag")
+    experiment: str | None = Field(default=None, description="MLflow experiment name")
+    mlflow: MlflowInfo
+    discovered_at: datetime = Field(description="When TrainHub found it")
+    unseen_failure: bool = Field(
+        default=False,
+        description="Failed and not marked as seen yet: stays among the active runs until then",
+    )
+
+    @property
+    def is_active(self) -> bool:
+        return self.mlflow.status in ("RUNNING", "SCHEDULED")
+
+    @property
+    def is_failure(self) -> bool:
+        return self.mlflow.status in MLFLOW_FAILED

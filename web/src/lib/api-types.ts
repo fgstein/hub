@@ -335,6 +335,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Seen
+         * @description Mark the failure of a run as seen: it moves to the finished runs.
+         */
+        post: operations["run_seen_api_runs__run_id__seen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/{action}": {
         parameters: {
             query?: never;
@@ -370,6 +390,67 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/external-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List External Runs
+         * @description MLflow runs that TrainHub did not launch, found in the experiments a project names
+         *     (``mlflow.experiments``), most recent first.
+         */
+        get: operations["list_external_runs_api_external_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/external-runs/{run_id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * External Run Seen
+         * @description Mark the failure of an external run as seen: it moves to the finished runs.
+         */
+        post: operations["external_run_seen_api_external_runs__run_id__seen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/external-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete External Run
+         * @description Remove an external run from TrainHub (nothing changes in MLflow).
+         */
+        delete: operations["delete_external_run_api_external_runs__run_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -791,6 +872,57 @@ export interface components {
              */
             keep_alive: boolean;
         };
+        /**
+         * ExternalRunView
+         * @description External run (found in MLflow, not launched by TrainHub), with computed values.
+         */
+        ExternalRunView: {
+            /**
+             * Id
+             * @description MLflow run id
+             */
+            id: string;
+            /** Project Id */
+            project_id: string;
+            /**
+             * Name
+             * @description MLflow run name
+             */
+            name?: string | null;
+            /**
+             * User
+             * @description mlflow.user tag
+             */
+            user?: string | null;
+            /**
+             * Experiment
+             * @description MLflow experiment name
+             */
+            experiment?: string | null;
+            mlflow: components["schemas"]["MlflowInfo"];
+            /**
+             * Discovered At
+             * Format: date-time
+             * @description When TrainHub found it
+             */
+            discovered_at: string;
+            /**
+             * Unseen Failure
+             * @description Failed and not marked as seen yet: stays among the active runs until then
+             * @default false
+             */
+            unseen_failure: boolean;
+            /**
+             * Active
+             * @description MLflow status RUNNING or SCHEDULED
+             */
+            active: boolean;
+            /**
+             * Failed
+             * @description MLflow status FAILED or KILLED
+             */
+            failed: boolean;
+        };
         /** GpuRunView */
         GpuRunView: {
             /** Id */
@@ -1075,6 +1207,27 @@ export interface components {
              * @description Page of the run in the MLflow UI
              */
             url?: string | null;
+            /**
+             * Started At
+             * @description Start of the MLflow run
+             */
+            started_at?: string | null;
+            /**
+             * Finished At
+             * @description End of the MLflow run
+             */
+            finished_at?: string | null;
+            /**
+             * Last Activity
+             * @description Time of the most recent metric logged
+             */
+            last_activity?: string | null;
+            /**
+             * Stale
+             * @description Running, but no new metric for stale_after_min (training stalled?)
+             * @default false
+             */
+            stale: boolean;
             /**
              * Error
              * @description Last error querying MLflow
@@ -1400,8 +1553,19 @@ export interface components {
             mlflow?: components["schemas"]["MlflowInfo"] | null;
             /** @description Repetitions of the command in the container (None: run once) */
             series?: components["schemas"]["Series"] | null;
+            /**
+             * Unseen Failure
+             * @description The run failed and nobody marked it as seen yet: it stays among the active runs until then
+             * @default false
+             */
+            unseen_failure: boolean;
             /** Active */
             active: boolean;
+            /**
+             * Failed
+             * @description Its command failed, or its training (MLflow FAILED/KILLED) while it ran
+             */
+            failed: boolean;
             /** Elapsed S */
             elapsed_s: number;
             /** Paused S */
@@ -2141,6 +2305,37 @@ export interface operations {
             };
         };
     };
+    run_seen_api_runs__run_id__seen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_action_api_runs__run_id___action__post: {
         parameters: {
             query?: never;
@@ -2195,6 +2390,97 @@ export interface operations {
                 content: {
                     "text/plain": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_external_runs_api_external_runs_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalRunView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    external_run_seen_api_external_runs__run_id__seen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalRunView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_external_run_api_external_runs__run_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from ..core.models import Run, RunStatus
+from ..core.models import ExternalRun, Run, RunStatus
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS runs (
     params TEXT NOT NULL DEFAULT '{}',
     checkpoint TEXT,
     mlflow TEXT,
-    series TEXT
+    series TEXT,
+    unseen_failure INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS runs_project ON runs(project_id);
 CREATE INDEX IF NOT EXISTS runs_machine ON runs(machine_id);
@@ -46,6 +47,12 @@ CREATE TABLE IF NOT EXISTS project_commands (
     project_id TEXT PRIMARY KEY,
     command TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
@@ -80,6 +87,7 @@ _COLUMNS = [
     "checkpoint",
     "mlflow",
     "series",
+    "unseen_failure",
 ]
 #: Columns added after the first version (migrated on open).
 _ADDED_COLUMNS = {
@@ -88,8 +96,9 @@ _ADDED_COLUMNS = {
     "checkpoint": "TEXT",
     "mlflow": "TEXT",
     "series": "TEXT",
+    "unseen_failure": "INTEGER NOT NULL DEFAULT 0",
 }
-_BOOL_COLS = {"stop_requested", "container_alive"}
+_BOOL_COLS = {"stop_requested", "container_alive", "unseen_failure"}
 _JSON_COLS = {"full_command", "overrides", "params", "mlflow", "series"}
 _NULLABLE_JSON_COLS = {"mlflow", "series"}
 _DT_COLS = {"created_at", "started_at", "finished_at", "paused_at"}
@@ -97,11 +106,12 @@ _DT_COLS = {"created_at", "started_at", "finished_at", "paused_at"}
 
 def _to_row(run: Run) -> list[Any]:
     d = run.model_dump(mode="python")
+    as_json = run.model_dump(mode="json", include=_JSON_COLS)
     row: list[Any] = []
     for col in _COLUMNS:
         v = d[col]
         if col in _JSON_COLS:
-            v = json.dumps(v)
+            v = json.dumps(as_json[col])
         elif col in _DT_COLS:
             v = v.isoformat() if isinstance(v, datetime) else None
         elif col in _BOOL_COLS:
@@ -230,6 +240,40 @@ class Store:
 
     async def delete_run(self, run_id: str) -> None:
         await self.db.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        await self.db.commit()
+
+    # -- external runs (found in MLflow, not launched by TrainHub) ---------------
+
+    async def save_external(self, run: ExternalRun, *, hidden: bool = False) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO external_runs VALUES (?, ?, ?, ?)",
+            (run.id, run.project_id, int(hidden), run.model_dump_json()),
+        )
+        await self.db.commit()
+
+    async def get_external(self, run_id: str) -> tuple[ExternalRun, bool] | None:
+        """The external run and whether it is hidden (deleted from TrainHub)."""
+        async with self.db.execute(
+            "SELECT data, hidden FROM external_runs WHERE id = ?", (run_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return (ExternalRun.model_validate_json(row["data"]), bool(row["hidden"])) if row else None
+
+    async def list_external(self, *, hidden: bool = False) -> list[ExternalRun]:
+        """External runs shown (``hidden``: those deleted from TrainHub instead)."""
+        async with self.db.execute(
+            "SELECT data FROM external_runs WHERE hidden = ?", (int(hidden),)
+        ) as cur:
+            rows = await cur.fetchall()
+        return [ExternalRun.model_validate_json(r["data"]) for r in rows]
+
+    async def external_ids(self) -> set[str]:
+        """Ids of every external run known, hidden or not."""
+        async with self.db.execute("SELECT id FROM external_runs") as cur:
+            return {r["id"] for r in await cur.fetchall()}
+
+    async def forget_external(self, run_id: str) -> None:
+        await self.db.execute("DELETE FROM external_runs WHERE id = ?", (run_id,))
         await self.db.commit()
 
     # -- project commands ------------------------------------------------------

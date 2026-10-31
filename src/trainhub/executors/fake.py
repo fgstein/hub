@@ -27,9 +27,11 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from ..core import checkpoints as ck
 from ..core.commands import (
+    LABEL_PROJECT,
     LABEL_RUN_ID,
     LABEL_SERIES,
     LABEL_SERIES_CONTINUE,
@@ -47,6 +49,7 @@ from ..core.models import (
     MlflowRunRef,
     Run,
     SimulationSettings,
+    UnknownResourceError,
 )
 from ..core.series import end_marker, halt_message, start_marker
 from ..service.mlflow import MlflowHit, MlflowSource
@@ -148,6 +151,8 @@ class FakeContainer:
     ml_status: str = "RUNNING"
     ml_epoch: int | None = None
     ml_epochs: int | None = None
+    #: start of the simulated MLflow run of the current execution (repetition)
+    ml_started_at: datetime | None = None
 
     def write(self, data: bytes) -> None:
         self.logs += data
@@ -644,6 +649,7 @@ class FakeExecutor(Executor):
     def _start_container(self, c: FakeContainer) -> None:
         c.ml_run += 1
         c.ml_status, c.ml_epoch, c.ml_epochs = "RUNNING", None, None
+        c.ml_started_at = None  # the container's start
         c.state = "running"
         c.exit_code = 0
         c.command_done = False
@@ -892,6 +898,7 @@ class FakeExecutor(Executor):
             if k > 1:  # each repetition creates its own MLflow run
                 c.ml_run += 1
                 c.ml_status, c.ml_epoch, c.ml_epochs = "RUNNING", None, None
+                c.ml_started_at = _now()
             start = starts[k - 1] if len(starts) == count else start_marker(k, count)
             c.write(f"{start}{nl}".encode())
             code = await self._training(c, salt=str(k))
@@ -1039,19 +1046,194 @@ class FakeExecutor(Executor):
         c.write("".join(line + nl for line in lines).encode())
 
 
+def _exp_id(name: str) -> str:
+    """Experiment id of a simulated experiment (from its name)."""
+    return str(int(hashlib.sha1(name.encode()).hexdigest()[:4], 16))
+
+
+def _ms(t: datetime | float) -> int:
+    return int((t.timestamp() if isinstance(t, datetime) else t) * 1000)
+
+
+_CLAUSE = re.compile(r"attributes\.(status|start_time)\s*(=|!=|>=)\s*'?([^']*)'?")
+
+
+def _matches(raw: dict[str, Any], filter_: str) -> bool:
+    """The few MLflow filters TrainHub sends (attributes.status / start_time)."""
+    info = raw["info"]
+    for clause in filter_.split(" AND "):
+        m = _CLAUSE.fullmatch(clause.strip())
+        if m is None:
+            raise ValueError(f"filter not simulated: {clause!r}")
+        field_, op, value = m.groups()
+        got = info["status"] if field_ == "status" else info["start_time"]
+        want: object = value if field_ == "status" else int(value)
+        if (op == "=" and got != want) or (op == "!=" and got == want):
+            return False
+        if op == ">=" and not got >= want:
+            return False
+    return True
+
+
 class FakeMlflow(MlflowSource):
-    """MLflow server simulated from the containers of a :class:`FakeExecutor`."""
+    """MLflow server simulated from the containers of a :class:`FakeExecutor`.
+
+    The TrainHub runs log to the experiment named after their project. Each experiment
+    named in a project's ``mlflow.experiments`` also holds three runs TrainHub did not
+    launch (external runs): one training, one stalled for 45 min, one that failed 20 min
+    ago.
+    """
 
     def __init__(self, executor: FakeExecutor) -> None:
         self.executor = executor
         #: MLflow runs deleted (still found by the searches, flagged ``deleted``)
         self.deleted: set[str] = set()
+        #: start of the simulation (the external runs are placed from it)
+        self._t0 = time.time()
+
+    def _names(self) -> list[str]:
+        inv = self.executor.inventory
+        if inv is None:
+            return []
+        names = [p.id for p in inv.projects]
+        for p in inv.projects:
+            cfg = inv.mlflow_config(p)
+            names += cfg.experiments or [] if cfg else []
+        return list(dict.fromkeys(names))
+
+    def _experiment_of(self, project_id: str) -> str:
+        """Experiment the runs of a project log to: the first it names, else its id."""
+        inv = self.executor.inventory
+        try:
+            cfg = inv.mlflow_config(inv.project(project_id)) if inv else None
+        except UnknownResourceError:
+            cfg = None
+        return cfg.experiments[0] if cfg and cfg.experiments else project_id
+
+    def _claimed(self) -> list[str]:
+        inv = self.executor.inventory
+        out: list[str] = []
+        for p in inv.projects if inv else []:
+            cfg = inv.mlflow_config(p) if inv else None
+            out += cfg.experiments or [] if cfg else []
+        return list(dict.fromkeys(out))
+
+    def _all_runs(self, cfg: MlflowConfig) -> list[dict[str, Any]]:
+        """Every simulated MLflow run, as the REST API returns them."""
+        out: list[dict[str, Any]] = []
+        now = time.time()
+        for m in self.executor.machines.values():
+            for c in m.containers.values():
+                run_id = c.labels.get(LABEL_RUN_ID)
+                project = c.labels.get(LABEL_PROJECT)
+                start = c.ml_started_at or c.started_at
+                if not run_id or not project or start is None:
+                    continue
+                ended = c.ml_status in ("FINISHED", "FAILED", "KILLED")
+                out.append(
+                    self._raw(
+                        cfg,
+                        hashlib.sha1(f"{c.id}-{c.ml_run}".encode()).hexdigest()[:32],
+                        _exp_id(self._experiment_of(project)),
+                        f"{project}-{run_id}",
+                        c.ml_status,
+                        _ms(start),
+                        _ms(c.finished_at or now) if ended else None,
+                        c.ml_epoch,
+                        c.ml_epochs,
+                        _ms(now),
+                        {cfg.run_tag: run_id, "mlflow.user": "trainhub"},
+                    )
+                )
+        for name in self._claimed():
+            h = int(hashlib.sha1(name.encode()).hexdigest()[:6], 16)
+            t0 = self._t0
+            # (suffix, user, status, started min before t0, end, last metric, epochs,
+            #  minutes per epoch)
+            for suffix, user, status, ago, end, last, epochs, pace in (
+                ("notebook", "bob", "RUNNING", 120, None, None, 40, 5),
+                ("sweep-7", "carol", "RUNNING", 300, None, t0 - 45 * 60, 100, 4),
+                ("debug", "bob", "FAILED", 20, t0 - 18 * 60, t0 - 18 * 60, 50, 1),
+            ):
+                begin = t0 - ago * 60
+                metric = last if last is not None else min(now, end or now)
+                epoch = min(epochs - 1, int((metric - begin) / 60 / pace))
+                out.append(
+                    self._raw(
+                        cfg,
+                        hashlib.sha1(f"{name}-{suffix}".encode()).hexdigest()[:32],
+                        _exp_id(name),
+                        f"{suffix}-{h % 1000:03d}",
+                        status,
+                        _ms(begin),
+                        _ms(end) if end else None,
+                        epoch,
+                        epochs,
+                        _ms(metric),
+                        {"mlflow.user": user},
+                    )
+                )
+        return [r for r in out if r["info"]["run_id"] not in self.deleted]
+
+    @staticmethod
+    def _raw(
+        cfg: MlflowConfig,
+        run_id: str,
+        exp: str,
+        name: str,
+        status: str,
+        start: int,
+        end: int | None,
+        epoch: float | None,
+        epochs: float | None,
+        stamp: int,
+        tags: dict[str, str],
+    ) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "run_id": run_id,
+            "run_name": name,
+            "experiment_id": exp,
+            "status": status,
+            "start_time": start,
+            "lifecycle_stage": "active",
+        }
+        if end is not None:
+            info["end_time"] = end
+        metrics = (
+            [] if epoch is None else [{"key": cfg.epoch_metric, "value": epoch, "timestamp": stamp}]
+        )
+        params = [] if epochs is None else [{"key": cfg.max_epochs_param, "value": str(epochs)}]
+        return {
+            "info": info,
+            "data": {
+                "metrics": metrics,
+                "params": params,
+                "tags": [{"key": k, "value": v} for k, v in tags.items()],
+            },
+        }
+
+    async def experiments(self, cfg: MlflowConfig) -> dict[str, str]:
+        return {_exp_id(n): n for n in self._names()}
+
+    async def search_runs(
+        self, cfg: MlflowConfig, experiment_ids: Sequence[str], filter_: str
+    ) -> list[dict[str, Any]]:
+        ids = set(experiment_ids)
+        runs = [
+            r
+            for r in self._all_runs(cfg)
+            if r["info"]["experiment_id"] in ids and _matches(r, filter_)
+        ]
+        return sorted(runs, key=lambda r: r["info"]["start_time"], reverse=True)
+
+    async def get_run(self, cfg: MlflowConfig, run_id: str) -> dict[str, Any] | None:
+        return next((r for r in self._all_runs(cfg) if r["info"]["run_id"] == run_id), None)
 
     async def fetch(self, cfg: MlflowConfig, run: Run) -> MlflowInfo:
         c = self.executor.find_container(run.id)
         if c is None:
             return MlflowInfo()
-        exp = str(int(hashlib.sha1(run.project_id.encode()).hexdigest()[:4], 16))
+        exp = _exp_id(self._experiment_of(run.project_id))
         ml_id = hashlib.sha1(f"{c.id}-{c.ml_run}".encode()).hexdigest()[:32]
         return MlflowInfo(
             run_id=ml_id,

@@ -3,6 +3,8 @@ import type { components } from "./api-types"
 type S = components["schemas"]
 
 export type RunView = S["RunView"]
+/** MLflow run not launched by TrainHub, shown in the project naming its experiment. */
+export type ExternalRunView = S["ExternalRunView"]
 export type RunStatus = S["RunStatus"]
 export type InventoryView = S["InventoryView"]
 export type ProjectView = S["ProjectView"]
@@ -43,6 +45,7 @@ export interface Snapshot {
   seq: number
   inventory: InventoryView
   runs: RunView[]
+  external_runs?: ExternalRunView[]
   ui_state: UiState
   server_time: string
   version: string
@@ -52,6 +55,8 @@ export type ServerEvent =
   | Snapshot
   | { type: "run.created" | "run.updated"; seq: number; run: RunView }
   | { type: "run.deleted"; seq: number; id: string; project_id: string }
+  | { type: "external_run.updated"; seq: number; run: ExternalRunView }
+  | { type: "external_run.deleted"; seq: number; id: string; project_id: string }
   | { type: "inventory.updated"; seq: number; inventory: InventoryView }
   | { type: "machine.status"; seq: number; machine: MachineStatus }
   | { type: "ui_state.updated"; seq: number; ui_state: UiState }

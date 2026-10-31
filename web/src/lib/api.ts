@@ -4,6 +4,7 @@ import type {
   CheckpointRunDeleteResult,
   CheckpointSourceView,
   ConfigList,
+  ExternalRunView,
   InventoryView,
   MachineGpus,
   MachineLoad,
@@ -78,6 +79,10 @@ export const api = {
   action: (id: string, action: RunAction) =>
     request<RunView>("POST", `/api/runs/${encodeURIComponent(id)}/${action}`),
   remove: (id: string) => request<void>("DELETE", `/api/runs/${encodeURIComponent(id)}`),
+  seen: (id: string) => request<RunView>("POST", `/api/runs/${encodeURIComponent(id)}/seen`),
+  externalSeen: (id: string) =>
+    request<ExternalRunView>("POST", `/api/external-runs/${encodeURIComponent(id)}/seen`),
+  removeExternal: (id: string) => request<void>("DELETE", `/api/external-runs/${encodeURIComponent(id)}`),
   checkpointSources: () => request<CheckpointSourceView[]>("GET", "/api/checkpoints"),
   checkpoints: (source: string, refresh = false) =>
     request<CheckpointListing>(

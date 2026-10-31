@@ -9,6 +9,7 @@ import { shellJoin, splitArgs } from "~/lib/command"
 import { draftSeries, type RangeDraft, seriesRequest } from "~/lib/series"
 import type {
   ConfigList,
+  ExternalRunView,
   InventoryView,
   LastSelection,
   MachineGpus,
@@ -59,6 +60,8 @@ interface AppState {
   ready: boolean
   inventory: InventoryView | null
   runs: Record<string, RunView>
+  /** MLflow runs not launched by TrainHub, indexed by MLflow run id. */
+  external: Record<string, ExternalRunView>
   ui: UiState
   seq: number
   /** TrainHub version of the server (from the snapshot). */
@@ -72,6 +75,7 @@ const [state, setState] = createStore<AppState>({
   ready: false,
   inventory: null,
   runs: {},
+  external: {},
   ui: { open_tabs: [], active_tab: null, last_selection: {} },
   seq: 0,
   version: null,
@@ -89,9 +93,12 @@ function applyEvent(ev: ServerEvent): void {
       setServerTime(ev.server_time)
       const runs: Record<string, RunView> = {}
       for (const r of ev.runs) runs[r.id] = r
+      const external: Record<string, ExternalRunView> = {}
+      for (const r of ev.external_runs ?? []) external[r.id] = r
       batch(() => {
         setState("inventory", reconcile(ev.inventory))
         setState("runs", reconcile(runs))
+        setState("external", reconcile(external))
         setState("ui", reconcile(ev.ui_state))
         setState("seq", ev.seq)
         setState("version", ev.version)
@@ -112,6 +119,24 @@ function applyEvent(ev: ServerEvent): void {
         setState("seq", ev.seq)
         setState(
           "runs",
+          produce((runs) => {
+            delete runs[ev.id]
+          }),
+        )
+      })
+      return
+    case "external_run.updated":
+      if (ev.seq <= state.seq) return
+      setState("seq", ev.seq)
+      if (state.external[ev.run.id]) setState("external", ev.run.id, reconcile(ev.run))
+      else setState("external", ev.run.id, ev.run)
+      return
+    case "external_run.deleted":
+      if (ev.seq <= state.seq) return
+      batch(() => {
+        setState("seq", ev.seq)
+        setState(
+          "external",
           produce((runs) => {
             delete runs[ev.id]
           }),
@@ -178,10 +203,13 @@ export function project(id: string | null | undefined): ProjectView | undefined 
   return state.inventory?.projects.find((p) => p.id === id)
 }
 
-/** Active runs of a project, oldest first. */
+/** A run is shown among the active ones while it runs, and after a failure until it is seen. */
+const showsActive = (r: { active: boolean; unseen_failure?: boolean }) => r.active || !!r.unseen_failure
+
+/** Active runs of a project (and failures not seen yet), oldest first. */
 export function activeRunIds(projectId: string): string[] {
   return Object.values(state.runs)
-    .filter((r) => r.project_id === projectId && isActive(r.status))
+    .filter((r) => r.project_id === projectId && (isActive(r.status) || r.unseen_failure))
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
     .map((r) => r.id)
 }
@@ -189,15 +217,74 @@ export function activeRunIds(projectId: string): string[] {
 /** Finished runs of a project, most recent first. */
 export function finishedRunIds(projectId: string): string[] {
   return Object.values(state.runs)
-    .filter((r) => r.project_id === projectId && isFinished(r.status))
+    .filter((r) => r.project_id === projectId && isFinished(r.status) && !r.unseen_failure)
     .sort((a, b) => (b.finished_at ?? b.created_at).localeCompare(a.finished_at ?? a.created_at))
     .map((r) => r.id)
 }
 
+const externalStart = (r: ExternalRunView) => r.mlflow.started_at ?? r.discovered_at
+const externalEnd = (r: ExternalRunView) => r.mlflow.finished_at ?? externalStart(r)
+
+/** External runs of a project shown among the active ones, oldest first. */
+export function activeExternalIds(projectId: string): string[] {
+  return Object.values(state.external)
+    .filter((r) => r.project_id === projectId && showsActive(r))
+    .sort((a, b) => externalStart(a).localeCompare(externalStart(b)))
+    .map((r) => r.id)
+}
+
+/** Finished external runs of a project, most recent first. */
+export function finishedExternalIds(projectId: string): string[] {
+  return Object.values(state.external)
+    .filter((r) => r.project_id === projectId && !showsActive(r))
+    .sort((a, b) => externalEnd(b).localeCompare(externalEnd(a)))
+    .map((r) => r.id)
+}
+
+/** Runs in progress in a project (TrainHub and external), for the tab badge. */
 export function activeCount(projectId: string): number {
   let n = 0
   for (const r of Object.values(state.runs)) if (r.project_id === projectId && isActive(r.status)) n++
+  for (const r of Object.values(state.external)) if (r.project_id === projectId && r.active) n++
   return n
+}
+
+/** Failures not seen yet in a project (TrainHub and external). */
+export function unseenCount(projectId: string): number {
+  let n = 0
+  for (const r of Object.values(state.runs)) if (r.project_id === projectId && r.unseen_failure) n++
+  for (const r of Object.values(state.external)) if (r.project_id === projectId && r.unseen_failure) n++
+  return n
+}
+
+/** Mark the failure of a run (TrainHub or external) as seen: it moves to the finished runs. */
+export async function markSeen(id: string, external = false): Promise<void> {
+  try {
+    if (external) {
+      const run = await api.externalSeen(id)
+      setState("external", id, reconcile(run))
+    } else {
+      const run = await api.seen(id)
+      setState("runs", id, reconcile(run))
+    }
+  } catch (e) {
+    toastError(e)
+  }
+}
+
+/** Remove an external run from TrainHub (MLflow is not touched). */
+export async function removeExternal(id: string): Promise<void> {
+  try {
+    await api.removeExternal(id)
+    setState(
+      "external",
+      produce((runs) => {
+        delete runs[id]
+      }),
+    )
+  } catch (e) {
+    toastError(e)
+  }
 }
 
 /** Displayed status (optimistic during an ongoing action). */

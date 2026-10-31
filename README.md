@@ -28,8 +28,13 @@ are a common case, see the [examples](#examples).
 - **Kept container**: when the command finishes, the container stays started (status succeeded
   or failed from the exit code) so that you can open a shell in it, then close it yourself.
 - **MLflow progress**: for projects tracked with MLflow, a progress bar (current epoch / maximum
-  epoch) and a status dot colored by the training state: green while it goes well, red if it
-  failed, blue once finished. See [MLflow](#mlflow).
+  epoch) and a status dot colored by the training state: green while it goes well, orange when
+  no metric came for a while (stalled?), red if it failed, blue once finished. See
+  [MLflow](#mlflow).
+- **External runs**: the MLflow runs of a project's experiments that TrainHub did not launch
+  (started by hand, from a notebook…) show up in that project with an `external` badge.
+- **Failures stay in sight**: a failed run stays among the active runs, red, until someone
+  clicks **Seen**; the tab shows how many are waiting.
 - **Machines tab**: CPU (every core), memory and GPU load of every machine of the inventory,
   with the TrainHub runs placed on each GPU, refreshed every 5 s; a click on a GPU prepares a run
   on it.
@@ -519,6 +524,7 @@ shows a progress bar (`3/10`), a link to the run in the MLflow UI, and colors th
 | Run (container) | MLflow run              | Dot                         |
 |-----------------|-------------------------|-----------------------------|
 | running         | `RUNNING` / `SCHEDULED` | green: training going well  |
+| running         | `RUNNING`, no new metric for `stale_after_min` | orange: training stalled? |
 | running / succeeded | `FINISHED`          | blue: training finished     |
 | any             | `FAILED` / `KILLED`     | red: training failed        |
 | failed          | any                     | red                         |
@@ -529,18 +535,20 @@ color: a deliberate stop stays grey even though MLflow reports `KILLED`.
 ```yaml
 mlflow:                          # global section (optional)
   tracking_uri: http://mlflow.lab:5000   # as seen from TrainHub
-  # experiments: [segmentation]  # experiments searched (default: all)
+  # experiments: [segmentation]  # experiments searched (default: all); see External runs
   max_epochs_param: trainer.max_epochs   # MLflow parameter: maximum epoch (default max_epochs)
   epoch_metric: epoch            # MLflow metric: current epoch (latest value; default epoch)
   # epoch_offset: 1              # added to the metric, e.g. 1 if it counts from 0
   # run_tag: trainhub.run_id     # tag holding the TrainHub run id (default)
   # inject_env: true             # see below
-  # poll_interval_s: 10          # MLflow polling period (global section only)
+  # stale_after_min: 30          # orange dot after this long without a new metric
+  # poll_interval_s: 30          # MLflow polling period (global section only)
 
 projects:
   - id: segmentation
     mlflow:                      # optional: overrides the global values for this project
       epoch_metric: trainer/epoch
+      experiments: [segmentation]  # its external runs are shown in this project
   - id: llm
     mlflow: {enabled: false}     # no MLflow for this project
 ```
@@ -553,6 +561,32 @@ MLflow adds the tags of this variable to every run it creates (`mlflow.start_run
 `mlflow.set_tag("trainhub.run_id", os.environ["TRAINHUB_RUN_ID"])`. TrainHub reads MLflow
 directly from its own host (`tracking_uri`); the training keeps logging to MLflow as it already
 does.
+
+**Polling.** Every `poll_interval_s` (30 s by default), TrainHub sends, per MLflow server, one
+`runs/search` for the running runs of the experiments concerned and one for the runs started
+since the previous round (which catches a run that started and failed in between): every run
+reads its state from these two answers, whatever their number. A run that stops running is
+then read once (`runs/get`); the experiment list is refreshed every minute.
+
+**Failures stay in sight.** A run that fails — its command (`failed`), or its training (MLflow
+`FAILED`/`KILLED`) — stays among the active runs, red, with a **Seen** button; the project tab
+shows a red counter. Once seen (by anyone: the state is shared), it moves to the finished runs.
+A deliberate stop and “Mark as finished” are not failures. API: `POST /api/runs/<id>/seen`;
+MCP: `mark_run_seen`.
+
+**External runs.** The running MLflow runs of the experiments a project names in its
+`mlflow.experiments` (its own or inherited from the global section) that TrainHub did not launch
+show up in that project, with an `external` badge: name, `mlflow.user`, experiment, progress,
+link. When several projects name the same experiment, the first one in the inventory gets its
+runs; an experiment no project names is not watched. At start-up, TrainHub also takes the
+failures that happened since the oldest running run; afterwards every new run of these
+experiments. TrainHub has no machine, container nor logs for them and **never changes them in
+MLflow**: they follow the same rules (orange when stalled, a failure stays until **Seen**), and
+the trash button only removes one from TrainHub (it does not come back). Cleaning MLflow up is
+done from the [Checkpoints](#checkpoints) tab. A run whose `run_tag` names a TrainHub run that
+no longer exists is an external run. API: `GET /api/external-runs[?project=]`,
+`POST /api/external-runs/<id>/seen`, `DELETE /api/external-runs/<id>`; MCP:
+`list_external_runs`, `mark_run_seen`, `delete_external_run`.
 
 **Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own
 environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and

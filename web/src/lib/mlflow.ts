@@ -1,23 +1,30 @@
-import type { RunStatus, RunView } from "./types"
+import type { MlflowInfo, RunStatus } from "./types"
 
 /** Training state read from MLflow, shown by the color of the status dot. */
-export type Training = "healthy" | "failed" | "finished"
+export type Training = "healthy" | "stale" | "failed" | "finished"
 
 /**
  * Training state of a run from its MLflow run (``null``: no MLflow information, the dot keeps
  * its docker status color). Statuses about the container itself (launching, paused,
  * stopping, stopped, unreachable) are never overridden.
  *
- * - running: MLflow FAILED/KILLED → failed (red), FINISHED → finished (blue), else healthy (green)
+ * - running: MLflow FAILED/KILLED → failed (red), FINISHED → finished (blue), running with no
+ *   new metric for a while (``stale``) → stale (orange), else healthy (green)
  * - succeeded: MLflow FAILED/KILLED → failed (red), else finished (blue)
  * - failed: failed (red)
  */
-export function trainingState(status: RunStatus, mlflowStatus: string | null | undefined): Training | null {
+export function trainingState(
+  status: RunStatus,
+  mlflowStatus: string | null | undefined,
+  stale = false,
+): Training | null {
   if (!mlflowStatus) return null
   const mlFailed = mlflowStatus === "FAILED" || mlflowStatus === "KILLED"
   switch (status) {
     case "running":
-      return mlFailed ? "failed" : mlflowStatus === "FINISHED" ? "finished" : "healthy"
+      if (mlFailed) return "failed"
+      if (mlflowStatus === "FINISHED") return "finished"
+      return stale ? "stale" : "healthy"
     case "succeeded":
       return mlFailed ? "failed" : "finished"
     case "failed":
@@ -25,6 +32,13 @@ export function trainingState(status: RunStatus, mlflowStatus: string | null | u
     default:
       return null
   }
+}
+
+/** Training state of an external run, from its MLflow status alone. */
+export function externalTraining(mlflowStatus: string | null | undefined, stale = false): Training {
+  if (mlflowStatus === "FAILED" || mlflowStatus === "KILLED") return "failed"
+  if (mlflowStatus === "FINISHED") return "finished"
+  return stale ? "stale" : "healthy"
 }
 
 export interface Progress {
@@ -35,7 +49,9 @@ export interface Progress {
 }
 
 /** Progress of a run from its MLflow epochs (``null``: nothing to show). */
-export function progress(run: Pick<RunView, "mlflow">): Progress | null {
+export function progress(run: {
+  mlflow?: Pick<MlflowInfo, "run_id" | "epoch" | "max_epochs"> | null
+}): Progress | null {
   const ml = run.mlflow
   if (!ml?.run_id) return null
   const epoch = ml.epoch ?? null

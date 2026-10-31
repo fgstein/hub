@@ -10,7 +10,10 @@
 #   tracking_uri: http://mlflow.lab:5000
 #   max_epochs_param: trainer.max_epochs   # parameter: maximum epoch
 #   epoch_metric: epoch                    # metric: current epoch
-#   # experiments: [segmentation]          # default: all
+#   # experiments: [segmentation]          # default: all; their runs not launched by
+#   #                                      # TrainHub are shown as external runs
+#   # stale_after_min: 30                  # orange dot after this long without a metric
+#   # poll_interval_s: 30                  # polling period
 
 machines:
   - id: gpu-01
@@ -73,6 +76,7 @@ projects:
       # static: [baseline]       # optional: configs added to the list
     # mlflow:                    # optional: overrides the global mlflow section
     #   epoch_metric: trainer/epoch
+    #   experiments: [segmentation]  # external runs of this experiment go to this project
     #   # enabled: false
 
   # Inference: inherits everything from segmentation (machines, docker options, configs…)

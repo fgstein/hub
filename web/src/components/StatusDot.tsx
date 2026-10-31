@@ -16,6 +16,7 @@ const STYLE: Record<RunStatus, { color: string; pulse?: boolean; blink?: boolean
 /** Color given by the MLflow training state (overrides the docker status color). */
 const TRAINING: Record<Training, { color: string; label: string }> = {
   healthy: { color: "var(--status-green)", label: "training OK (MLflow)" },
+  stale: { color: "var(--status-orange)", label: "training stalled: no new metric (MLflow)" },
   failed: { color: "var(--status-red)", label: "training failed (MLflow)" },
   finished: { color: "var(--status-blue)", label: "training finished (MLflow)" },
 }

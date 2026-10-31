@@ -1,8 +1,16 @@
 import { createMemo, createSignal, For, Show } from "solid-js"
 import type { ProjectView } from "~/lib/types"
-import { activeRunIds, addDraft, finishedRunIds, state } from "~/stores/app"
+import {
+  activeExternalIds,
+  activeRunIds,
+  addDraft,
+  finishedExternalIds,
+  finishedRunIds,
+  state,
+} from "~/stores/app"
 import { CommandEditor } from "./CommandEditor"
 import { DraftRow } from "./DraftRow"
+import { ExternalRunRow } from "./ExternalRunRow"
 import { IconChevronRight, IconPlus } from "./Icons"
 import { RunRow } from "./RunRow"
 
@@ -10,15 +18,19 @@ export function ProjectPage(props: { project: ProjectView }) {
   const id = () => props.project.id
   const active = createMemo(() => activeRunIds(id()))
   const finished = createMemo(() => finishedRunIds(id()))
+  const activeExternal = createMemo(() => activeExternalIds(id()))
+  const finishedExternal = createMemo(() => finishedExternalIds(id()))
   const drafts = () => state.drafts[id()] ?? []
   const [showFinished, setShowFinished] = createSignal(true)
-  const empty = () => active().length === 0 && drafts().length === 0
+  const finishedCount = () => finished().length + finishedExternal().length
+  const empty = () => active().length === 0 && activeExternal().length === 0 && drafts().length === 0
 
   return (
     <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" data-testid="project-page" data-project={id()}>
       <CommandEditor project={props.project} />
       <section aria-label="Active runs" data-testid="active-runs">
         <For each={active()}>{(rid) => <RunRow id={rid} />}</For>
+        <For each={activeExternal()}>{(rid) => <ExternalRunRow id={rid} />}</For>
         <For each={drafts()}>
           {(d, i) => (
             <DraftRow
@@ -59,7 +71,7 @@ export function ProjectPage(props: { project: ProjectView }) {
           </button>
         </div>
       </Show>
-      <Show when={finished().length}>
+      <Show when={finishedCount()}>
         <section
           class="mt-2 border-t border-line-weak"
           aria-label="Finished runs"
@@ -76,11 +88,12 @@ export function ProjectPage(props: { project: ProjectView }) {
               size={11}
               class={`transition-transform duration-150 ${showFinished() ? "rotate-90" : ""}`}
             />
-            Finished ({finished().length})
+            Finished ({finishedCount()})
           </button>
           <div class="th-collapse" data-open={showFinished() ? "" : undefined}>
             <div>
               <For each={finished()}>{(rid) => <RunRow id={rid} />}</For>
+              <For each={finishedExternal()}>{(rid) => <ExternalRunRow id={rid} />}</For>
             </div>
           </div>
         </section>

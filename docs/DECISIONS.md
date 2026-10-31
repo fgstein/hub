@@ -399,3 +399,41 @@ killed outside TrainHub, and could no longer be removed.
   published in the same order), with `only_if_active` for the stop failure and for the switch to
   `unreachable`.
 - Deleting a finished run still needs the machine (`docker rm`); unchanged.
+
+## Addition — MLflow watch: external runs, stalled runs, failures to be seen (October 31)
+
+Request: bring the principle of mlwatcher (a desktop overlay that watches every run of an MLflow
+server) into TrainHub, merged with what TrainHub already shows; mlwatcher stays independent.
+
+- **One search per round** instead of one request per run: per MLflow server, `runs/search`
+  of the running runs, then of the runs started since the previous round minus 1 min
+  (`start_time >= …`, at most 24 h back), over the experiments concerned. The TrainHub runs take
+  their state from these answers (tag `run_tag`, latest start after the run's start − 5 min). A
+  run not found there is read on its own (former per-run path) only if it already had an MLflow
+  run (it stopped running) or at the first round; otherwise its MLflow run does not exist yet.
+  Experiments: `experiments/search` (id → name), cached 60 s. Default period 30 s (was 10 s).
+- **External runs** (`ExternalRun`, table `external_runs`, JSON + `hidden`): MLflow runs of the
+  experiments a project names (effective `experiments`, first project in the inventory when
+  several name one; experiments named by no project are not watched) whose `run_tag` is not a
+  known TrainHub run. Start-up: running runs + `FAILED`/`KILLED` since the oldest running one
+  (mlwatcher's rule); then running runs and every run started since the previous round. A shown
+  run that stops running is read once with `runs/get`; gone or in the MLflow trash: forgotten.
+  Not polled once finished. Read only: TrainHub never writes to MLflow for them; deleting one
+  only hides it (kept as `hidden` so that it does not come back). Events
+  `external_run.updated` / `external_run.deleted`; `external_runs` in the snapshot.
+- **Stalled** (`MlflowInfo.stale`, computed by the server at each read): `RUNNING` and no metric
+  newer than `stale_after_min` (default 30, per project) — the start counts when there is no
+  metric. Orange dot (`Training = "stale"`). New fields `started_at`, `finished_at`,
+  `last_activity` (newest metric timestamp).
+- **Failures to be seen** (`unseen_failure`, TrainHub and external runs): set when a run
+  becomes failed (`Run.is_failure`: status `failed`, or MLflow `FAILED`/`KILLED` while running
+  or succeeded — the cases already drawn red), cleared when it no longer is (restart). Such a
+  run stays among the active runs until **Seen** (`POST …/seen`, MCP `mark_run_seen`), shared by
+  everyone. Not set by “Mark as finished” (the user did it) nor by a stop (`stopped`).
+- No notification, no `mlflow.user` filter (asked). The tab shows a red counter of the failures
+  not seen; its grey counter now includes the running external runs.
+- Fake mode: TrainHub runs log to the first experiment their project names (else one named after
+  the project); each named experiment also holds three external runs (training, stalled 45 min,
+  failed 20 min before the start). The dev inventory names `segmentation` for that project.
+- Test fixed on the way: `test_tracker_with_fake` assumed the container ended before MLflow
+  (failed about 2 times out of 3 before this change).
