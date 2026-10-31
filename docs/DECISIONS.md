@@ -452,3 +452,23 @@ knowing stays `RUNNING` forever — and could be neither seen nor removed.
   `mark_run_seen`). Still nothing written to MLflow.
 - TrainHub runs are unchanged: a dead container is seen by the monitoring (`failed`, then
   **Seen**), a stuck training is stopped (*Stop*, or *Mark as finished* if the machine is down).
+
+## Fix — MLflow requests failing about half of the time (October 31)
+
+Report: the MLflow searches often found no run, or said “MLflow unreachable” while the server
+was up; running them again a few times worked.
+
+- Every `httpx` error, **timeouts included**, was reported as “MLflow unreachable (…): <error>”,
+  and a timeout has an empty message: a slow answer read as an unreachable server. Timeouts are
+  now “MLflow did not answer (connect) within N s (server, endpoint)”; other errors get their
+  type name when their message is empty.
+- 10 s was short for the searches of the checkpoint sources (pages of 1000 runs with all their
+  params, metrics and tags, training and inference searches at once, while the polling and other
+  clients such as mlwatcher query the same server). They now get 60 s; polling and single reads
+  keep 10 s (connect 5 s).
+- At most 2 requests in flight per MLflow server (`SERVER_CONCURRENCY`): more only queue up in
+  its few workers and all of them run into the timeout.
+- A request whose connection is cut (`RemoteProtocolError`, read/write/connect error: a
+  kept-alive connection closed by the server as the request went out) is sent once more, never
+  `runs/delete`.
+- Not reproduced against a real server (none here): deduced from the code and the symptoms.

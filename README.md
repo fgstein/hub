@@ -594,6 +594,11 @@ no longer exists is an external run. API: `GET /api/external-runs[?project=]`,
 `POST /api/external-runs/<id>/seen` (failure or stalled), `DELETE /api/external-runs/<id>`; MCP:
 `list_external_runs`, `mark_run_seen`, `delete_external_run`.
 
+**Timeouts.** A request to MLflow gets 10 s to answer (60 s for the searches of the
+Checkpoints tab, pages of 1000 runs); a slow answer is reported as “MLflow did not answer within
+N s”, not as an unreachable server. TrainHub sends at most 2 requests at a time to one MLflow
+server, and sends a request once more when its connection is cut (never a deletion).
+
 **Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own
 environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and
 `MLFLOW_TRACKING_PASSWORD`.

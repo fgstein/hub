@@ -300,3 +300,73 @@ async def test_stalled_external_run_seen(tmp_path: Path) -> None:
     assert _external(raw, claim, {}, utcnow(), seen_run).stale_seen_at is not None
     raw["data"]["metrics"][0]["timestamp"] = _ms(0)
     assert _external(raw, claim, {}, utcnow(), seen_run).stale_seen_at is None
+
+
+async def test_http_timeout_is_not_unreachable() -> None:
+    from trainhub.service.mlflow import MlflowError
+
+    def slow(req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("", request=req)
+
+    client = HttpMlflow(transport=httpx.MockTransport(slow))
+    try:
+        try:
+            await client.get_run(CFG, "a")
+        except MlflowError as exc:
+            assert "did not answer within 10 s" in str(exc) and "unreachable" not in str(exc)
+        else:
+            raise AssertionError("no error")
+    finally:
+        await client.close()
+
+
+async def test_http_cut_connection_sent_again() -> None:
+    from trainhub.service.mlflow import MlflowError
+
+    calls: list[str] = []
+
+    def flaky(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.path)
+        if len(calls) % 2:
+            raise httpx.RemoteProtocolError("Server disconnected", request=req)
+        return httpx.Response(200, json={"run": {"info": {"run_id": "a"}}})
+
+    client = HttpMlflow(transport=httpx.MockTransport(flaky))
+    try:
+        assert await client.get_run(CFG, "a") == {"info": {"run_id": "a"}}
+        assert len(calls) == 2
+        # a deletion is never sent twice (the first one may have gone through)
+        calls.clear()
+        try:
+            await client.delete_run(CFG, "a")
+        except MlflowError as exc:
+            assert "Server disconnected" in str(exc)
+        else:
+            raise AssertionError("no error")
+        assert len(calls) == 1
+    finally:
+        await client.close()
+
+
+async def test_http_requests_per_server_limited() -> None:
+    import asyncio
+
+    from trainhub.service.mlflow import SERVER_CONCURRENCY
+
+    running = 0
+    peak = 0
+
+    async def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.02)
+        running -= 1
+        return httpx.Response(200, json={"run": {"info": {"run_id": "a"}}})
+
+    client = HttpMlflow(transport=httpx.MockTransport(handler))
+    try:
+        await asyncio.gather(*(client.get_run(CFG, str(i)) for i in range(8)))
+        assert peak == SERVER_CONCURRENCY
+    finally:
+        await client.close()
