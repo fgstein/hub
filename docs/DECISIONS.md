@@ -505,6 +505,18 @@ a project is unchanged.
 - CI, front-end job: `ubuntu-latest` became Ubuntu 26.04, on which Playwright 1.56 cannot install
   Chromium (“does not support chromium on ubuntu26.04-x64”): the job failed before running any
   test. Pinned to `ubuntu-24.04` until Playwright is upgraded.
+- Once the job ran again, “unreachable machine” failed in CI (not locally): **a real bug**. The
+  draft cancels itself on Escape unless the focused element says its list is open
+  (`aria-expanded`); right after a picker (config, GPU) opens, the focus may still be on a field
+  of the draft (the machine combobox, list closed): Escape then cancelled the whole draft
+  instead of closing the picker. Fixed in `DraftRow`: Escape and Enter leave the draft alone
+  while any floating list or picker (`.menu-content`) is open. New e2e test sending Escape to a
+  field of the draft while the config picker is open (it failed before the fix).
+- e2e “MLflow”: it took the first running row and expected a single stopped run in the project;
+  it now follows the run it launched, by id (`launchedRow`).
+- The e2e suite runs once on a fresh server (`.trainhub/e2e` is deleted at start): some tests
+  rely on the state of a first pass (number of active runs, checkpoints deleted by the
+  checkpoints test), so `--repeat-each` is not supported.
 - Skipped locally only (they run in CI or need a setup): the local Docker test (Docker and the
   `trainhub-fake-train` image), the simulated SSH machines (`make sim-up`) and one test that
   needs a non-root user.

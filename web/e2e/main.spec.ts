@@ -17,6 +17,22 @@ async function pickConfig(page: Page, path: string) {
   await expect(picker).toHaveCount(0)
 }
 
+/** Launch the last draft and return the row of the new run (other tests leave runs behind). */
+async function launchedRow(page: Page) {
+  const ids = async () =>
+    page
+      .locator("[data-testid=run-row]")
+      .evaluateAll((rows) => rows.map((r) => r.getAttribute("data-run-id")))
+  const before = new Set(await ids())
+  await page.getByTestId("draft-launch").click()
+  let id: string | null | undefined
+  await expect(async () => {
+    id = (await ids()).find((x) => x && !before.has(x))
+    expect(id).toBeTruthy()
+  }).toPass({ timeout: 10_000 })
+  return page.locator(`[data-testid=run-row][data-run-id="${id}"]`)
+}
+
 async function pick(page: Page, field: string, value: string) {
   const draft = page.getByTestId("draft-row").last()
   const input = draft.getByTestId(field).locator("input")
@@ -87,6 +103,22 @@ test("unreachable machine: discovery fails, launch failure shown", async ({ page
   const row = page.locator('[data-testid=run-row][data-status="failed"]').first()
   await expect(row).toBeVisible({ timeout: 10_000 })
   await expect(row.getByTestId("run-error")).toContainText("unreachable")
+})
+
+test("Escape reaching the draft while a picker is open only closes the picker", async ({ page }) => {
+  const draft = await newDraft(page)
+  await pick(page, "field-machine", "gpu-01")
+  await draft.getByTestId("field-config").click()
+  const picker = page.getByTestId("config-picker")
+  await expect(picker).toBeVisible()
+  // as when the picker has not taken the focus yet (slow machine): Escape lands on a field
+  const machine = draft.getByTestId("field-machine").locator("input")
+  await machine.dispatchEvent("keydown", { key: "Escape", bubbles: true })
+  await expect(picker).toHaveCount(0)
+  await expect(page.getByTestId("draft-row")).toHaveCount(1)
+  // nothing open any more: Escape cancels the draft
+  await draft.getByTestId("field-gpu").press("Escape")
+  await expect(page.getByTestId("draft-row")).toHaveCount(0)
 })
 
 test("generic command: saving, validation and back to YAML", async ({ page }) => {
@@ -192,9 +224,8 @@ test("MLflow: progress bar, dot color and link to the run", async ({ page }) => 
   await newDraft(page)
   await pick(page, "field-machine", "gpu-01")
   await pickConfig(page, "baseline")
-  await page.getByTestId("draft-launch").click()
-  const row = page.locator('[data-testid=run-row][data-status="running"]').first()
-  await expect(row).toBeVisible({ timeout: 10_000 })
+  const row = await launchedRow(page)
+  await expect(row).toHaveAttribute("data-status", "running", { timeout: 10_000 })
   await expect(row.getByTestId("run-progress")).toBeVisible({ timeout: 10_000 })
   await expect(row.getByTestId("run-epoch")).toHaveText(/^\d+\/\d+$/)
   await expect(row.locator("[data-training]")).toHaveAttribute("data-training", "healthy")
@@ -206,16 +237,17 @@ test("MLflow: progress bar, dot color and link to the run", async ({ page }) => 
   await row.getByTestId("run-menu").click()
   await page.getByTestId("menu-stop").click()
   await page.getByTestId("menu-stop").click()
-  const stopped = page.getByTestId("finished-runs").locator('[data-testid=run-row][data-status="stopped"]')
-  await expect(stopped).toHaveCount(1, { timeout: 15_000 })
+  const stopped = page
+    .getByTestId("finished-runs")
+    .locator(`[data-run-id="${await row.getAttribute("data-run-id")}"]`)
+  await expect(stopped).toHaveAttribute("data-status", "stopped", { timeout: 15_000 })
   await expect(stopped.locator("[data-status=stopped]").first()).not.toHaveAttribute("data-training", /.*/)
 
   // project without MLflow: no progress
   await newDraft(page, "det")
   await pickConfig(page, "yolo_s")
-  await page.getByTestId("draft-launch").click()
-  const det = page.locator('[data-testid=run-row][data-status="running"]').first()
-  await expect(det).toBeVisible({ timeout: 10_000 })
+  const det = await launchedRow(page)
+  await expect(det).toHaveAttribute("data-status", "running", { timeout: 10_000 })
   await page.waitForTimeout(2500)
   await expect(det.getByTestId("run-progress")).toHaveCount(0)
 })
