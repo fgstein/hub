@@ -263,3 +263,40 @@ async def test_mcp_external_runs(tmp_path: Path) -> None:
             assert res.isError
     finally:
         await svc.close()
+
+
+async def test_stalled_external_run_seen(tmp_path: Path) -> None:
+    """A stalled external run (often a killed process MLflow was never told about) can be
+    marked as seen: finished runs until it logs again."""
+    from trainhub.service.mlflow import _Claim, _external
+
+    svc = make_service(tmp_path, text=_claiming(sim_inventory_text(duration=600) + MLFLOW))
+    await svc.start(monitor=True, watch_inventory=False)
+    try:
+        await svc.mlflow.poll()
+        ext = {e.name.split("-")[0]: e for e in await svc.list_external_runs() if e.name}
+        # running and logging: nothing to see
+        assert (await svc.mark_external_seen(ext["notebook"].id)).stale_seen_at is None
+        seen = await svc.mark_external_seen(ext["sweep"].id)
+        assert seen.stale_seen_at is not None and seen.is_active
+        await svc.mlflow.poll()  # still stalled: stays seen
+        assert (await svc.get_external_run(ext["sweep"].id)).stale_seen_at is not None
+        # a running run can be removed from TrainHub too
+        await svc.delete_external(ext["sweep"].id)
+        await svc.mlflow.poll()
+        assert ext["sweep"].id not in {e.id for e in await svc.list_external_runs()}
+    finally:
+        await svc.close()
+
+    # logs again: back among the active runs
+    claim = _Claim("segmentation", CFG)
+    raw = {
+        "info": {"run_id": "a", "experiment_id": "1", "status": "RUNNING", "start_time": _ms(90)},
+        "data": {"metrics": [{"key": "epoch", "value": 2, "timestamp": _ms(60)}]},
+    }
+    stalled = _external(raw, claim, {}, utcnow(), None)
+    assert stalled.mlflow.stale
+    seen_run = stalled.model_copy(update={"stale_seen_at": utcnow()})
+    assert _external(raw, claim, {}, utcnow(), seen_run).stale_seen_at is not None
+    raw["data"]["metrics"][0]["timestamp"] = _ms(0)
+    assert _external(raw, claim, {}, utcnow(), seen_run).stale_seen_at is None

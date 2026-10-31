@@ -268,12 +268,13 @@ async def list_external_runs(svc: Svc, project: str | None = None) -> list[Exter
 
 @router.post("/external-runs/{run_id}/seen", response_model=ExternalRunView, tags=["runs"])
 async def external_run_seen(run_id: str, svc: Svc) -> ExternalRunView:
-    """Mark the failure of an external run as seen: it moves to the finished runs."""
+    """Mark an external run as seen (a failure, or a stalled run): it moves to the finished
+    runs; a stalled run comes back if it logs again."""
     return ExternalRunView.of(await svc.mark_external_seen(run_id))
 
 
 @router.delete("/external-runs/{run_id}", status_code=204, tags=["runs"])
 async def delete_external_run(run_id: str, svc: Svc) -> Response:
-    """Remove an external run from TrainHub (nothing changes in MLflow)."""
+    """Remove an external run from TrainHub, running or not (nothing changes in MLflow)."""
     await svc.delete_external(run_id)
     return Response(status_code=204)

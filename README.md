@@ -582,10 +582,13 @@ runs; an experiment no project names is not watched. At start-up, TrainHub also 
 failures that happened since the oldest running run; afterwards every new run of these
 experiments. TrainHub has no machine, container nor logs for them and **never changes them in
 MLflow**: they follow the same rules (orange when stalled, a failure stays until **Seen**), and
-the trash button only removes one from TrainHub (it does not come back). Cleaning MLflow up is
+the trash button, there whether the run is running or not, only removes one from TrainHub (it
+does not come back). A process killed without MLflow knowing leaves its run `RUNNING` forever:
+it turns orange, and **Seen** on an orange external run moves it to the finished runs (“stalled,
+seen”) — back among the active runs if it logs a metric again. Cleaning MLflow up is
 done from the [Checkpoints](#checkpoints) tab. A run whose `run_tag` names a TrainHub run that
 no longer exists is an external run. API: `GET /api/external-runs[?project=]`,
-`POST /api/external-runs/<id>/seen`, `DELETE /api/external-runs/<id>`; MCP:
+`POST /api/external-runs/<id>/seen` (failure or stalled), `DELETE /api/external-runs/<id>`; MCP:
 `list_external_runs`, `mark_run_seen`, `delete_external_run`.
 
 **Credentials.** TrainHub calls the MLflow REST API with the usual variables of its own

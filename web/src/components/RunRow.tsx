@@ -185,12 +185,12 @@ export const TRAINING_COLOR = {
 } as const
 
 /** “Seen” on a failed run: it then moves to the finished runs. */
-export function SeenButton(props: { onClick: () => void }) {
+export function SeenButton(props: { onClick: () => void; title?: string }) {
   return (
     <button
       type="button"
       class="flex h-6 shrink-0 items-center rounded-md border border-line-weak px-2 text-xs font-medium text-fg-critical hover:border-line hover:bg-surface-hover"
-      title="Failed run: mark it as seen to move it to the finished runs"
+      title={props.title ?? "Failed run: mark it as seen to move it to the finished runs"}
       onClick={(e) => {
         e.stopPropagation()
         props.onClick()

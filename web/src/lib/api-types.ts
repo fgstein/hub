@@ -427,7 +427,8 @@ export interface paths {
         put?: never;
         /**
          * External Run Seen
-         * @description Mark the failure of an external run as seen: it moves to the finished runs.
+         * @description Mark an external run as seen (a failure, or a stalled run): it moves to the finished
+         *     runs; a stalled run comes back if it logs again.
          */
         post: operations["external_run_seen_api_external_runs__run_id__seen_post"];
         delete?: never;
@@ -448,7 +449,7 @@ export interface paths {
         post?: never;
         /**
          * Delete External Run
-         * @description Remove an external run from TrainHub (nothing changes in MLflow).
+         * @description Remove an external run from TrainHub, running or not (nothing changes in MLflow).
          */
         delete: operations["delete_external_run_api_external_runs__run_id__delete"];
         options?: never;
@@ -912,6 +913,11 @@ export interface components {
              * @default false
              */
             unseen_failure: boolean;
+            /**
+             * Stale Seen At
+             * @description Stalled (running, no new metric: often a killed process MLflow was never told about) and marked as seen at that time: shown among the finished runs until a new metric arrives
+             */
+            stale_seen_at?: string | null;
             /**
              * Active
              * @description MLflow status RUNNING or SCHEDULED

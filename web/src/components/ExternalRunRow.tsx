@@ -81,21 +81,33 @@ function ExternalRunLine(props: { id: string }) {
         </Show>
       </div>
       <MlflowProgress run={run()} color={TRAINING_COLOR[training()]} />
+      <Show when={run().stale_seen_at && !run().unseen_failure}>
+        <Tip
+          class="shrink-0 text-xs text-fg-weak"
+          content={`Stalled, marked as seen ${formatDateTime(run().stale_seen_at)}: back among the active runs if it logs again`}
+        >
+          <span data-testid="external-stale-seen">stalled, seen</span>
+        </Tip>
+      </Show>
       <Show when={run().unseen_failure}>
         <SeenButton onClick={() => markSeen(props.id, true)} />
       </Show>
-      <Show when={!run().active}>
-        <button
-          type="button"
-          class="flex size-7 shrink-0 items-center justify-center rounded-md text-icon hover:bg-surface-hover hover:text-icon-hover"
-          title="Remove from TrainHub (nothing changes in MLflow)"
-          aria-label="Remove from TrainHub"
-          onClick={() => removeExternal(props.id)}
-          data-testid="external-remove"
-        >
-          <IconTrash size={13} />
-        </button>
+      <Show when={!run().unseen_failure && run().active && ml().stale && !run().stale_seen_at}>
+        <SeenButton
+          onClick={() => markSeen(props.id, true)}
+          title="Stalled: still running in MLflow but no new metric for a while (often a killed process MLflow was never told about). Seen moves it to the finished runs; it comes back if it logs again."
+        />
       </Show>
+      <button
+        type="button"
+        class="flex size-7 shrink-0 items-center justify-center rounded-md text-icon hover:bg-surface-hover hover:text-icon-hover"
+        title="Remove from TrainHub: it does not come back (nothing changes in MLflow)"
+        aria-label="Remove from TrainHub"
+        onClick={() => removeExternal(props.id)}
+        data-testid="external-remove"
+      >
+        <IconTrash size={13} />
+      </button>
     </div>
   )
 }

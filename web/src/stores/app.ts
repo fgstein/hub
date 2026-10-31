@@ -204,7 +204,8 @@ export function project(id: string | null | undefined): ProjectView | undefined 
 }
 
 /** A run is shown among the active ones while it runs, and after a failure until it is seen. */
-const showsActive = (r: { active: boolean; unseen_failure?: boolean }) => r.active || !!r.unseen_failure
+const showsActive = (r: { active: boolean; unseen_failure?: boolean; stale_seen_at?: string | null }) =>
+  (r.active && !r.stale_seen_at) || !!r.unseen_failure
 
 /** Active runs of a project (and failures not seen yet), oldest first. */
 export function activeRunIds(projectId: string): string[] {
@@ -223,7 +224,7 @@ export function finishedRunIds(projectId: string): string[] {
 }
 
 const externalStart = (r: ExternalRunView) => r.mlflow.started_at ?? r.discovered_at
-const externalEnd = (r: ExternalRunView) => r.mlflow.finished_at ?? externalStart(r)
+const externalEnd = (r: ExternalRunView) => r.mlflow.finished_at ?? r.stale_seen_at ?? externalStart(r)
 
 /** External runs of a project shown among the active ones, oldest first. */
 export function activeExternalIds(projectId: string): string[] {
@@ -245,7 +246,8 @@ export function finishedExternalIds(projectId: string): string[] {
 export function activeCount(projectId: string): number {
   let n = 0
   for (const r of Object.values(state.runs)) if (r.project_id === projectId && isActive(r.status)) n++
-  for (const r of Object.values(state.external)) if (r.project_id === projectId && r.active) n++
+  for (const r of Object.values(state.external))
+    if (r.project_id === projectId && r.active && !r.stale_seen_at) n++
   return n
 }
 
