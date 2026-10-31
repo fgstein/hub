@@ -370,6 +370,27 @@ class CheckpointDeleteResult(BaseModel):
     count: int
 
 
+class CheckpointRunDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[str] = Field(
+        min_length=1,
+        max_length=1000,
+        description="Run directories ({name} of the layout) to delete entirely",
+    )
+
+
+class CheckpointRunDeleteResult(BaseModel):
+    source: str
+    deleted: list[str] = Field(description="Deleted (or already missing) run directories")
+    failed: dict[str, str] = Field(default_factory=dict, description="Directory → error")
+    freed: int = Field(
+        description="Bytes of the checkpoints they held (last scan; other files not counted)"
+    )
+    size: int = Field(description="New total size of the source")
+    count: int
+
+
 class InventoryView(BaseModel):
     machines: list[MachineView]
     images: list[ImageView]

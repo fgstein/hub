@@ -23,6 +23,8 @@ NAME = "{name}"
 GROUP = "{group}"
 #: ``$0`` of the deletion script (recognized by the fake executor).
 RM_SCRIPT_NAME = "trainhub-rm"
+#: ``$0`` of the run directory deletion script.
+RM_RUNS_SCRIPT_NAME = "trainhub-rm-runs"
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,37 @@ done
 def delete_checkpoints(root: str, files: Sequence[str], dirs: Iterable[str] = ()) -> list[str]:
     """Remote argv deleting ``files`` then removing ``dirs`` if empty (paths relative)."""
     return ["sh", "-c", _RM_SCRIPT, RM_SCRIPT_NAME, root, *files, "", *dirs]
+
+
+#: Arguments: root, then run directories (single components). Each one must be a real
+#: directory directly under the resolved root (not a symbolic link), removed with
+#: ``rm -rf`` (which does not follow the links inside it). Same output as ``_RM_SCRIPT``.
+_RM_RUNS_SCRIPT = r"""
+root=$(realpath -e -- "$1" 2>/dev/null) || { printf 'root\t%s\n' "$1"; exit 2; }
+shift
+for name do
+  p="$root/$name"
+  if [ ! -e "$p" ] && [ ! -L "$p" ]; then printf 'gone\t%s\n' "$name"; continue; fi
+  if [ -L "$p" ]; then printf 'err\t%s\tsymbolic link\n' "$name"; continue; fi
+  if [ ! -d "$p" ]; then printf 'err\t%s\tnot a directory\n' "$name"; continue; fi
+  d=$(realpath -e -- "$p" 2>/dev/null)
+  if [ "$(dirname -- "$d")" != "$root" ] || [ "$d" = "$root" ]; then
+    printf 'err\t%s\toutside the root\n' "$name"; continue
+  fi
+  if msg=$(rm -rf -- "$d" 2>&1); then printf 'ok\t%s\n' "$name"
+  else printf 'err\t%s\t%s\n' "$name" "$(printf %s "$msg" | head -n 3 | tr '\n\t' '  ')"; fi
+done
+""".strip()
+
+
+def delete_run_dirs(root: str, names: Sequence[str]) -> list[str]:
+    """Remote argv deleting whole run directories (``{name}`` of the layout) of ``root``."""
+    return ["sh", "-c", _RM_RUNS_SCRIPT, RM_RUNS_SCRIPT_NAME, root, *names]
+
+
+def valid_run_name(name: str) -> bool:
+    """A run directory name: a single non-hidden path component."""
+    return valid_relpath(name, min_parts=1) and "/" not in name
 
 
 @dataclass(frozen=True)

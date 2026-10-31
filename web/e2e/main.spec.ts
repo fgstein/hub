@@ -346,4 +346,16 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   await expect(topk).toHaveCount(0)
   await expect(page.getByTestId("ckpt-delete-bar")).toHaveCount(0)
   await expect(source.getByTestId("ckpt-source-total")).toContainText("6 checkpoints")
+
+  // whole run directories: the directory itself goes, not only its checkpoints
+  await page.getByTestId("ckpt-delete-mode").click()
+  await page.getByTestId("ckpt-delete-scope-runs").click()
+  await expect(page.getByTestId("ckpt-file-check")).toHaveCount(0)
+  await page.locator('[data-testid=ckpt-run][data-run="run_b"]').getByTestId("ckpt-rundir-check").check()
+  await expect(page.getByTestId("ckpt-delete-summary")).toContainText("1 run directory")
+  await handle.focus()
+  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight")
+  await expect(page.getByText("1 run directory deleted")).toBeVisible()
+  await expect(page.getByTestId("ckpt-run")).toHaveCount(2)
+  await expect(page.locator('[data-testid=ckpt-run][data-run="run_b"]')).toHaveCount(0)
 })
