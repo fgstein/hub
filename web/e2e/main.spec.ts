@@ -324,10 +324,11 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   await draft.getByTestId("draft-launch").click()
   await expect(page.getByTestId("run-checkpoint")).toContainText("topk/")
 
-  // the checkpoint now shows the run launched with it
+  // back to the checkpoints (MLflow is the only source of the inferences: no TrainHub count)
   await page.getByTestId("tab-checkpoints").click()
   await runA.getByRole("button").first().click()
-  await expect(runA.locator(`[data-path="${path}"]`).getByTestId("ckpt-file-runs")).toHaveText("⟲ 1")
+  await expect(runA.locator(`[data-path="${path}"]`)).toBeVisible()
+  await expect(runA.getByTestId("ckpt-file-runs")).toHaveCount(0)
 
   // delete mode: the checkpoints of a group, a partial slide does nothing, the full slide deletes
   await page.getByTestId("ckpt-delete-mode").click()

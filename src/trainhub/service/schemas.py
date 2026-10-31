@@ -240,9 +240,6 @@ class CheckpointFile(BaseModel):
     name: str
     size: int = Field(description="Bytes")
     mtime: datetime
-    runs: RunCount | None = Field(
-        default=None, description="TrainHub runs launched with this checkpoint (missing: none)"
-    )
 
 
 class CheckpointGroup(BaseModel):

@@ -33,7 +33,6 @@ from .schemas import (
     MlflowDeleteResult,
     MlflowOrphan,
     MlflowOrphanListing,
-    RunCount,
 )
 
 if TYPE_CHECKING:
@@ -127,11 +126,9 @@ class CheckpointService:
             self._search_mlflow(src, "training", refresh=refresh),
             self._search_mlflow(src, "inference", refresh=refresh),
         )
-        counts = await self.svc.store.count_runs_by_checkpoint()
         return build_listing(
             src,
             scan.entries,
-            counts,
             error=scan.error,
             scanned_at=scan.at,
             mlflow=ml,
@@ -468,7 +465,6 @@ def _dt(ts: float) -> datetime:
 def build_listing(
     src: CheckpointSource,
     entries: list[ck.Entry],
-    counts: dict[str, dict[str, int]],
     *,
     error: str | None = None,
     scanned_at: datetime | None = None,
@@ -479,14 +475,7 @@ def build_listing(
     layout = ck.parse_layout(src.layout)
 
     def ckpt(e: ck.Entry) -> CheckpointFile:
-        c = counts.get(posixpath.join(src.root, e.path))
-        return CheckpointFile(
-            path=e.path,
-            name=e.parts[-1],
-            size=e.size,
-            mtime=_dt(e.mtime),
-            runs=RunCount(**c) if c else None,
-        )
+        return CheckpointFile(path=e.path, name=e.parts[-1], size=e.size, mtime=_dt(e.mtime))
 
     run_dirs: dict[str, float] = {}
     groups: dict[str, dict[str, list[CheckpointFile]]] = {}

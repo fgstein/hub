@@ -163,8 +163,7 @@ def test_parse_listing_and_build_tree() -> None:
     )
     entries = ck.parse_listing(out)
     assert len(entries) == 11
-    counts = {"/out/run_new/checkpoints/last/epoch0000003.ckpt": {"total": 2, "active": 1}}
-    lst = build_listing(_src(), entries, counts)
+    lst = build_listing(_src(), entries)
     assert lst.size == 300 + 100 + 50 + 7 + 5 and lst.count == 5
     assert [r.name for r in lst.runs] == ["empty_run", "run_new", "run_old"]
     new = lst.runs[1]
@@ -173,8 +172,6 @@ def test_parse_listing_and_build_tree() -> None:
     topk = new.groups[2]
     assert [f.name for f in topk.files] == ["epoch0000001.ckpt", "epoch0000002.ckpt"]
     assert topk.size == 400 and topk.path == "run_new/checkpoints/topk"
-    last = new.groups[1].files[0]
-    assert last.runs is not None and last.runs.total == 2
     assert [f.path for f in new.others] == ["run_new/final.ckpt"]
     assert lst.runs[0].count == 0 and lst.runs[0].mtime is not None
     assert [f.path for f in lst.others] == ["stray.ckpt"]
@@ -207,7 +204,7 @@ def test_real_find(tmp_path: Path) -> None:
     res = subprocess.run(ck.list_checkpoints(str(root), lay), capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     src = CheckpointSource(id="s", machine="m", root=str(root))
-    lst = build_listing(src, ck.parse_listing(res.stdout), {})
+    lst = build_listing(src, ck.parse_listing(res.stdout))
     assert lst.count == 5 and lst.size == 10 + 20 + 20 + 5 + 4
     names = {r.name: r for r in lst.runs}
     assert set(names) == {"r1", "r2 with space", "r3"}
@@ -472,9 +469,6 @@ async def test_inference_with_checkpoint(svc: RunService) -> None:
     )
     run = await svc.launch(sel, wait=True)
     assert run.checkpoint == host
-    lst = await svc.checkpoints.listing("seg")
-    again = lst.runs[0].groups[1].files[0]
-    assert again.runs is not None and again.runs.total == 1
     await wait_for(lambda: _finished(svc, run.id), timeout=20)
     relaunched = await svc.relaunch(run.id, wait=True)
     assert relaunched.checkpoint == host
@@ -880,13 +874,12 @@ async def test_service_inferences(tmp_path: Path) -> None:
 
 async def test_trainhub_runs_are_not_inferences(svc: RunService) -> None:
     """MLflow is the only source of the inferences: a TrainHub run launched with a checkpoint
-    only counts in the checkpoint's runs."""
+    is not one."""
     lst = await svc.checkpoints.listing("seg")
     ckpt = lst.runs[0].groups[1].files[0]
     await svc.launch(INFER.model_copy(update={"checkpoint": f"{ROOT}/{ckpt.path}"}), wait=True)
     lst = await svc.checkpoints.listing("seg")
     assert lst.runs[0].inferences == []
-    assert lst.runs[0].groups[1].files[0].runs is not None
     assert lst.mlflow is None and lst.mlflow_inference is None
 
 
