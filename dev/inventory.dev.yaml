@@ -112,7 +112,7 @@ projects:
 checkpoints:
   - id: seg-outputs
     label: Segmentation outputs
-    machine: gpu-01
+    # no machine: shared volume, read and cleaned on the TrainHub server (no SSH)
     root: /home/alice/seg/outputs
     layout: "{name}/checkpoints/{group}/*.ckpt"
     mlflow:                    # MLflow run of each directory: the one that logged its path
@@ -122,8 +122,8 @@ checkpoints:
         experiments: [seg-inference]
         show: [params.data.dataset, params.trainer.precision]
   - id: scratch
-    label: Scratch (shared disk)
-    machine: gpu-02
+    label: Scratch (gpu-02 only)
+    machine: gpu-02            # only visible from gpu-02: find and rm run there
     root: /scratch/alice/runs
     layout: "{name}/*.pt"
 
