@@ -1,5 +1,5 @@
 import { Tooltip } from "@kobalte/core/tooltip"
-import { useNavigate } from "@solidjs/router"
+import { useNavigate, useSearchParams } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, onMount, Show } from "solid-js"
 import {
   type CheckState,
@@ -23,6 +23,7 @@ import {
 } from "~/lib/checkpoints"
 import { copyText } from "~/lib/clipboard"
 import { formatAgo, formatBytes, formatDateTime } from "~/lib/format"
+import { attr, revealAndFlash } from "~/lib/reveal"
 import type {
   CheckpointFile,
   CheckpointInference,
@@ -59,6 +60,7 @@ import {
   IconSpinner,
   IconTrash,
 } from "./Icons"
+import { LookinLinks } from "./LookinLinks"
 import { MlflowOrphansView } from "./MlflowOrphans"
 import { SlideToConfirm } from "./SlideToConfirm"
 
@@ -411,6 +413,32 @@ export function CheckpointsPage(props: { source?: string }) {
     }),
   )
 
+  // Deep link (?run=<directory>[&inference=<MLflow run id>], e.g. from Lookin): open the run
+  // directory (and the inferences of the checkpoint), scroll to it, once per link.
+  const [params] = useSearchParams<{ run?: string; inference?: string }>()
+  let linked = ""
+  /** MLflow run id of the inference a deep link points to (opens its list when it is closed). */
+  const [linkedInf, setLinkedInf] = createSignal<string | null>(null)
+  createEffect(
+    on([listing, () => params.run, () => params.inference] as const, ([l, run, infId]) => {
+      if (!l || !run) return
+      const key = `${l.source}|${run}|${infId ?? ""}`
+      const r = l.runs.find((x) => x.name === run)
+      if (key === linked || !r) return
+      linked = key
+      setQuery("")
+      setHideEmpty(false)
+      setExpanded((s) => new Set([...s, run]))
+      const inf = infId ? r.inferences?.find((i) => i.mlflow.run_id === infId) : undefined
+      if (inf) {
+        // Under its checkpoint, or in the list of the deleted checkpoints' inferences.
+        setLinkedInf(inf.mlflow.run_id)
+        if (inf.exists) setOpenInf((s) => new Set([...s, inf.checkpoint]))
+        revealAndFlash(`[data-testid="ckpt-inference"]${attr("data-mlflow-run-id", inf.mlflow.run_id)}`)
+      } else revealAndFlash(`[data-testid="ckpt-run"]${attr("data-run", run)}`)
+    }),
+  )
+
   const rows = createMemo(() => viewRuns(listing(), { query: query(), sort: sort(), hideEmpty: hideEmpty() }))
   /** Inferences per checkpoint of the listing (path relative to the root). */
   const inferencesByPath = createMemo(() => {
@@ -706,6 +734,10 @@ export function CheckpointsPage(props: { source?: string }) {
   /** Inferences made with checkpoints of a run deleted since (the others are under their file). */
   const InferenceList = (ip: { run: string; inferences: CheckpointInference[] }) => {
     const [open, setOpen] = createSignal(false)
+    createEffect(() => {
+      const id = linkedInf()
+      if (id && ip.inferences.some((i) => i.mlflow.run_id === id)) setOpen(true)
+    })
     return (
       <div data-testid="ckpt-inferences">
         <div
@@ -754,6 +786,7 @@ export function CheckpointsPage(props: { source?: string }) {
       <div
         class={`${INSET_LINE} before:left-16 flex h-8 items-center gap-2 bg-surface pr-4 hover:bg-surface-hover ${rp.indent}`}
         data-testid="ckpt-inference"
+        data-mlflow-run-id={inf().mlflow.run_id}
       >
         <span
           class="dot"
@@ -815,6 +848,11 @@ export function CheckpointsPage(props: { source?: string }) {
             </span>
           )}
         </For>
+        <LookinLinks
+          mlflowRunId={inf().mlflow.run_id}
+          trackingUri={listing()?.mlflow_inference?.tracking_uri}
+          button
+        />
         <span class="flex w-14 shrink-0 items-center justify-center gap-0.5">
           <Show when={inf().mlflow.url}>
             {(url) => (

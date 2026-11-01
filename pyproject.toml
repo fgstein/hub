@@ -1,6 +1,6 @@
 [project]
 name = "trainhub"
-version = "0.18.0"
+version = "0.19.0"
 description = "Launcher and monitor for training commands on remote machines (ssh → docker → venv)."
 readme = "README.md"
 requires-python = ">=3.11"

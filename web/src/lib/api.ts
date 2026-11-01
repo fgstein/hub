@@ -6,6 +6,7 @@ import type {
   ConfigList,
   ExternalRunView,
   InventoryView,
+  LookinIndex,
   MachineGpus,
   MachineLoad,
   MlflowDeleteResult,
@@ -101,5 +102,6 @@ export const api = {
     request<CheckpointRunDeleteResult>("POST", `/api/checkpoints/${encodeURIComponent(source)}/delete-runs`, {
       names,
     }),
+  lookin: (refresh = false) => request<LookinIndex>("GET", `/api/lookin${refresh ? "?refresh=true" : ""}`),
   logsUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/logs`,
 }

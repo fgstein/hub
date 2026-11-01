@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..core.models import RunSource, RunStatus
 from ..service import RunAction, RunService
+from ..service.lookin import mlflow_run_links
 from ..service.runs import InvalidRequestError
 from ..service.schemas import (
     CheckpointDeleteRequest,
@@ -22,11 +23,13 @@ from ..service.schemas import (
     ExternalRunView,
     Health,
     InventoryView,
+    LookinIndex,
     MachineGpus,
     MachineLoad,
     MlflowDeleteRequest,
     MlflowDeleteResult,
     MlflowOrphanListing,
+    MlflowRunLinks,
     PreviewResult,
     ProjectView,
     RunView,
@@ -152,6 +155,18 @@ async def delete_checkpoint_runs(
     """Delete whole run directories of a source (everything in them, not only the
     checkpoints)."""
     return await svc.checkpoints.delete_runs(source_id, req.names)
+
+
+@router.get("/lookin", response_model=LookinIndex, tags=["lookin"])
+async def lookin_index(svc: Svc, refresh: bool = False) -> LookinIndex:
+    """Lookin workspaces per MLflow run id (asked to Lookin, cached 30 s)."""
+    return await svc.lookin.index(refresh=refresh)
+
+
+@router.get("/links/mlflow-runs", response_model=MlflowRunLinks, tags=["lookin"])
+async def links_mlflow_runs(svc: Svc) -> MlflowRunLinks:
+    """Every MLflow run TrainHub shows, by run id, with the page showing it (read by Lookin)."""
+    return await mlflow_run_links(svc)
 
 
 @router.get("/ui-state", response_model=UiState, tags=["ui"])

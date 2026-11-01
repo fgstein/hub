@@ -399,6 +399,10 @@ class InventoryView(BaseModel):
     venvs: list[VenvView]
     projects: list[ProjectView]
     checkpoint_sources: list[CheckpointSourceView] = Field(default_factory=list)
+    lookin_url: str | None = Field(
+        default=None,
+        description="Lookin, as the browser reaches it (lookin section; None: not configured)",
+    )
     error: str | None = Field(default=None, description="Error of the last reload")
     executor: str
 
@@ -514,3 +518,60 @@ class MachineLoad(BaseModel):
 
 
 RUN_STATUSES = [s.value for s in RunStatus]
+
+
+# -- Lookin -------------------------------------------------------------------------------
+
+
+class LookinWorkspace(BaseModel):
+    """A Lookin workspace with an experiment made from an MLflow run."""
+
+    workspace_id: str
+    workspace: str = Field(description="Name of the workspace")
+    group: str | None = Field(default=None, description="Its group on Lookin's Home page")
+    experiment: str = Field(description="Name of the experiment made from the run")
+    artifact: str | None = Field(default=None, description="Results CSV of the run it reads")
+    url: str = Field(description="Opens the workspace in Lookin (browser address)")
+
+
+class LookinIndex(BaseModel):
+    """Lookin workspaces per MLflow run id, as Lookin last answered (cached)."""
+
+    enabled: bool = Field(description="A lookin section is configured")
+    url: str | None = Field(default=None, description="Lookin, as the browser reaches it")
+    runs: dict[str, list[LookinWorkspace]] = Field(default_factory=dict)
+    version: str | None = Field(default=None, description="Version of Lookin")
+    fetched_at: datetime | None = Field(default=None, description="Last successful answer")
+    error: str | None = Field(default=None, description="Last error asking Lookin")
+
+
+MlflowRunLinkKind = Literal["run", "external", "checkpoint_run", "inference"]
+
+
+class MlflowRunLink(BaseModel):
+    """A place where TrainHub shows an MLflow run (``GET /api/links/mlflow-runs``)."""
+
+    kind: MlflowRunLinkKind = Field(
+        description="run: launched by TrainHub; external: shown in a project, not launched by "
+        "it; checkpoint_run: run directory of a checkpoint source (training); inference: "
+        "inference made with a checkpoint"
+    )
+    label: str = Field(description="Short name for a badge")
+    detail: str | None = Field(default=None, description="One line for a tooltip")
+    path: str = Field(
+        description="Page of the TrainHub interface showing it (/p/…, /checkpoints/…)"
+    )
+    project: str | None = None
+    source: str | None = Field(default=None, description="Checkpoint source")
+    status: str | None = None
+
+
+class MlflowRunLinks(BaseModel):
+    """Every MLflow run TrainHub shows, by run id: what Lookin reads for its badges."""
+
+    app: Literal["trainhub"] = "trainhub"
+    version: str
+    runs: dict[str, list[MlflowRunLink]]
+    errors: list[str] = Field(
+        default_factory=list, description="Sources that could not be read (their runs are missing)"
+    )

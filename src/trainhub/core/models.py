@@ -624,6 +624,38 @@ class SimulationSettings(_Strict):
     seed: int | None = None
 
 
+class LookinOptions(_Strict):
+    """Link with Lookin, the explorer of classification results (``lookin`` section).
+
+    The MLflow run id is the whole link: TrainHub asks Lookin which of its workspaces use each
+    MLflow run (``GET <url>/api/links/mlflow-runs``) and shows them as badges, and the
+    "Lookin" button of an inference opens ``<public_url>/?mlflow_run=<id>`` to put it in a
+    workspace. Nothing is tagged: runs not launched by TrainHub link the same way.
+    """
+
+    enabled: bool = True
+    url: str = Field(description="Lookin server URL, as seen from TrainHub (http[s]://…)")
+    public_url: str | None = Field(
+        default=None,
+        description="Lookin URL as the browser reaches it, when it differs from url "
+        "(a port forward, a gateway)",
+    )
+
+    @field_validator("url", "public_url")
+    @classmethod
+    def _check_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().rstrip("/")
+        if not v.lower().startswith(("http://", "https://")):
+            raise ValueError("must be an http:// or https:// URL")
+        return v
+
+    @property
+    def browser_url(self) -> str:
+        return self.public_url or self.url
+
+
 class Inventory(_Strict):
     """Validated content of ``inventory.yaml``."""
 
@@ -641,6 +673,10 @@ class Inventory(_Strict):
     )
     mlflow: MlflowOptions | None = Field(
         default=None, description="MLflow tracking (progress bar and training status)"
+    )
+    lookin: LookinOptions | None = Field(
+        default=None,
+        description="Lookin (results explorer): badges of the workspaces using each MLflow run",
     )
     simulation: SimulationSettings | None = None
 

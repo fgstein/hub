@@ -1,4 +1,6 @@
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { useSearchParams } from "@solidjs/router"
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js"
+import { attr, revealAndFlash } from "~/lib/reveal"
 import type { ProjectView } from "~/lib/types"
 import {
   activeExternalIds,
@@ -24,6 +26,25 @@ export function ProjectPage(props: { project: ProjectView }) {
   const [showFinished, setShowFinished] = createSignal(true)
   const finishedCount = () => finished().length + finishedExternal().length
   const empty = () => active().length === 0 && activeExternal().length === 0 && drafts().length === 0
+
+  // Deep link (?run=<TrainHub run id or MLflow run id of an external run>, e.g. from Lookin):
+  // scroll to the run once it is known, once per link.
+  const [params] = useSearchParams<{ run?: string }>()
+  let linked = ""
+  createEffect(
+    on(
+      () => {
+        const rid = params.run
+        return rid && (state.runs[rid] || state.external[rid]) ? rid : null
+      },
+      (rid) => {
+        if (!rid || rid === linked) return
+        linked = rid
+        if (finished().includes(rid) || finishedExternal().includes(rid)) setShowFinished(true)
+        revealAndFlash(`[data-run-id]${attr("data-run-id", rid)}`)
+      },
+    ),
+  )
 
   return (
     <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" data-testid="project-page" data-project={id()}>

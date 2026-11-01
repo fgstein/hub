@@ -390,3 +390,20 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   await expect(page.getByTestId("ckpt-run")).toHaveCount(2)
   await expect(page.locator('[data-testid=ckpt-run][data-run="run_b"]')).toHaveCount(0)
 })
+
+test("deep links: ?run= opens a run directory, and brings a project's run into view", async ({ page }) => {
+  // The links Lookin's badges hand out (see the lookin section of the README).
+  await page.goto("/checkpoints/out?run=run_c")
+  const runC = page.locator("[data-testid=ckpt-run][data-run=run_c]")
+  await expect(runC.getByTestId("ckpt-run-info")).toBeVisible()
+  await expect(page.getByTestId("ckpt-run-info")).toHaveCount(1)
+  // no lookin section in this inventory: no Lookin badge nor button anywhere
+  await expect(page.getByTestId("lookin-links")).toHaveCount(0)
+
+  await newDraft(page)
+  await pickConfig(page, "baseline")
+  const id = await (await launchedRow(page)).getAttribute("data-run-id")
+  await page.goto("/checkpoints")
+  await page.goto(`/p/seg?run=${id}`)
+  await expect(page.locator(`[data-testid=run-row][data-run-id="${id}"]`)).toBeInViewport()
+})

@@ -49,6 +49,9 @@ are a common case, see the [examples](#examples).
   if its container turns out to be alive when the machine answers).
 - **Visible command**: each run shows its resolved command, or the full one (ssh + `docker run`
   + script).
+- **Lookin**: badges of the [Lookin](#lookin) workspaces using each inference, and a button that
+  opens an inference in Lookin; Lookin links back to the runs, checkpoints and inferences here.
+  The MLflow run id is the only link: no tag needed.
 - **Agents**: the same actions over MCP (Streamable HTTP on `/mcp`, or stdio with `trainhub mcp`).
 - **No GPU needed for development**: `fake` (in-memory simulation) and `local` (local Docker)
   modes.
@@ -612,6 +615,40 @@ environment: `MLFLOW_TRACKING_TOKEN` (bearer), or `MLFLOW_TRACKING_USERNAME` and
 Runs are polled while active, and up to 10 minutes after they finish until MLflow reports a
 final status. If MLflow is unreachable, the last values stay displayed with a warning.
 
+### Lookin
+
+[Lookin](https://github.com/fgstein/lookin) explores the results of classification models
+(metrics, confusions, gallery of crops) in *workspaces* built from MLflow runs. With a `lookin`
+section, the two tools link each other through the **MLflow run id** alone: nothing is tagged,
+so a run started by hand links the same way as a run TrainHub launched.
+
+```yaml
+lookin:
+  url: http://lookin.lab:8560        # as seen from TrainHub
+  # public_url: https://lookin.lab   # as the browser reaches it, if different
+  # enabled: false                   # turn the link off without removing the section
+```
+
+- **Badges**: next to each inference of the Checkpoints tab, and each run (TrainHub or
+  external) that has an MLflow run, one badge per Lookin workspace using that MLflow run; a click
+  opens the workspace in Lookin. TrainHub asks Lookin (`GET <url>/api/links/mlflow-runs`),
+  keeps the answer 30 s, and the interface refreshes it every 30 s. Lookin unreachable: no
+  badge, the error is in the tooltip of the button below.
+- **Lookin button**: on each inference, and on the finished runs of the projects taking a
+  `{checkpoint}`: opens `<public_url>/?mlflow_run=<id>&mlflow_server=<tracking uri>`, where Lookin
+  finds the run on its MLflow servers and puts it in a new or existing workspace (then
+  downloads its files and opens it).
+- **The other way**: `GET /api/links/mlflow-runs` answers, for each MLflow run id TrainHub shows,
+  where: a run it launched (`run`), an external run of a project (`external`), a run directory of
+  a checkpoint source (`checkpoint_run`, the training) or an inference (`inference`), with the
+  page that shows it. Lookin, given TrainHub's address (`lookin web --trainhub-url`), draws them
+  as "TrainHub" badges next to its experiments. Those pages take a deep link:
+  `/p/<project>?run=<run id or MLflow run id>` and
+  `/checkpoints/<source>?run=<directory>&inference=<MLflow run id>` scroll to the run (and open
+  the inferences of the checkpoint). With `TRAINHUB_TOKEN`, give Lookin the token
+  (`LOOKIN_TRAINHUB_TOKEN`).
+- **MCP**: `get_lookin_workspaces` answers the same for a list of MLflow run ids.
+
 ### Machines tab
 
 The **Machines** tab (left of the project tabs) shows, for every machine of the inventory:
@@ -728,7 +765,8 @@ through the `/login` page, which sets a cookie (browser, WebSocket).
 
 The tools (`list_projects`, `list_resources`, `list_configs`, `preview_command`, `launch_run`,
 `list_runs`, `get_run`, `get_logs`, `wait_run`, `get_gpus`, `get_machine_load`,
-`list_checkpoint_sources`, `list_checkpoints`, `list_mlflow_orphans`, `pause_run`, `resume_run`,
+`list_checkpoint_sources`, `list_checkpoints`, `list_mlflow_orphans`, `get_lookin_workspaces`,
+`pause_run`, `resume_run`,
 `stop_run`, `force_finish_run`, `restart_run`, `relaunch_run`, `close_container`, `delete_run`,
 `set_project_command`) call the same service layer as the interface: a run launched by an agent
 shows up immediately in the interface, with an “agent” icon. `get_logs` returns cleaned text

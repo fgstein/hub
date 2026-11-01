@@ -52,6 +52,10 @@ mlflow:
   epoch_metric: epoch
   poll_interval_s: 3
 
+# Lookin (results explorer): badges of its workspaces next to the inferences, "Lookin" button.
+# lookin:
+#   url: http://127.0.0.1:8560
+
 projects:
   - id: segmentation
     label: Segmentation
