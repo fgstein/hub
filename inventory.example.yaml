@@ -10,6 +10,9 @@
 #   tracking_uri: http://mlflow.lab:5000
 #   max_epochs_param: trainer.max_epochs   # parameter: maximum epoch
 #   epoch_metric: epoch                    # metric: current epoch
+#   # epoch_offset: 1                      # added to the metric, e.g. 1 if it counts from 0
+#   # run_tag: trainhub.run_id             # tag holding the TrainHub run id (default)
+#   # inject_env: true                     # pass MLFLOW_RUN_CONTEXT so MLflow tags the run
 #   # experiments: [segmentation]          # default: all; their runs not launched by
 #   #                                      # TrainHub are shown as external runs
 #   # stale_after_min: 30                  # orange dot after this long without a metric
