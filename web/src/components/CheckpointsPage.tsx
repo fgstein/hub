@@ -724,7 +724,7 @@ export function CheckpointsPage(props: { source?: string }) {
     const state = () => inferenceState(inf())
     return (
       <div
-        class={`${INSET_LINE} before:left-16 flex h-8 items-center gap-2 pr-4 hover:bg-surface-hover ${rp.indent}`}
+        class={`${INSET_LINE} before:left-16 flex h-8 items-center gap-2 bg-surface pr-4 hover:bg-surface-hover ${rp.indent}`}
         data-testid="ckpt-inference"
         data-mlflow-run-id={inf().mlflow.run_id}
       >
