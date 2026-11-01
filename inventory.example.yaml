@@ -15,6 +15,13 @@
 #   # stale_after_min: 30                  # orange dot after this long without a metric
 #   # poll_interval_s: 30                  # polling period
 
+# Lookin (optional), the results explorer: next to each inference (and each run with an
+# MLflow run), badges of the Lookin workspaces using that MLflow run, and a "Lookin" button
+# that puts it in a workspace. Linked by the MLflow run id alone, see the README.
+# lookin:
+#   url: http://lookin.lab:8560            # as seen from TrainHub
+#   # public_url: https://lookin.lab       # as the browser reaches it, if different
+
 machines:
   - id: gpu-01
     label: GPU 01 (4×A100)
