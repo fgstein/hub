@@ -29,3 +29,15 @@ Each change the user asks for bumps the **minor** version (`0.4.2` → `0.5.0`),
 merge: `pyproject.toml`, `src/trainhub/__init__.py`, `web/package.json`, the two top
 `"version"` fields of `web/package-lock.json` (not the dependencies that happen to share the
 number), then `uv lock`. See the README (Quick start).
+
+## Keep `inventory.example.yaml` up to date
+
+`inventory.example.yaml` is the reference users copy to write their inventory. Any change to the
+inventory's shape (`core/models.py`: a new section, a new option, a renamed or removed one, a new
+default worth knowing) updates it **in the same commit**: optional sections and options appear
+commented, in the style of the others, with a one-line comment saying what they do. The README's
+section and `dev/inventory.dev.yaml` follow too when they show the setting.
+
+`tests/test_inventory.py` (`test_example_inventory_shows_every_setting`) fails when a field of an
+inventory model is missing from the example; a new model of the inventory goes in its list of
+sections, and a setting that is not for users goes in `NOT_IN_EXAMPLE`.

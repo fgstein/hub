@@ -205,3 +205,12 @@ async def test_mcp_get_lookin_workspaces_not_configured(tmp_path: Path) -> None:
     async with create_connected_server_and_client_session(build_mcp(svc)._mcp_server) as c:
         res = await c.call_tool("get_lookin_workspaces", {"mlflow_run_ids": ["x"]})
         assert res.isError and "not configured" in res.content[0].text  # type: ignore[union-attr]
+
+
+def test_example_inventory_lookin_section_is_valid() -> None:
+    """The commented lookin section of inventory.example.yaml parses once uncommented."""
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "inventory.example.yaml").read_text()
+    text = text.replace("# lookin:\n#   url:", "lookin:\n  url:")
+    inv = parse_inventory(text, "inventory.example.yaml")
+    assert inv.lookin is not None and inv.lookin.url == "http://lookin.lab:8560"

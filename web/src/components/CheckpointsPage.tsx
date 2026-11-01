@@ -795,20 +795,26 @@ export function CheckpointsPage(props: { source?: string }) {
           aria-label={inf().mlflow.status ?? "unknown status"}
           title={inf().mlflow.status ? `MLflow: ${inf().mlflow.status}` : undefined}
         />
+        {/* Under its checkpoint the name takes the whole width; in the list of deleted
+            checkpoints it shares it with the checkpoint's path. */}
         <span
-          class="w-120 min-w-40 shrink truncate font-mono text-sm text-fg-strong"
+          class="min-w-40 truncate font-mono text-sm text-fg-strong"
+          classList={{ "w-120 shrink": rp.showCheckpoint, "flex-1": !rp.showCheckpoint }}
           title={inferenceName(inf())}
+          data-testid="ckpt-inference-name"
         >
           {inferenceName(inf())}
         </span>
-        <span
-          class="min-w-0 flex-1 truncate font-mono text-xs"
-          classList={{ "text-fg": inf().exists, "text-fg-weaker line-through": !inf().exists }}
-          title={inf().exists ? inf().checkpoint : `${inf().checkpoint} (deleted since)`}
-          data-testid="ckpt-inference-checkpoint"
-        >
-          {rp.showCheckpoint ? ckpt() : ""}
-        </span>
+        <Show when={rp.showCheckpoint}>
+          <span
+            class="min-w-0 flex-1 truncate font-mono text-xs"
+            classList={{ "text-fg": inf().exists, "text-fg-weaker line-through": !inf().exists }}
+            title={inf().exists ? inf().checkpoint : `${inf().checkpoint} (deleted since)`}
+            data-testid="ckpt-inference-checkpoint"
+          >
+            {ckpt()}
+          </span>
+        </Show>
         <Show when={!inf().exists && rp.showCheckpoint}>
           <span class="shrink-0 text-xs text-fg-weaker">deleted</span>
         </Show>

@@ -18,6 +18,41 @@ def test_example_inventory_is_valid() -> None:
     assert seg.configs.discover is not None and seg.configs.discover.pattern == "*.yaml"
 
 
+#: Inventory settings that are not for users (the fake mode's simulation): not in the example.
+NOT_IN_EXAMPLE = {("Inventory", "simulation")}
+
+
+def test_example_inventory_shows_every_setting() -> None:
+    """inventory.example.yaml is the reference users copy: every setting of the inventory
+    appears in it, set or commented (see CLAUDE.md)."""
+    import re
+
+    from trainhub.core import models as m
+
+    text = (ROOT / "inventory.example.yaml").read_text()
+    sections = (
+        m.Inventory,
+        m.Machine,
+        m.Image,
+        m.Venv,
+        m.Project,
+        m.DockerOptions,
+        m.CheckpointSource,
+        m.CheckpointMlflow,
+        m.CheckpointInferenceMlflow,
+        m.MlflowOptions,
+        m.LookinOptions,
+    )
+    missing = [
+        f"{cls.__name__}.{name}"
+        for cls in sections
+        for name in cls.model_fields
+        if (cls.__name__, name) not in NOT_IN_EXAMPLE
+        and not re.search(rf"(^|[\s#{{,-]){re.escape(name)}:", text, re.MULTILINE)
+    ]
+    assert not missing, f"missing from inventory.example.yaml: {', '.join(missing)}"
+
+
 def test_dev_inventories_are_valid() -> None:
     for name in ("inventory.dev.yaml", "inventory.sim.yaml", "inventory.local.yaml"):
         path = ROOT / "dev" / name
