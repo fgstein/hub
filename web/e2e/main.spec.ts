@@ -342,7 +342,10 @@ test("checkpoints: totals, send to an inference draft, launch, delete with the s
   await expect(topk).toHaveCount(3)
   const file = topk.first()
   const path = await file.getAttribute("data-path")
+  // a click on the row does not select it: only its checkbox does
   await file.click()
+  await expect(page.getByTestId("ckpt-send-bar")).toHaveCount(0)
+  await file.getByTestId("ckpt-file-check").check()
   await expect(page.getByTestId("ckpt-send-bar")).toContainText("1 checkpoint selected")
   await page.getByTestId("ckpt-send").click()
 

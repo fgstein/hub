@@ -274,32 +274,16 @@ function inferenceName(inf: CheckpointInference): string {
   return inf.mlflow.run_name ?? inf.mlflow.run_id
 }
 
-/** Inference count of a run or a checkpoint: a button that opens their list (no tooltip). */
-function InferenceBadge(props: {
-  inferences: CheckpointInference[]
-  testid: string
-  active?: boolean
-  onClick?: () => void
-}) {
+/** Inference count of a run or a checkpoint (the inferences are always listed under it). */
+function InferenceBadge(props: { inferences: CheckpointInference[]; testid: string }) {
   return (
-    <button
-      type="button"
-      class="flex h-5 shrink-0 items-center rounded px-1.5 font-mono text-xs hover:bg-surface-hover hover:text-fg-strong"
-      classList={{
-        "bg-surface text-fg-weak": !props.active,
-        "bg-surface-active text-fg-strong": !!props.active,
-      }}
-      aria-expanded={props.active}
-      onClick={(e) => {
-        e.stopPropagation()
-        props.onClick?.()
-      }}
-      onKeyDown={(e) => e.stopPropagation()}
-      aria-label={plural(props.inferences.length, "inference")}
+    <span
+      class="flex h-5 shrink-0 items-center rounded bg-surface px-1.5 font-mono text-xs text-fg-weak"
+      title={plural(props.inferences.length, "inference")}
       data-testid={props.testid}
     >
       ⇢ {props.inferences.length}
-    </button>
+    </span>
   )
 }
 
@@ -369,15 +353,6 @@ export function CheckpointsPage(props: { source?: string }) {
   const [toSend, setToSend] = createSignal<Set<string>>(new Set())
   const [deleting, setDeleting] = createSignal(false)
   const [target, setTarget] = createSignal<string | null>(null)
-  /** Checkpoints whose inferences are shown under them (hidden by default). */
-  const [openInf, setOpenInf] = createSignal<Set<string>>(new Set())
-  const toggleInf = (path: string) =>
-    setOpenInf((s) => {
-      const n = new Set(s)
-      if (n.has(path)) n.delete(path)
-      else n.add(path)
-      return n
-    })
 
   // Every source is loaded (the server caches the scans): their totals show in the header.
   createEffect(
@@ -397,7 +372,6 @@ export function CheckpointsPage(props: { source?: string }) {
       if (!id) return
       remember(id)
       setExpanded(new Set<string>())
-      setOpenInf(new Set<string>())
       setToDelete(new Set<string>())
       setRunsToDelete(new Set<string>())
       setToSend(new Set<string>())
@@ -414,11 +388,9 @@ export function CheckpointsPage(props: { source?: string }) {
   )
 
   // Deep link (?run=<directory>[&inference=<MLflow run id>], e.g. from Lookin): open the run
-  // directory (and the inferences of the checkpoint), scroll to it, once per link.
+  // directory (its inferences are listed in it), scroll to it, once per link.
   const [params] = useSearchParams<{ run?: string; inference?: string }>()
   let linked = ""
-  /** MLflow run id of the inference a deep link points to (opens its list when it is closed). */
-  const [linkedInf, setLinkedInf] = createSignal<string | null>(null)
   createEffect(
     on([listing, () => params.run, () => params.inference] as const, ([l, run, infId]) => {
       if (!l || !run) return
@@ -431,9 +403,6 @@ export function CheckpointsPage(props: { source?: string }) {
       setExpanded((s) => new Set([...s, run]))
       const inf = infId ? r.inferences?.find((i) => i.mlflow.run_id === infId) : undefined
       if (inf) {
-        // Under its checkpoint, or in the list of the deleted checkpoints' inferences.
-        setLinkedInf(inf.mlflow.run_id)
-        if (inf.exists) setOpenInf((s) => new Set([...s, inf.checkpoint]))
         revealAndFlash(`[data-testid="ckpt-inference"]${attr("data-mlflow-run-id", inf.mlflow.run_id)}`)
       } else revealAndFlash(`[data-testid="ckpt-run"]${attr("data-run", run)}`)
     }),
@@ -650,15 +619,18 @@ export function CheckpointsPage(props: { source?: string }) {
     const infs = () => inferencesByPath().get(fp.file.path)
     return (
       <>
+        {/* Only the checkbox selects; in pick mode (no checkbox) a click on the row picks. */}
         <div
-          class={`${INSET_LINE} before:left-10 flex h-8 cursor-pointer items-center gap-2 pr-4 hover:bg-surface-hover ${fp.indent}`}
+          class={`${INSET_LINE} before:left-10 flex h-8 items-center gap-2 pr-4 hover:bg-surface-hover ${fp.indent}`}
           classList={{
             "bg-surface-active": selected() && !deleteMode(),
             "bg-critical-bg": selected() && deleteMode(),
             "opacity-50": deleteMode() && !fp.deletable,
-            "cursor-default": deletingRuns(),
+            "cursor-pointer": !!picking(),
           }}
-          onClick={toggle}
+          onClick={() => {
+            if (picking()) pickFile(fp.file)
+          }}
           data-testid="ckpt-file"
           data-path={fp.file.path}
         >
@@ -709,18 +681,11 @@ export function CheckpointsPage(props: { source?: string }) {
             </Tip>
           </Show>
           <Show when={infs()}>
-            {(list) => (
-              <InferenceBadge
-                inferences={list()}
-                testid="ckpt-file-inferences"
-                active={openInf().has(fp.file.path)}
-                onClick={() => toggleInf(fp.file.path)}
-              />
-            )}
+            {(list) => <InferenceBadge inferences={list()} testid="ckpt-file-inferences" />}
           </Show>
           <Cols size={fp.file.size} date={fp.file.mtime} dateTitle={formatDateTime(fp.file.mtime)} />
         </div>
-        <Show when={openInf().has(fp.file.path) && infs()}>
+        <Show when={infs()}>
           {(list) => (
             <For each={list()}>
               {(inf) => <InferenceRow run="" inf={inf} indent="pl-20" showCheckpoint={false} />}
@@ -732,46 +697,21 @@ export function CheckpointsPage(props: { source?: string }) {
   }
 
   /** Inferences made with checkpoints of a run deleted since (the others are under their file). */
-  const InferenceList = (ip: { run: string; inferences: CheckpointInference[] }) => {
-    const [open, setOpen] = createSignal(false)
-    createEffect(() => {
-      const id = linkedInf()
-      if (id && ip.inferences.some((i) => i.mlflow.run_id === id)) setOpen(true)
-    })
-    return (
-      <div data-testid="ckpt-inferences">
-        <div
-          class={`${INSET_LINE} before:left-10 flex h-8 cursor-pointer items-center gap-2 pr-4 pl-10 hover:bg-surface-hover`}
-          role="button"
-          tabIndex={0}
-          aria-expanded={open()}
-          onClick={() => setOpen(!open())}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault()
-              setOpen(!open())
-            }
-          }}
-        >
-          <IconChevronRight
-            size={11}
-            class={`shrink-0 text-icon transition-transform duration-150 ${open() ? "rotate-90" : ""}`}
-          />
-          <span class="min-w-0 flex-1 truncate text-sm text-fg">inferences on deleted checkpoints</span>
-          <span class="w-24 shrink-0 text-right text-xs tabular text-fg-weak">
-            {plural(ip.inferences.length, "run")}
-          </span>
-          <span class="w-20 shrink-0" />
-          <span class="w-24 shrink-0" />
-        </div>
-        <Show when={open()}>
-          <For each={ip.inferences}>
-            {(inf) => <InferenceRow run={ip.run} inf={inf} indent="pl-16" showCheckpoint={true} />}
-          </For>
-        </Show>
+  const InferenceList = (ip: { run: string; inferences: CheckpointInference[] }) => (
+    <div data-testid="ckpt-inferences">
+      <div class={`${INSET_LINE} before:left-10 flex h-8 items-center gap-2 pr-4 pl-10`}>
+        <span class="min-w-0 flex-1 truncate text-sm text-fg">inferences on deleted checkpoints</span>
+        <span class="w-24 shrink-0 text-right text-xs tabular text-fg-weak">
+          {plural(ip.inferences.length, "run")}
+        </span>
+        <span class="w-20 shrink-0" />
+        <span class="w-24 shrink-0" />
       </div>
-    )
-  }
+      <For each={ip.inferences}>
+        {(inf) => <InferenceRow run={ip.run} inf={inf} indent="pl-16" showCheckpoint={true} />}
+      </For>
+    </div>
+  )
 
   const InferenceRow = (rp: {
     run: string
@@ -976,15 +916,7 @@ export function CheckpointsPage(props: { source?: string }) {
           <Show when={showInferences()}>
             <span class="flex w-12 shrink-0 justify-center">
               <Show when={run().inferences?.length}>
-                <InferenceBadge
-                  inferences={run().inferences ?? []}
-                  testid="ckpt-run-inferences"
-                  onClick={() => {
-                    if (!open()) toggleRun(run().name)
-                    const paths = (run().inferences ?? []).filter((i) => i.exists).map((i) => i.checkpoint)
-                    setOpenInf((s) => new Set([...s, ...paths]))
-                  }}
-                />
+                <InferenceBadge inferences={run().inferences ?? []} testid="ckpt-run-inferences" />
               </Show>
             </span>
           </Show>
@@ -998,7 +930,7 @@ export function CheckpointsPage(props: { source?: string }) {
           />
         </div>
         <Show when={open()}>
-          <div class="pb-1">
+          <div class="bg-surface pb-1" data-testid="ckpt-run-content">
             <div
               class={`${INSET_LINE} before:left-10 flex h-8 items-center gap-2 pr-4 pl-10 text-xs`}
               data-testid="ckpt-run-info"
