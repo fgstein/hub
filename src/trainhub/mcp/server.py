@@ -380,6 +380,39 @@ def build_mcp(
 
     @mcp.tool(
         annotations=READ,
+        description="Lookin (the explorer of classification results) workspaces using MLflow "
+        "runs: for each MLflow run id (an inference's mlflow.run_id from list_checkpoints, a "
+        "run's mlflow.run_id), the workspaces with an experiment made from it (name, group, "
+        "experiment, url that opens it) and new_workspace_url, the Lookin page that puts the "
+        "run in a workspace. The MLflow run id is the only link: runs not launched by TrainHub "
+        "work too. Needs the lookin section of the inventory; Lookin's answer is cached 30 s.",
+    )
+    async def get_lookin_workspaces(
+        mlflow_run_ids: Annotated[
+            list[str], Field(description="MLflow run ids", min_length=1, max_length=500)
+        ],
+        refresh: Annotated[bool, Field(description="Ask Lookin again now")] = False,
+    ) -> dict[str, Any]:
+        from ..service.lookin import new_workspace_url
+
+        idx = await svc.lookin.index(refresh=refresh)
+        if not idx.enabled or not idx.url:
+            raise ToolError("Lookin is not configured: add a lookin section (url) to the inventory")
+        uri = svc.inventory.mlflow.tracking_uri if svc.inventory.mlflow else None
+        return {
+            "lookin": idx.url,
+            "error": idx.error,
+            "runs": {
+                rid: {
+                    "workspaces": [w.model_dump(mode="json") for w in idx.runs.get(rid, [])],
+                    "new_workspace_url": new_workspace_url(idx.url, rid, uri),
+                }
+                for rid in mlflow_run_ids
+            },
+        }
+
+    @mcp.tool(
+        annotations=READ,
         description="MLflow runs without a directory on disk: runs of the checkpoint sources "
         "with mlflow.match whose logged directory exists in no source (deleted, or written "
         "elsewhere). scan_errors lists sources that could not be scanned: their runs may be "
@@ -762,6 +795,7 @@ READ_TOOLS = frozenset(
         "list_checkpoint_sources",
         "list_checkpoints",
         "list_mlflow_orphans",
+        "get_lookin_workspaces",
         "get_machine_load",
         "list_external_runs",
     }

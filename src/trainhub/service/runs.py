@@ -244,6 +244,9 @@ class RunService:
 
         self.monitor = Monitor(self, poll_interval)
         self.checkpoints = CheckpointService(self)
+        from .lookin import LookinLink
+
+        self.lookin = LookinLink(self)
         if mlflow is None:
             mlflow = executor.mlflow_source() or HttpMlflow()
         self.mlflow = MlflowTracker(self, mlflow)
@@ -367,6 +370,7 @@ class RunService:
             ],
             projects=[self.project_view(p) for p in inv.projects],
             checkpoint_sources=self.checkpoints.sources(),
+            lookin_url=inv.lookin.browser_url if inv.lookin and inv.lookin.enabled else None,
             error=self.inv_mgr.error,
             executor=self.executor.kind,
         )

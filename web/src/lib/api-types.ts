@@ -249,6 +249,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lookin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lookin Index
+         * @description Lookin workspaces per MLflow run id (asked to Lookin, cached 30 s).
+         */
+        get: operations["lookin_index_api_lookin_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/links/mlflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Links Mlflow Runs
+         * @description Every MLflow run TrainHub shows, by run id, with the page showing it (read by Lookin).
+         */
+        get: operations["links_mlflow_runs_api_links_mlflow_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ui-state": {
         parameters: {
             query?: never;
@@ -522,8 +562,6 @@ export interface components {
              * Format: date-time
              */
             mtime: string;
-            /** @description TrainHub runs launched with this checkpoint (missing: none) */
-            runs?: components["schemas"]["RunCount"] | null;
         };
         /** CheckpointGroup */
         CheckpointGroup: {
@@ -1012,6 +1050,11 @@ export interface components {
             /** Checkpoint Sources */
             checkpoint_sources?: components["schemas"]["CheckpointSourceView"][];
             /**
+             * Lookin Url
+             * @description Lookin, as the browser reaches it (lookin section; None: not configured)
+             */
+            lookin_url?: string | null;
+            /**
              * Error
              * @description Error of the last reload
              */
@@ -1074,6 +1117,74 @@ export interface components {
             series?: components["schemas"]["SeriesRequest"] | null;
             /** @default ui */
             source: components["schemas"]["RunSource"];
+        };
+        /**
+         * LookinIndex
+         * @description Lookin workspaces per MLflow run id, as Lookin last answered (cached).
+         */
+        LookinIndex: {
+            /**
+             * Enabled
+             * @description A lookin section is configured
+             */
+            enabled: boolean;
+            /**
+             * Url
+             * @description Lookin, as the browser reaches it
+             */
+            url?: string | null;
+            /** Runs */
+            runs?: {
+                [key: string]: components["schemas"]["LookinWorkspace"][];
+            };
+            /**
+             * Version
+             * @description Version of Lookin
+             */
+            version?: string | null;
+            /**
+             * Fetched At
+             * @description Last successful answer
+             */
+            fetched_at?: string | null;
+            /**
+             * Error
+             * @description Last error asking Lookin
+             */
+            error?: string | null;
+        };
+        /**
+         * LookinWorkspace
+         * @description A Lookin workspace with an experiment made from an MLflow run.
+         */
+        LookinWorkspace: {
+            /** Workspace Id */
+            workspace_id: string;
+            /**
+             * Workspace
+             * @description Name of the workspace
+             */
+            workspace: string;
+            /**
+             * Group
+             * @description Its group on Lookin's Home page
+             */
+            group?: string | null;
+            /**
+             * Experiment
+             * @description Name of the experiment made from the run
+             */
+            experiment: string;
+            /**
+             * Artifact
+             * @description Results CSV of the run it reads
+             */
+            artifact?: string | null;
+            /**
+             * Url
+             * @description Opens the workspace in Lookin (browser address)
+             */
+            url: string;
         };
         /**
          * MachineGpus
@@ -1314,6 +1425,65 @@ export interface components {
             scan_errors?: {
                 [key: string]: string;
             };
+        };
+        /**
+         * MlflowRunLink
+         * @description A place where TrainHub shows an MLflow run (``GET /api/links/mlflow-runs``).
+         */
+        MlflowRunLink: {
+            /**
+             * Kind
+             * @description run: launched by TrainHub; external: shown in a project, not launched by it; checkpoint_run: run directory of a checkpoint source (training); inference: inference made with a checkpoint
+             * @enum {string}
+             */
+            kind: "run" | "external" | "checkpoint_run" | "inference";
+            /**
+             * Label
+             * @description Short name for a badge
+             */
+            label: string;
+            /**
+             * Detail
+             * @description One line for a tooltip
+             */
+            detail?: string | null;
+            /**
+             * Path
+             * @description Page of the TrainHub interface showing it (/p/…, /checkpoints/…)
+             */
+            path: string;
+            /** Project */
+            project?: string | null;
+            /**
+             * Source
+             * @description Checkpoint source
+             */
+            source?: string | null;
+            /** Status */
+            status?: string | null;
+        };
+        /**
+         * MlflowRunLinks
+         * @description Every MLflow run TrainHub shows, by run id: what Lookin reads for its badges.
+         */
+        MlflowRunLinks: {
+            /**
+             * App
+             * @default trainhub
+             * @constant
+             */
+            app: "trainhub";
+            /** Version */
+            version: string;
+            /** Runs */
+            runs: {
+                [key: string]: components["schemas"]["MlflowRunLink"][];
+            };
+            /**
+             * Errors
+             * @description Sources that could not be read (their runs are missing)
+             */
+            errors?: string[];
         };
         /**
          * MlflowRunRef
@@ -2096,6 +2266,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookin_index_api_lookin_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LookinIndex"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    links_mlflow_runs_api_links_mlflow_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MlflowRunLinks"];
                 };
             };
         };

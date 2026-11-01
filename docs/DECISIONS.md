@@ -520,3 +520,31 @@ a project is unchanged.
 - Skipped locally only (they run in CI or need a setup): the local Docker test (Docker and the
   `trainhub-fake-train` image), the simulated SSH machines (`make sim-up`) and one test that
   needs a non-root user.
+
+## Addition — link with Lookin through the MLflow run id (October 31)
+
+- The MLflow run id is the **only** link between TrainHub and Lookin: no `trainhub.run_id` (or
+  any other tag) is read, so the runs TrainHub did not launch link exactly like its own. Both
+  tools already hold the id: TrainHub for its runs, external runs, run directories and
+  inferences; Lookin for every experiment made from an MLflow run.
+- One read-only route on each side, same path and same shape (`app`, `version`, `runs`: run id →
+  entries with a `path` relative to the server that answered): `GET /api/links/mlflow-runs`.
+  The caller puts the path behind the address *it* knows the other at, since Lookin and TrainHub
+  are often reached under other names than the ones they bind; an entry whose path is not a
+  page of the server (`//…`, `javascript:`) is dropped.
+- TrainHub asks Lookin from the **server** (not the browser): no CORS to grant on Lookin, which
+  has no login and refuses cross-site requests. Cached 30 s; the last answer stays with the
+  error when Lookin is unreachable. `lookin.url` (from TrainHub) and `public_url` (from the
+  browser) are two settings for the same reason.
+- The "Lookin" button opens `?mlflow_run=<id>&mlflow_server=<tracking uri>`: Lookin asks only its
+  own configured MLflow servers (the hinted one first), offers to add the hinted server when it
+  is not one of them, and puts the run in a new or existing workspace with the same library calls
+  as a drop on its Home page. Shown on the inferences, and on the finished runs of the projects
+  taking a `{checkpoint}` (the inference projects); the badges show wherever a workspace uses
+  the run.
+- TrainHub's index lists the checkpoint sources the way the Checkpoints tab does (scans and
+  MLflow searches cached 5 min): the first call after a start scans them. A source that fails is
+  named in `errors` instead of failing the whole index.
+- Deep links for Lookin's badges: `/p/<project>?run=<id>` and
+  `/checkpoints/<source>?run=<directory>&inference=<MLflow run id>` scroll to the row and flash
+  it, once per link.

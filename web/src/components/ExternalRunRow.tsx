@@ -2,9 +2,10 @@
 import { Show } from "solid-js"
 import { elapsedSeconds, formatDateTime, formatDuration } from "~/lib/format"
 import { externalTraining } from "~/lib/mlflow"
-import { markSeen, removeExternal, state } from "~/stores/app"
+import { markSeen, project, removeExternal, state } from "~/stores/app"
 import { now } from "~/stores/clock"
 import { IconTrash } from "./Icons"
+import { LookinLinks } from "./LookinLinks"
 import { MlflowProgress, SeenButton, Tip, TRAINING_COLOR } from "./RunRow"
 import { trainingLabel } from "./StatusDot"
 
@@ -81,6 +82,10 @@ function ExternalRunLine(props: { id: string }) {
         </Show>
       </div>
       <MlflowProgress run={run()} color={TRAINING_COLOR[training()]} />
+      <LookinLinks
+        mlflowRunId={run().id}
+        button={!!project(run().project_id)?.accepts_checkpoint && !run().active}
+      />
       <Show when={run().stale_seen_at && !run().unseen_failure}>
         <Tip
           class="shrink-0 text-xs text-fg-weak"

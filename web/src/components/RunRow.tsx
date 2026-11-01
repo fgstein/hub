@@ -12,6 +12,7 @@ import {
   openShell,
   openTerminals,
   panelViews,
+  project,
   setFullscreenRun,
   setPanelView,
   setTerminalOpen,
@@ -22,6 +23,7 @@ import { toast } from "~/stores/toasts"
 import { ActionButton } from "./ActionButton"
 import { IconAgent, IconChevronDown, IconCopy, IconExternal, IconRepeat, IconTerminal } from "./Icons"
 import { LogTerminal } from "./LogTerminal"
+import { LookinLinks } from "./LookinLinks"
 import { ShellTerminal } from "./ShellTerminal"
 import { StatusDot, statusLabel, trainingLabel } from "./StatusDot"
 
@@ -285,6 +287,12 @@ function RunLine(props: { id: string; open?: boolean; onToggle?: () => void; hea
         <SeriesProgress run={run()} />
       </Show>
       <MlflowProgress run={run()} color={training() ? TRAINING_COLOR[training()!] : "var(--status-grey)"} />
+      <Show when={!props.header}>
+        <LookinLinks
+          mlflowRunId={run().mlflow?.run_id}
+          button={!!project(run().project_id)?.accepts_checkpoint && isFinished(run().status)}
+        />
+      </Show>
       <Show when={run().container_alive && isFinished(run().status)}>
         <Tip
           class="shrink-0"
