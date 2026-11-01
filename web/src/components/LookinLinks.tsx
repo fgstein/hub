@@ -1,12 +1,16 @@
 /**
- * Lookin links of an MLflow run: one badge per Lookin workspace using it (a click opens the
- * workspace), and the "Lookin" button that opens Lookin ready to put the run in a workspace.
- * Nothing shows without a lookin section in the inventory.
+ * Lookin links of an MLflow run, as one blue pill: "Lookin" (opens Lookin ready to put the run in
+ * a workspace) ‖ the workspaces using the run, each a link; past MAX, "+n" opens a menu listing
+ * the others, each a link too. Nothing shows without a lookin section in the inventory.
  */
+import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { For, onMount, Show } from "solid-js"
 import { lookin, lookinUrl, lookinWorkspaces, newWorkspaceUrl, watchLookin } from "~/stores/lookin"
 
 const stop = (e: Event) => e.stopPropagation()
+
+/** Workspaces named in the pill; the others are in the "+n" menu. */
+const MAX = 2
 
 export function LookinLinks(props: {
   mlflowRunId: string | null | undefined
@@ -14,12 +18,12 @@ export function LookinLinks(props: {
   trackingUri?: string | null
   /** "Lookin" opens Lookin to put the run in a workspace (inferences); otherwise it is a label. */
   button?: boolean
-  /** Workspaces shown at most (the others are counted in a "+n"). */
+  /** Workspaces shown at most (the others are in the "+n" menu). */
   max?: number
 }) {
   onMount(watchLookin)
   const workspaces = () => lookinWorkspaces(props.mlflowRunId)
-  const max = () => props.max ?? 3
+  const max = () => props.max ?? MAX
   const shown = () => workspaces().slice(0, max())
   const hidden = () => workspaces().slice(max())
   const seg = "px-1.5 hover:bg-st-blue/15 hover:text-fg-strong"
@@ -84,15 +88,39 @@ export function LookinLinks(props: {
           )}
         </For>
         <Show when={hidden().length}>
-          <span
-            class="shrink-0 pr-1.5 pl-1 text-st-blue/80"
-            title={`Also in Lookin: ${hidden()
-              .map((w) => w.workspace)
-              .join(", ")}`}
-            data-testid="lookin-more"
-          >
-            +{hidden().length}
-          </span>
+          <DropdownMenu placement="bottom-end" gutter={4}>
+            <DropdownMenu.Trigger
+              class={`flex h-full shrink-0 items-center pr-1.5 pl-1 text-st-blue ${seg}`}
+              title={`${hidden().length} more Lookin workspace${hidden().length > 1 ? "s" : ""}: open one`}
+              onClick={stop}
+              onKeyDown={stop}
+              data-testid="lookin-more"
+            >
+              +{hidden().length}
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                class="menu-content z-[70] min-w-[200px] max-w-[420px] rounded-md bg-float p-0.5 shadow-float outline-none"
+                data-testid="lookin-more-menu"
+              >
+                <For each={hidden()}>
+                  {(w) => (
+                    <DropdownMenu.Item
+                      onSelect={() => window.open(w.url, "_blank", "noopener")}
+                      class="flex h-7 cursor-pointer items-center gap-2 rounded px-2.5 text-sm text-st-blue outline-none data-[highlighted]:bg-surface-active"
+                      title={`Lookin workspace ${w.workspace}${w.group ? ` (${w.group})` : ""}, experiment ${w.experiment}: open it`}
+                      data-testid="lookin-more-workspace"
+                    >
+                      <span class="truncate">{w.workspace}</span>
+                      <Show when={w.group}>
+                        <span class="ml-auto shrink-0 text-xs text-fg-weak">{w.group}</span>
+                      </Show>
+                    </DropdownMenu.Item>
+                  )}
+                </For>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu>
         </Show>
       </span>
     </Show>
