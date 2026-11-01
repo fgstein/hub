@@ -424,9 +424,9 @@ only runs that are orphans at that moment, and nothing while a source cannot be 
 (read only).
 
 **Inferences.** Each run directory also lists the inferences made with its checkpoints: `⇢ N` on
-the run and on each checkpoint. A click on `⇢ N` shows the inferences under their checkpoint
-(hidden by default; on the run: those of all its checkpoints): status dot, name, dataset, mapping,
-logged values, date, link to MLflow. Inferences of checkpoints deleted since are grouped at the
+the run and on each checkpoint (a count, not a button). An opened run shows every inference
+under its checkpoint: status dot, name, dataset, mapping, logged values, Lookin badge, date, link
+to MLflow. Inferences of checkpoints deleted since are grouped at the
 bottom of the run. **MLflow is their only source**: with `mlflow.inference`, the MLflow runs,
 typically of a separate experiment, that logged the path of a checkpoint of the source (a TrainHub
 run launched with a checkpoint shows nowhere in this tab). To launch an inference again, start
@@ -477,7 +477,7 @@ In the tab:
   `{group}` (`topk`, `last`…; `other`: outside the layout);
 - each checkpoint shows its size and its date (“writing?” if modified less than a minute ago);
 - an opened run starts with a line giving its directory path, with a **copy path** button;
-- **sending**: tick checkpoints (click on the line), choose a project taking a `{checkpoint}`,
+- **sending**: tick checkpoints (their box: a click on the line does not select it), choose a project taking a `{checkpoint}`,
   “Create N drafts”: one draft per checkpoint in that project, on the source's machine; the
   draft's `{checkpoint}` field can also be filled by hand;
 - **deleting**: “Delete…” switches to delete mode (a separate selection); tick checkpoints or

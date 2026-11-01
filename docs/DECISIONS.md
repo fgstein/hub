@@ -548,3 +548,13 @@ a project is unchanged.
 - Deep links for Lookin's badges: `/p/<project>?run=<id>` and
   `/checkpoints/<source>?run=<directory>&inference=<MLflow run id>` scroll to the row and flash
   it, once per link.
+
+## Change — inferences always listed; only the checkbox selects a checkpoint (November 1)
+
+- An opened run shows every inference under its checkpoint, and those of deleted checkpoints at
+  the bottom, without another click: `⇢ N` on the run and on the checkpoint is a count, no
+  longer a button.
+- A click on a checkpoint's line no longer selects it (to send, or to delete): only its checkbox
+  does, so that a click meant for a badge, a link or the path does not select by accident. In
+  pick mode (choosing the checkpoint of a draft), which has no checkbox, the click on the line
+  still picks.
