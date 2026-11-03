@@ -16,6 +16,7 @@ import {
   IconPower,
   IconRelaunch,
   IconRestart,
+  IconSpinner,
   IconStop,
   IconTerminal,
   IconTrash,
@@ -86,6 +87,8 @@ function perform(run: RunView, action: MenuAction) {
 export function ActionButton(props: { run: RunView }) {
   const status = () => displayStatus(props.run.id)
   const primary = () => primaryAction(status())
+  /** docker stop can take up to stop_timeout: a spinner instead of a greyed-out pause icon. */
+  const stopping = () => status() === "stopping"
   const [confirming, setConfirming] = createSignal<MenuAction | null>(null)
   const [open, setOpen] = createSignal(false)
   const menuActions = () => allowedActions(status(), props.run.container_alive).filter((a) => a !== primary())
@@ -110,14 +113,18 @@ export function ActionButton(props: { run: RunView }) {
     >
       <button
         type="button"
-        class="flex w-8 items-center justify-center rounded-l-md hover:bg-surface-hover hover:text-fg-strong disabled:opacity-30"
+        class="flex w-8 items-center justify-center rounded-l-md hover:bg-surface-hover hover:text-fg-strong"
+        classList={{ "disabled:opacity-30": !stopping() }}
         disabled={!primary()}
         title={
           primary()
             ? `${ACTIONS[primary()!].label}${ACTIONS[primary()!].hint ? ` — ${ACTIONS[primary()!].hint}` : ""}`
-            : "No action available"
+            : stopping()
+              ? "Stopping… (docker stop in progress)"
+              : "No action available"
         }
-        aria-label={primary() ? ACTIONS[primary()!].label : "No action"}
+        aria-label={primary() ? ACTIONS[primary()!].label : stopping() ? "Stopping" : "No action"}
+        aria-busy={stopping() || undefined}
         data-testid="run-primary"
         data-action={primary() ?? ""}
         onClick={() => {
@@ -125,7 +132,10 @@ export function ActionButton(props: { run: RunView }) {
           if (a) void perform(props.run, a)
         }}
       >
-        <Show when={primary()} fallback={<IconPause size={13} />}>
+        <Show
+          when={primary()}
+          fallback={stopping() ? <IconSpinner size={13} class="text-icon" /> : <IconPause size={13} />}
+        >
           {(a) => ACTIONS[a()].icon({ size: 13 })}
         </Show>
       </button>
