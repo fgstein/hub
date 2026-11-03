@@ -410,3 +410,26 @@ test("deep links: ?run= opens a run directory, and brings a project's run into v
   await page.goto(`/p/seg?run=${id}`)
   await expect(page.locator(`[data-testid=run-row][data-run-id="${id}"]`)).toBeInViewport()
 })
+
+test("shell: no shell tab until the user opens a shell", async ({ page }) => {
+  const draft = await newDraft(page)
+  await pick(page, "field-machine", "gpu-01")
+  await pickConfig(page, "baseline")
+  await draft.getByTestId("draft-launch").click()
+  const running = page.locator('[data-testid=run-row][data-status="running"]').first()
+  await expect(running).toBeVisible({ timeout: 10_000 })
+  const runId = await running.getAttribute("data-run-id")
+  const row = page.locator(`[data-testid=run-row][data-run-id="${runId}"]`)
+  await row.getByTestId("run-line").click()
+  await expect(row.getByTestId("terminal")).toBeVisible()
+  // logs only: no logs/shell tabs yet
+  await expect(row.getByTestId("panel-shell")).toHaveCount(0)
+  await expect(row.getByTestId("panel-logs")).toHaveCount(0)
+  // "Open a shell" from the menu: the tabs and the shell appear
+  await row.getByTestId("run-menu").click()
+  await page.getByTestId("menu-shell").click()
+  await expect(row.getByTestId("panel-shell")).toBeVisible()
+  await expect(row.getByTestId("panel-logs")).toBeVisible()
+  await row.getByTestId("panel-logs").click()
+  await expect(row.getByTestId("terminal")).toBeVisible()
+})
