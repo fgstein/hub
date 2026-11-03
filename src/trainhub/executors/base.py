@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..core.commands import with_docker
 from ..core.models import Inventory, Machine
 
 if TYPE_CHECKING:
@@ -108,6 +109,14 @@ class ShellSession(abc.ABC):
         """End the session."""
 
 
+def _is_docker_ps(machine: Machine, remote: Sequence[str]) -> bool:
+    argv = list(remote)
+    docker = machine.docker
+    if argv[:2] == ["docker", "ps"]:
+        return True
+    return argv[: len(docker)] == docker and argv[len(docker) : len(docker) + 1] == ["ps"]
+
+
 class Executor(abc.ABC):
     """Run commands on the inventory machines."""
 
@@ -135,19 +144,22 @@ class Executor(abc.ABC):
                 "command failed (unreachable)",
                 extra={
                     "machine": machine.id,
-                    "argv": list(remote),
+                    "argv": with_docker(machine, remote),
                     "duration_ms": round((time.monotonic() - t0) * 1000),
                     "error": exc.reason,
                 },
             )
             raise
-        level = logging.DEBUG if list(remote[:2]) == ["docker", "ps"] else logging.INFO
+        # The monitoring loop's ``docker ps`` (every few seconds) stays at DEBUG, whatever
+        # the Docker command (wrapper, sudo…) configured for the machine.
+        argv = with_docker(machine, remote)
+        level = logging.DEBUG if _is_docker_ps(machine, remote) else logging.INFO
         log.log(
             level,
             "command executed",
             extra={
                 "machine": machine.id,
-                "argv": list(remote),
+                "argv": argv,
                 "duration_ms": round(res.duration_s * 1000),
                 "returncode": res.returncode,
             },

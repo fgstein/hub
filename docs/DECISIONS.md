@@ -558,3 +558,11 @@ a project is unchanged.
   does, so that a click meant for a badge, a link or the path does not select by accident. In
   pick mode (choosing the checkpoint of a draft), which has no checkbox, the click on the line
   still picks.
+
+## Change — monitoring logs with a Docker wrapper; shell tab on demand (November 3)
+
+- Command logs show the effective argv (Docker command/wrapper included), and the monitoring
+  loop's `ps` stays at DEBUG whatever the Docker command: with a wrapper it used to be logged at
+  INFO every 3 s per machine.
+- The logs/shell tabs of a run's panel only appear once a shell has been opened with “Open a
+  shell”; before that the panel shows the logs only.
